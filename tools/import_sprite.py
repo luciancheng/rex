@@ -142,7 +142,7 @@ def _format_rows(rows: list[str]) -> str:
 def _replace_block(text: str, begin: str, end: str, replacement: str) -> str:
     start = text.index(begin)
     stop = text.index(end, start)
-    return text[:start] + replacement + text[stop:]
+    return text[:start] + replacement + text[stop + len(end) :]
 
 
 def apply_idle(rows: list[str], letter_to_rgb: dict[str, tuple[int, int, int]]) -> None:
@@ -187,7 +187,7 @@ def apply_idle(rows: list[str], letter_to_rgb: dict[str, tuple[int, int, int]]) 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Convert a PNG sprite into REX CLI art.")
-    parser.add_argument("png", type=Path, help="path to a PNG sprite, ideally 32x32 pixel art")
+    parser.add_argument("png", type=Path, help="path to a PNG sprite, ideally 40x40 pixel art")
     parser.add_argument(
         "--keep-background",
         action="store_true",

@@ -7,10 +7,10 @@ from rex.mascot.sprites import IDLE_ROWS, PIXEL_ROLES
 ASSET = Path(__file__).resolve().parents[1] / "assets" / "idle.png"
 
 
-def test_idle_png_is_32x32() -> None:
+def test_idle_png_is_40x40() -> None:
     image = load_png(str(ASSET))
-    assert image.width == 32
-    assert image.height == 32
+    assert image.width == 40
+    assert image.height == 40
 
 
 def test_idle_sprite_matches_png_pixels() -> None:

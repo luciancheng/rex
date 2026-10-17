@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Sequence, TextIO
 
 from rex import __version__
 from rex.mascot import DEFAULT_PALETTE, PALETTES, color_enabled
 from rex.tui import print_card, restore_on_interrupt, run_loop
+from rex.watch.bus import default_event_path
+from rex.watch.ingest import run_ingest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
             "examples:\n"
             "  rex start\n"
             "  rex start --static\n"
+            "  rex ingest --install-cursor-hook\n"
             "  rex start --color blue"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -48,6 +52,31 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print one frame and exit",
     )
+    start.add_argument(
+        "--events",
+        type=Path,
+        default=None,
+        help=f"JSONL event feed (default: {default_event_path()})",
+    )
+
+    ingest = sub.add_parser("ingest", help="append an agent event to the watch feed")
+    ingest.add_argument(
+        "--source",
+        choices=("auto", "cursor", "claude", "codex"),
+        default="auto",
+        help="payload dialect (default: auto)",
+    )
+    ingest.add_argument(
+        "--install-cursor-hook",
+        action="store_true",
+        help="install ~/.cursor/hooks.json so Cursor writes the feed",
+    )
+    ingest.add_argument(
+        "--events",
+        type=Path,
+        default=None,
+        help=f"JSONL event feed (default: {default_event_path()})",
+    )
     return parser
 
 
@@ -65,6 +94,14 @@ def main(
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
+        if args.command == "ingest":
+            return run_ingest(
+                stdin=stdin,
+                stdout=stdout,
+                source=args.source,
+                install_cursor_hook_flag=args.install_cursor_hook,
+                events_path=args.events,
+            )
         if args.command != "start":
             parser.print_help(stdout)
             return 0
@@ -79,6 +116,7 @@ def main(
             animation="idle",
             stdin=stdin,
             stdout=stdout,
+            events_path=args.events,
         )
     except ValueError as exc:
         stderr.write(f"rex: {exc}\n")

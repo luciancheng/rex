@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-import select
 import sys
-import termios
-import tty
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TextIO
@@ -22,6 +20,8 @@ CLEAR = "\033[2J"
 CLEAR_DOWN = "\033[J"
 RESET = "\033[0m"
 
+_IS_WINDOWS = sys.platform == "win32"
+
 
 def size() -> tuple[int, int]:
     try:
@@ -31,8 +31,31 @@ def size() -> tuple[int, int]:
     return columns, lines
 
 
+def _enable_windows_vt() -> None:
+    """Turn on ANSI/VT sequences in the Windows console."""
+    if not _IS_WINDOWS:
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return
+        kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        return
+
+
 @contextmanager
 def raw_mode(stream: TextIO) -> Iterator[None]:
+    if _IS_WINDOWS:
+        yield
+        return
+    import termios
+    import tty
+
     fd = stream.fileno()
     original = termios.tcgetattr(fd)
     try:
@@ -51,6 +74,7 @@ def raw_mode(stream: TextIO) -> Iterator[None]:
 
 @contextmanager
 def live_screen(stream: TextIO) -> Iterator[None]:
+    _enable_windows_vt()
     stream.write(ALT_ENTER + WRAP_OFF + HIDE_CURSOR + CLEAR + HOME)
     stream.flush()
     try:
@@ -61,7 +85,35 @@ def live_screen(stream: TextIO) -> Iterator[None]:
         stream.flush()
 
 
+def _read_key_windows(timeout: float) -> str | None:
+    import msvcrt
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if msvcrt.kbhit():
+            ch = msvcrt.getwch()
+            if ch in {"\x00", "\xe0"}:
+                extra = msvcrt.getwch()
+                return {
+                    "H": "up",
+                    "P": "down",
+                    "K": "left",
+                    "M": "right",
+                    "I": "pageup",
+                    "Q": "pagedown",
+                    "G": "home",
+                    "O": "end",
+                }.get(extra, extra)
+            return ch
+        time.sleep(0.01)
+    return None
+
+
 def read_key(stream: TextIO, timeout: float) -> str | None:
+    if _IS_WINDOWS:
+        return _read_key_windows(timeout)
+    import select
+
     fd = stream.fileno()
     ready, _, _ = select.select([fd], [], [], timeout)
     if not ready:
@@ -78,6 +130,12 @@ def read_key(stream: TextIO, timeout: float) -> str | None:
         "\x1b[B": "down",
         "\x1b[C": "right",
         "\x1b[D": "left",
+        "\x1b[5~": "pageup",
+        "\x1b[6~": "pagedown",
+        "\x1b[H": "home",
+        "\x1b[1~": "home",
+        "\x1b[F": "end",
+        "\x1b[4~": "end",
         "\x1b": "esc",
     }.get(seq, seq)
 

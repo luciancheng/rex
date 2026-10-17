@@ -17,8 +17,8 @@ def test_idle_is_registered() -> None:
     sprite = get_sprite("idle")
     assert sprite.name == DEFAULT_SPRITE
     width, height = sprite_size(sprite.rows)
-    assert width == sprite.width == 32
-    assert height == sprite.height == 32
+    assert width == sprite.width == STAGE_SIZE
+    assert height == sprite.height == STAGE_SIZE
 
 
 def test_idle_has_dino_features() -> None:
@@ -33,15 +33,19 @@ def test_idle_has_dino_features() -> None:
 def test_idle_animation_has_life() -> None:
     animation = get_animation(DEFAULT_ANIMATION)
     names = {name for name, _hold in animation.frames}
-    assert names == {"idle", "idle_blink", "idle_look"}
+    assert names == {"idle", "idle_blink", "idle_look", "idle_breathe"}
     open_eye = get_sprite("idle").rows
     closed = get_sprite("idle_blink").rows
     looking = get_sprite("idle_look").rows
-    assert open_eye[9][21] == "k"
-    assert closed[9][21] == "y"
-    assert closed[10][21] == "k"
-    assert looking[9][22] == "k"
-    assert looking[10][22] == "k"
+    assert open_eye[13][25] == "k"
+    assert closed[13][25] == "y"
+    assert closed[14][25] == "k"
+    assert looking[13][26] == "k"
+    assert looking[14][26] == "k"
+    breathe = get_sprite("idle_breathe").rows
+    assert breathe[0] == "." * 40
+    assert breathe[-1] == open_eye[-1]
+    assert breathe[14][25] == open_eye[13][25]
 
 
 def test_fit_stage_reserves_40x40() -> None:
@@ -49,9 +53,7 @@ def test_fit_stage_reserves_40x40() -> None:
     staged = fit_stage(idle)
     width, height = sprite_size(staged)
     assert width == height == STAGE_SIZE
-    assert staged[0][:32] == idle[0]
-    assert staged[31][:32] == idle[31]
-    assert staged[32] == "." * STAGE_SIZE
+    assert staged == idle
 
 
 def test_fit_stage_keeps_top_left_when_clipping() -> None:

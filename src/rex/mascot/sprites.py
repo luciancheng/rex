@@ -21,8 +21,8 @@ Pixel letters (spaces become transparent):
 Live view stage
 ---------------
 ``rex start`` draws the mascot in a 40×40 pixel slot on the left of the
-terminal. Idle can stay 32×32; extra poses can use the full stage. The
-renderer pads with transparent pixels. The column to the right is text.
+terminal. Idle and future poses should be 40×40. Smaller drawings are
+padded; larger ones clip from the bottom-right. The column to the right is text.
 
 How to add more later
 ---------------------
@@ -107,70 +107,126 @@ def paint_pixels(base: tuple[str, ...], updates: dict[tuple[int, int], str]) -> 
     return tuple("".join(row) for row in grid)
 
 
-def shift_body(base: tuple[str, ...], dy: int, *, keep_bottom: int = 2) -> tuple[str, ...]:
-    """Nudge the body vertically; keep the ground shadow planted."""
-    if dy == 0 or keep_bottom >= len(base):
+def shift_region(
+    base: tuple[str, ...],
+    *,
+    xs: range,
+    ys: range,
+    dx: int = 0,
+    dy: int = 0,
+) -> tuple[str, ...]:
+    """Move a rectangle of pixels. Empty cells do not overwrite the destination."""
+    grid = [list(row) for row in base]
+    chunk = [[grid[y][x] for x in xs] for y in ys]
+    for y in ys:
+        for x in xs:
+            grid[y][x] = "."
+    height = len(grid)
+    width = len(grid[0]) if grid else 0
+    for row_i, y in enumerate(ys):
+        ny = y + dy
+        if ny < 0 or ny >= height:
+            continue
+        for col_i, x in enumerate(xs):
+            nx = x + dx
+            if nx < 0 or nx >= width:
+                continue
+            ch = chunk[row_i][col_i]
+            if ch != ".":
+                grid[ny][nx] = ch
+    return tuple("".join(row) for row in grid)
+
+
+def nudge(
+    base: tuple[str, ...],
+    dx: int = 0,
+    dy: int = 0,
+    *,
+    keep_bottom: int = 2,
+) -> tuple[str, ...]:
+    """Shift the body a few pixels; keep the ground shadow planted."""
+    if (dx == 0 and dy == 0) or keep_bottom >= len(base):
         return base
     body = list(base[:-keep_bottom])
     shadow = list(base[-keep_bottom:])
     empty = "." * len(base[0])
     if dy > 0:
-        shifted = [empty] * dy + body[:-dy]
-    else:
-        shifted = body[-dy:] + [empty] * (-dy)
-    return tuple(shifted + shadow)
+        body = [empty] * dy + body[:-dy]
+    elif dy < 0:
+        body = body[-dy:] + [empty] * (-dy)
+    if dx > 0:
+        body = ["." * dx + row[:-dx] for row in body]
+    elif dx < 0:
+        body = [row[-dx:] + "." * (-dx) for row in body]
+    return tuple(body + shadow)
 
 
-# Imported 1:1 from assets/idle.png (32x32, 10 opaque colors).
+def shift_body(base: tuple[str, ...], dy: int, *, keep_bottom: int = 2) -> tuple[str, ...]:
+    """Nudge the body vertically; keep the ground shadow planted."""
+    return nudge(base, dy=dy, keep_bottom=keep_bottom)
+
+
+# Imported 1:1 from assets/idle.png (40x40, 10 opaque colors).
 IDLE_ROWS = pixels(
-    "................................",
-    ".................kkk............",
-    "................kdnnk...........",
-    ".............kkkdkkkkkkkkk......",
-    "............knndkayyyyyyyykk....",
-    "...........knndkayyyyyyyyyYyk...",
-    "...........kndkayyyyyyyyyyyYyk..",
-    "...........kkkayyyyyyyyyyyyyyk..",
-    "..........kndkayyyyyyyyyyyyyyyk.",
-    ".........kndkoayyyyyykyyyyyyyyk.",
-    ".........kndkoayyyyyykyyyyyyyyk.",
-    "..........kdkoayyyyppyyyyyyyyyk.",
-    "..........kkkoayyyyyyyyyyyyyyk..",
-    ".........kndkoayyyyyyyyyyyyyyk..",
-    "........kndkoobayyyyyyyyyyyyk...",
-    "........kndkooobayyyyaakkkkk....",
-    "........kndkoooobaaaabbbk.......",
-    "........kkkooooobbbbbbyybk......",
-    ".......kndkoobbbbbbbbyyyyk......",
-    "......kndkkoobbbbbbbyyyyyk......",
-    ".....kkndkooobbbbbbbbbyyyk......",
-    ".kk.knkdkooooooooooooobbk.......",
-    "kyyknddkooooobbbbkooooobk.......",
-    "koyykkkooooobbbbbbkoooobk.......",
-    ".koyyyooooobbbbbbbkooook........",
-    ".kdoooooooobbbbbbbkkkkkk........",
-    "..kdddoooookbbbbbbkbbbbk........",
-    "...kkkdddkkkkbbbbddkbbddk.......",
-    "......kkkkkskddddddkddddk.......",
-    "....ss.ssssskkkkkkkskkkkkss.ss..",
-    ".........sssssssssssssssss......",
-    "................................",
+    "........................................",
+    "........................................",
+    "........................................",
+    "........................................",
+    "........................................",
+    ".....................kkk................",
+    "....................kdnnk...............",
+    ".................kkkdkkkkkkkkk..........",
+    "................knndkayyyyyyyykk........",
+    "...............knndkayyyyyyyyyYyk.......",
+    "...............kndkayyyyyyyyyyyYyk......",
+    "...............kkkayyyyyyyyyyyyyyk......",
+    "..............kndkayyyyyyyyyyyyyyyk.....",
+    ".............kndkoayyyyyykyyyyyyyyk.....",
+    ".............kndkoayyyyyykyyyyyyyyk.....",
+    "..............kdkoayyyyppyyyyyyyyyk.....",
+    "..............kkkoayyyyyyyyyyyyyyk......",
+    ".............kndkoayyyyyyyyyyyyyyk......",
+    "............kndkoobayyyyyyyyyyyyk.......",
+    "............kndkooobayyyyaakkkkk........",
+    "............kndkoooobaaaabbbk...........",
+    "............kkkooooobbbbbbyybk..........",
+    "...........kndkoobbbbbbbbyyyyk..........",
+    "..........kndkkoobbbbbbbyyyyyk..........",
+    ".........kkndkooobbbbbbbbbyyyk..........",
+    ".....kk.knkdkooooooooooooobbk...........",
+    "....kyyknddkooooobbbbkooooobk...........",
+    "....koyykkkooooobbbbbbkoooobk...........",
+    ".....koyyyooooobbbbbbbkooook............",
+    ".....kdoooooooobbbbbbbkkkkkk............",
+    "......kdddoooookbbbbbbkbbbbk............",
+    ".......kkkdddkkkkbbbbddkbbddk...........",
+    "..........kkkkkskddddddkddddk...........",
+    "........ss.ssssskkkkkkkskkkkkss.ss......",
+    ".............sssssssssssssssss..........",
+    "........................................",
+    "........................................",
+    "........................................",
+    "........................................",
+    "........................................",
 )
 
 _validate_pixels("idle", IDLE_ROWS)
 IDLE = register_sprite(Sprite("idle", IDLE_ROWS))
 
-# Eye is a 2px-tall bar at (21, 9-10). A blink just drops the top pixel.
-IDLE_BLINK_ROWS = paint_pixels(IDLE_ROWS, {(21, 9): "y"})
+# Eye is a 2px-tall bar at (25, 13-14). A blink just drops the top pixel.
+IDLE_BLINK_ROWS = paint_pixels(IDLE_ROWS, {(25, 13): "y"})
 # Glance toward the snout.
 IDLE_LOOK_ROWS = paint_pixels(
     IDLE_ROWS,
-    {(21, 9): "y", (21, 10): "y", (22, 9): "k", (22, 10): "k"},
+    {(25, 13): "y", (25, 14): "y", (26, 13): "k", (26, 14): "k"},
 )
+# Soft squat. Shadow rows 33-39 stay planted.
+IDLE_BREATHE_ROWS = shift_body(IDLE_ROWS, dy=1, keep_bottom=7)
 
 for name, rows in (
     ("idle_blink", IDLE_BLINK_ROWS),
     ("idle_look", IDLE_LOOK_ROWS),
+    ("idle_breathe", IDLE_BREATHE_ROWS),
 ):
     _validate_pixels(name, rows)
     register_sprite(Sprite(name, rows))
@@ -181,13 +237,17 @@ register_animation(
         "idle",
         frames=(
             ("idle", 24),
-            ("idle_blink", 4),
-            ("idle", 22),
-            ("idle_look", 16),
-            ("idle", 20),
+            ("idle_breathe", 12),
+            ("idle", 16),
             ("idle_blink", 3),
             ("idle", 18),
             ("idle_look", 14),
+            ("idle", 12),
+            ("idle_breathe", 10),
+            ("idle", 16),
+            ("idle_blink", 3),
+            ("idle", 14),
+            ("idle_look", 12),
         ),
     )
 )

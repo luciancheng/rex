@@ -2,71 +2,70 @@
 
 Small dino. Big opinions.
 
-REX is a terminal companion with a pixel-art dinosaur mascot. The product direction is still evolving; this repo is the CLI foundation, visual system, and mascot renderer.
+REX is a terminal companion with a pixel-art dinosaur mascot. Leave it running next to Cursor (or later Claude Code / Codex) and it shows what the agent is thinking and which commands it wants to run.
 
 ```
 rex start
 ```
 
-## Requirements
+Works on macOS, Linux, and Windows 10+ in a modern terminal (Terminal.app, iTerm, Windows Terminal, VS Code). You need Python 3.9 or newer once, for the installer. After that, type `rex` from any folder.
 
-- Python 3.9 or newer
-- macOS or Linux
-- A terminal that supports UTF-8 (true color is used when available)
+## Install (just use it)
 
-No extra runtime packages are required. REX uses the Python standard library only.
+macOS / Linux:
 
-## Install
+```bash
+curl -fsSL https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.sh | bash
+```
 
-Clone the repo, create a virtualenv, and install in editable mode:
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.ps1 | iex
+```
+
+That creates a private environment under `~/.rex`, puts `rex` on your PATH, and wires Cursor so this machine's agent chat is watched. Open a new terminal, then `rex start` from anywhere.
+
+If you already have [pipx](https://pipx.pypa.io/):
+
+```bash
+pipx install git+https://github.com/luciancheng/rex.git
+rex ingest --install-cursor-hook
+rex start
+```
+
+## Usage
+
+Keep `rex start` open, then talk to the Cursor agent as usual. Thoughts, tool calls, and questions show up in the pane to the right of the dino. Ctrl+C twice to quit.
+
+```bash
+rex start                         # live view
+rex start --static                # print one frame and exit
+rex start --color blue            # try another palette
+rex ingest --install-cursor-hook  # reinstall the Cursor watcher
+rex --help
+```
+
+`NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
+
+Idle and future poses should be 40×40.
+
+## Install (hack on the code)
 
 ```bash
 git clone https://github.com/luciancheng/rex.git
 cd rex
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
 rex start
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
-
-### Install with development tools
-
-If you are going to run tests or work on the code:
-
-```bash
-pip install -e ".[dev]"
-```
-
-That extra installs:
-
-| Extra | Packages | What they are for |
-| --- | --- | --- |
-| `dev` | `pytest`, `pytest-cov` | unit tests and coverage |
-
-### One-off run without installing the `rex` command
-
-```bash
-PYTHONPATH=src python3 -m rex start --static --no-color
-```
-
-## Usage
-
-```bash
-rex start              # live view; ctrl+c twice to quit
-rex start --static     # print one frame and exit
-rex start --color blue # try another palette
-rex --help
-```
-
-The live view pins Rex in a 40×40 pixel slot on the left. Everything to the right is a text pane with a prompt. Type and press enter to pin a line there. The idle drawing is still 32×32; extra space is for later poses.
-
-`NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`. The `dev` extra is `pytest` and `pytest-cov`.
 
 ## Edit the idle sprite
 
-Idle Rex is the 32×32 PNG at `assets/idle.png`, converted pixel-for-pixel into terminal art.
+Idle Rex is the 40×40 PNG at `assets/idle.png`, converted pixel-for-pixel into terminal art.
 
 Rebuild from a PNG (reads every pixel and the palette):
 
@@ -114,7 +113,7 @@ register_animation(
 ## Project layout
 
 ```
-assets/idle.png             source 32x32 sprite
+assets/idle.png             source 40x40 sprite
 tools/import_sprite.py      PNG → CLI pixel art
 src/rex/cli.py              commands (rex start)
 src/rex/mascot/sprites.py   idle pixel grid
@@ -123,6 +122,9 @@ src/rex/mascot/png.py       PNG decoder used by the importer
 src/rex/mascot/catalog.py   sprite + animation registry
 src/rex/mascot/render.py    pixels → terminal cells
 src/rex/tui/                live viewer
+src/rex/watch/              agent event feed (hooks → JSONL → pane)
+scripts/install.sh          user install (macOS/Linux)
+scripts/install.ps1         user install (Windows)
 tests/                      pytest suite
 .github/workflows/ci.yml    GitHub Actions
 ```
@@ -140,7 +142,7 @@ With coverage:
 pytest --cov --cov-report=term-missing
 ```
 
-CI runs the same suite on Ubuntu and macOS across Python 3.9, 3.11, and 3.13.
+CI runs the same suite on Ubuntu, macOS, and Windows across Python 3.9, 3.11, and 3.13.
 
 ## Contributing
 

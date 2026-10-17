@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Sequence, TextIO
 
 from rex.mascot import (
@@ -25,6 +26,9 @@ from rex.tui.terminal import (
     read_key,
     size,
 )
+from rex.watch.bus import EventTail, default_event_path
+from rex.watch.events import RexEvent
+from rex.watch.format import PROSE_KINDS, is_duplicate, markdown_lines
 
 FRAME_TICK = 0.08
 QUIT_WINDOW_TICKS = 25  # ~2s at FRAME_TICK
@@ -34,6 +38,37 @@ INPUT_ROWS = 3
 FOOTER_ROWS = 1
 INPUT_PREFIX = " > "
 CTRL_C = "\x03"
+MAX_LOG = 120
+KIND_COLOR = {
+    "thought": "muted",
+    "command": "accent",
+    "question": "error",
+    "text": "text",
+    "user": "you",
+    "result": "muted",
+    "error": "error",
+    "idle": "muted",
+}
+KIND_STATUS = {
+    "thought": "thinking",
+    "command": "running",
+    "question": "ask",
+    "text": "idle",
+    "user": "idle",
+    "result": "idle",
+    "error": "error",
+    "idle": "idle",
+}
+KIND_LABEL = {
+    "thought": "thinking",
+    "command": "run",
+    "question": "ask",
+    "text": "reply",
+    "user": "you",
+    "result": "done",
+    "error": "error",
+    "idle": "idle",
+}
 
 
 def _clip(text: str, width: int) -> str:
@@ -67,6 +102,114 @@ def _wrap(text: str, width: int) -> list[str]:
         else:
             wrapped.extend(line[i : i + width] for i in range(0, len(line), width))
     return wrapped
+
+
+def _as_log_entry(entry: object) -> tuple[str, str]:
+    if isinstance(entry, RexEvent):
+        if entry.kind in PROSE_KINDS:
+            return entry.kind, entry.text
+        return entry.kind, entry.display_text()
+    if isinstance(entry, tuple) and len(entry) == 2:
+        return str(entry[0]), str(entry[1])
+    return "text", str(entry)
+
+
+def _rule(label: str, width: int) -> str:
+    prefix = f"── {label} "
+    if len(prefix) >= width:
+        return _clip(label, width)
+    return prefix + ("─" * (width - len(prefix)))
+
+
+def _hard_wrap(text: str, width: int) -> list[str]:
+    if width <= 0:
+        return []
+    if not text:
+        return [""]
+    return [text[index : index + width] for index in range(0, len(text), width)]
+
+
+def _body_rows(kind: str, text: str, width: int, inner: int) -> list[str]:
+    align_right = kind == "user"
+    wrap_width = inner
+    if align_right:
+        wrap_width = max(8, width // 2)
+    chunks = markdown_lines(text) if kind in PROSE_KINDS else [text]
+    rows: list[str] = []
+    for chunk in chunks:
+        if not chunk.strip():
+            rows.append(" " * width if align_right else "")
+            continue
+        wrapped = (
+            _hard_wrap(chunk, wrap_width)
+            if chunk.startswith("│ ")
+            else _wrap(chunk, wrap_width)
+        ) or [""]
+        for row in wrapped:
+            rows.append(row.rjust(width) if align_right else f"  {row}")
+    return rows or ([""] if not align_right else [" " * width])
+
+
+def build_log_view(log: Sequence[object], width: int) -> list[tuple[str, str]]:
+    """Turn events into labeled blocks: (style, text)."""
+    if width <= 0:
+        return []
+    if not log:
+        return [("idle", "Ready. Watching for agent events.")]
+
+    groups: list[tuple[str, list[str]]] = []
+    for entry in log:
+        kind, text = _as_log_entry(entry)
+        if groups and groups[-1][0] == kind:
+            groups[-1][1].append(text)
+        else:
+            groups.append((kind, [text]))
+
+    inner = max(1, width - 2)
+    lines: list[tuple[str, str]] = []
+    for index, (kind, texts) in enumerate(groups):
+        if index:
+            lines.append(("gap", ""))
+        if kind != "user":
+            label = KIND_LABEL.get(kind, kind)
+            lines.append((kind, _rule(label, width)))
+        for text in texts:
+            for row in _body_rows(kind, text, width, inner):
+                lines.append((kind, row))
+    return lines
+
+
+def extend_log(log: list[RexEvent], incoming: Sequence[RexEvent]) -> int:
+    """Append new events, skipping duplicates already in the live buffer."""
+    added = 0
+    for event in incoming:
+        if is_duplicate(event, log[-12:]):
+            continue
+        log.append(event)
+        added += 1
+    if len(log) > MAX_LOG:
+        del log[:-MAX_LOG]
+    return added
+
+
+def pane_body_height(term_lines: int) -> int:
+    show_box = term_lines >= INPUT_ROWS + FOOTER_ROWS + 3
+    height = term_lines - 2 - FOOTER_ROWS
+    if show_box:
+        height -= INPUT_ROWS
+    return max(0, height)
+
+
+def pane_text_width(columns: int) -> int:
+    mascot_cols = min(STAGE_SIZE, max(1, columns))
+    text_width = max(1, columns) - mascot_cols - GUTTER
+    if text_width < MIN_TEXT_COLS:
+        return 0
+    return text_width
+
+
+def clamp_scroll(total: int, view_h: int, scroll: int) -> int:
+    return max(0, min(scroll, max(0, total - view_h)))
 
 
 def _header(width: int, meta: str, enabled: bool) -> str:
@@ -106,39 +249,52 @@ def _text_column(
     width: int,
     height: int,
     meta: str,
-    log: Sequence[str],
+    log: Sequence[object],
     draft: str,
     quit_pending: bool,
     enabled: bool,
+    scroll: int = 0,
 ) -> list[str]:
     if width <= 0 or height <= 0:
         return [""] * max(0, height)
 
-    footer_text = (
-        "press ctrl+c again to exit" if quit_pending else "ctrl+c twice to exit"
-    )
-    footer_color = UI["error"] if quit_pending else UI["muted"]
     show_box = height >= INPUT_ROWS + FOOTER_ROWS + 3
     body_top = 2
     body_bottom = height - FOOTER_ROWS
     if show_box:
         body_bottom -= INPUT_ROWS
+    body_h = max(0, body_bottom - body_top)
+
+    body = build_log_view(log, width)
+    scroll = clamp_scroll(len(body), body_h, scroll)
+    if body_h:
+        end = len(body) - scroll
+        start = max(0, end - body_h)
+        visible_body = body[start:end]
+    else:
+        visible_body = []
+
+    if quit_pending:
+        footer_text = "press ctrl+c again to exit"
+        footer_color = UI["error"]
+    elif scroll:
+        footer_text = f"↑↓ {scroll} above live · ctrl+c twice"
+        footer_color = UI["muted"]
+    else:
+        footer_text = "↑↓ scroll · ctrl+c twice to exit"
+        footer_color = UI["muted"]
 
     rows = [""] * height
     rows[0] = _header(width, meta, enabled)
     if height > 1:
         rows[1] = " " * width
 
-    body: list[str] = []
-    if log:
-        for entry in log:
-            body.extend(_wrap(entry, width))
-    else:
-        body.extend(_wrap("Ready.", width))
-    body_h = max(0, body_bottom - body_top)
-    visible_body = body[-body_h:] if body_h else []
-    for offset, line in enumerate(visible_body):
-        rows[body_top + offset] = paint(_clip(line, width), UI["text"], enabled)
+    for offset, (kind, line) in enumerate(visible_body):
+        if kind == "gap":
+            rows[body_top + offset] = " " * width
+            continue
+        color = UI[KIND_COLOR.get(kind, "text")]
+        rows[body_top + offset] = paint(_clip(line, width), color, enabled)
     for index in range(body_top, body_bottom):
         if not rows[index]:
             rows[index] = " " * width
@@ -162,8 +318,10 @@ def compose_frame(
     lines: int,
     animation_name: str,
     draft: str = "",
-    log: Sequence[str] = (),
+    log: Sequence[object] = (),
     quit_pending: bool = False,
+    status: str | None = None,
+    scroll: int = 0,
 ) -> str:
     columns = max(1, columns)
     lines = max(1, lines)
@@ -182,11 +340,12 @@ def compose_frame(
     text = _text_column(
         width=text_width,
         height=lines,
-        meta=animation_name,
+        meta=status or animation_name,
         log=log,
         draft=draft,
         quit_pending=quit_pending,
         enabled=enabled,
+        scroll=scroll,
     )
 
     out: list[str] = []
@@ -247,6 +406,7 @@ def run_loop(
     animation: str = DEFAULT_ANIMATION,
     stdin: TextIO = sys.stdin,
     stdout: TextIO = sys.stdout,
+    events_path: Path | str | None = None,
 ) -> int:
     sequence = get_animation(animation)
     frame_index = 0
@@ -255,9 +415,19 @@ def run_loop(
     columns, lines = size()
     animated = len(sequence.frames) > 1
     draft = ""
-    log: list[str] = []
+    log: list[object] = []
     quit_pending = False
     quit_ticks = 0
+    status = sequence.name
+    scroll = 0
+    tail = EventTail(
+        Path(events_path) if events_path else default_event_path(),
+        from_end=True,
+    )
+
+    def _metrics() -> tuple[int, int]:
+        width = pane_text_width(columns)
+        return width, pane_body_height(lines)
 
     def draw() -> None:
         stdout.write(
@@ -271,6 +441,8 @@ def run_loop(
                 draft=draft,
                 log=log,
                 quit_pending=quit_pending,
+                status=status,
+                scroll=scroll,
             )
         )
         stdout.flush()
@@ -278,9 +450,44 @@ def run_loop(
     with live_screen(stdout):
         draw()
         while True:
-            key = read_key(stdin, FRAME_TICK)
+            try:
+                key = read_key(stdin, FRAME_TICK)
+            except KeyboardInterrupt:
+                key = CTRL_C
             changed = False
-            if key == CTRL_C:
+            fresh = tail.poll()
+            if fresh:
+                text_w, _ = _metrics()
+                before = len(build_log_view(log, text_w)) if text_w else 0
+                added = extend_log(log, fresh)
+                after = len(build_log_view(log, text_w)) if text_w else 0
+                if added:
+                    if scroll:
+                        scroll += max(0, after - before)
+                    status = KIND_STATUS.get(fresh[-1].kind, sequence.name)
+                    changed = True
+            text_w, body_h = _metrics()
+            total_lines = len(build_log_view(log, text_w)) if text_w else 0
+            max_scroll = clamp_scroll(total_lines, body_h, total_lines)
+            if key == "up":
+                scroll = min(max_scroll, scroll + 1)
+                changed = True
+            elif key == "down":
+                scroll = max(0, scroll - 1)
+                changed = True
+            elif key == "pageup":
+                scroll = min(max_scroll, scroll + max(1, body_h))
+                changed = True
+            elif key == "pagedown":
+                scroll = max(0, scroll - max(1, body_h))
+                changed = True
+            elif key == "home":
+                scroll = max_scroll
+                changed = True
+            elif key == "end":
+                scroll = 0
+                changed = True
+            elif key == CTRL_C:
                 if quit_pending:
                     return 0
                 quit_pending = True
@@ -301,7 +508,7 @@ def run_loop(
             elif key in {"\r", "\n"}:
                 quit_pending = False
                 if draft.strip():
-                    log.append(draft.strip())
+                    log.append(RexEvent("user", "text", draft.strip()))
                     draft = ""
                     changed = True
             elif key in {"\x7f", "\x08"}:
@@ -321,6 +528,12 @@ def run_loop(
             new_columns, new_lines = size()
             if (new_columns, new_lines) != (columns, lines):
                 columns, lines = new_columns, new_lines
+                changed = True
+            text_w, body_h = _metrics()
+            total_lines = len(build_log_view(log, text_w)) if text_w else 0
+            clamped = clamp_scroll(total_lines, body_h, scroll)
+            if clamped != scroll:
+                scroll = clamped
                 changed = True
             if changed:
                 draw()

@@ -1,16 +1,31 @@
-# REX
+<p align="center">
+  <img src="assets/rex.png" width="200" alt="REX — a pixel-art dinosaur mascot" />
+</p>
 
-Small dino. Big opinions.
+<h1 align="center">REX</h1>
 
-REX is a terminal companion with a pixel-art dinosaur mascot. Leave it running next to Cursor (or later Claude Code / Codex) and it shows what the agent is thinking and which commands it wants to run.
+<p align="center">
+  <strong>Small dino. Big opinions.</strong>
+</p>
 
-```
-rex start
-```
+<p align="center">
+  A terminal companion that sits next to your coding agent<br />
+  and turns the firehose into something a human can actually read.
+</p>
 
-Works on macOS, Linux, and Windows 10+ in a modern terminal (Terminal.app, iTerm, Windows Terminal, VS Code). You need Python 3.9 or newer once, for the installer. After that, type `rex` from any folder.
+<p align="center">
+  <code>rex start</code>
+</p>
 
-## Install (just use it)
+<p align="center">
+  macOS · Linux · Windows 10+ &nbsp;·&nbsp; Python 3.9+ &nbsp;·&nbsp; MIT
+</p>
+
+Leave him running. Talk to Cursor as usual. Thoughts, tools, questions, and your prompts show up in the pane to the right of the dino. Claude Code and Codex mappers exist; Cursor is the one that's wired today.
+
+Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install Python 3.9+ once. After that, `rex` works from any folder — it does not need to share a directory with the agent.
+
+## Install
 
 macOS / Linux:
 
@@ -26,7 +41,7 @@ irm https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.ps1 |
 
 That creates a private environment under `~/.rex`, puts `rex` on your PATH, and wires Cursor so this machine's agent chat is watched. Open a new terminal, then `rex start` from anywhere.
 
-If you already have [pipx](https://pipx.pypa.io/):
+Already have [pipx](https://pipx.pypa.io/)?
 
 ```bash
 pipx install git+https://github.com/luciancheng/rex.git
@@ -36,7 +51,7 @@ rex start
 
 ## Usage
 
-Keep `rex start` open, then talk to the Cursor agent as usual. Thoughts, tool calls, and questions show up in the pane to the right of the dino. Ctrl+C twice to quit.
+Ctrl+C twice to quit.
 
 ```bash
 rex start                         # live view
@@ -50,7 +65,7 @@ rex --help
 
 Idle and future poses should be 40×40.
 
-## Install (hack on the code)
+## Hack on it
 
 ```bash
 git clone https://github.com/luciancheng/rex.git
@@ -65,7 +80,7 @@ On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`. The `dev` ext
 
 ## Edit the idle sprite
 
-Idle Rex is the 40×40 PNG at `assets/idle.png`, converted pixel-for-pixel into terminal art.
+Idle Rex is the 40×40 PNG at `assets/idle.png`, converted pixel-for-pixel into terminal art. `assets/rex.png` is the same drawing, scaled up for this README.
 
 Rebuild from a PNG (reads every pixel and the palette):
 
@@ -110,10 +125,11 @@ register_animation(
 
 `hold` is in live-viewer ticks. A one-frame animation is a still.
 
-## Project layout
+## Layout
 
 ```
-assets/idle.png             source 40x40 sprite
+assets/idle.png             source 40×40 sprite
+assets/rex.png              README art (same drawing, scaled)
 tools/import_sprite.py      PNG → CLI pixel art
 src/rex/cli.py              commands (rex start)
 src/rex/mascot/sprites.py   idle pixel grid

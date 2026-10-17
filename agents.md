@@ -1,155 +1,87 @@
-# REX — Agent Instructions
+# REX — for agents and contributors
 
-## 1. Project Overview
+Terminal sidecar with a pixel-art dinosaur. Mascot on the left, ingestible agent tape on the right. Watch-only: it does not run, approve, or steer the coding agent.
 
-REX is a terminal-first application with a distinctive, polished CLI interface. Its exact purpose and feature set are still evolving.
+`rex start` works from any directory. The feed is `~/.rex/session.jsonl` (override with `REX_EVENTS`).
 
-The goal is to establish a strong terminal experience and a flexible technical foundation that can support future functionality.
+Install and user docs live in `README.md`. This file is how to change the code.
 
-Do not assume REX is exclusively an AI coding assistant, monitoring tool, or agent wrapper. Keep the architecture flexible until the product direction is finalized.
+## Do not
 
-## 2. Core Design Principles
+- Add palettes or a `--color` flag. Yellow from `assets/idle.png` is the only look.
+- Add dependencies, frameworks, or a config system without a concrete need. Python 3.9+ stdlib.
+- Scrape transcripts or use the Cursor SDK to watch the in-IDE agent. Hooks only.
+- Steer, inject prompts, or auto-approve tools unless the human asked for that this turn.
+- Invent a custom `.rex` language. If a plan file happens, it is JSON named `plan.rex`.
+- Dump Write bodies, duplicate thoughts, or flatten markdown into one blob in the pane.
+- Giant ASCII, extra emoji, or a web UI squeezed into the terminal.
+- Assume Claude Code or Codex are wired. Mappers exist; only Cursor hooks are installed.
+- Build `plan.rex`, drift detection, or extra mascot poses unless asked this turn.
 
-- **Terminal-native:** REX should feel like a thoughtfully designed CLI tool, not a web application squeezed into a terminal.
-- **Visually distinctive:** Develop a recognizable visual identity using typography, spacing, Unicode characters, borders, symbols, and terminal colors.
-- **Mascot-driven:** REX features a cute, expressive dinosaur mascot that can communicate different states through poses, expressions, and animations.
-- **Information-dense but readable:** Use visual hierarchy and deliberate spacing. Avoid clutter, excessive borders, and unnecessary decoration.
-- **Responsive:** The interface should remain usable across different terminal widths and heights.
-- **Interactive:** Where appropriate, support keyboard navigation, clear prompts, progress indicators, and contextual help.
-- **Extensible:** New commands, screens, animations, and features should fit naturally into the existing interface.
+Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. macOS, Linux, and Windows 10+ (VT).
 
-## 3. Visual References
+## Repo map
 
-The user will supply reference images showing the desired appearance of REX.
+| Area | Path |
+| --- | --- |
+| CLI | `src/rex/cli.py` |
+| Mascot | `src/rex/mascot/` |
+| Live UI / keys | `src/rex/tui/` |
+| Event feed | `src/rex/watch/` |
+| Idle PNG | `assets/idle.png` |
+| README art | `assets/rex.png` (scaled idle) |
+| Importer | `tools/import_sprite.py` |
+| Tests | `tests/` |
 
-Treat supplied images as the primary source of truth for visual design.
+## Mascot
 
-When reference images are available:
+Keep rendering separate from watch/TUI logic.
 
-- Study the layout, spacing, proportions, colors, typography, symbols, and overall aesthetic before implementing the interface.
-- Reproduce the relevant visual characteristics as faithfully as practical in a real terminal.
-- Translate visual elements into terminal-compatible text, Unicode art, ANSI styling, and interactive terminal components.
-- Preserve the intended composition within the limitations of terminal character cells.
-- If an image contains visual elements that cannot be reproduced exactly, create a deliberate terminal-native approximation rather than ignoring them.
-- Do not substitute a generic CLI template when a reference image establishes a specific design direction.
+To change idle: replace `assets/idle.png`, then:
 
-Do not invent a finalized visual identity before reviewing the supplied references.
+```bash
+python tools/import_sprite.py assets/idle.png --apply
+```
 
-## 4. Terminal Interface
+That writes `IDLE_ROWS` and the yellow palette 1:1. **Leave blink, glance, and squat as transforms** on `IDLE_ROWS` (`paint_pixels` / `shift_body`). Do not hand-edit a second grid that drifts from the PNG.
 
-REX should provide a consistent CLI experience with the following potential building blocks:
+Blink drops the top eye pixel (the face `k` at column 25, rows 13–14 on the current sprite). Squat is `shift_body(..., dy=1, keep_bottom=7)` so the shadow stays planted.
 
-- A recognizable REX header or identity mark.
-- A dinosaur mascot rendered directly in the terminal using Unicode or other terminal-compatible characters.
-- Clear section headings and status indicators.
-- Consistent spacing, alignment, and visual hierarchy.
-- Carefully chosen terminal colors, including true-color ANSI support where available.
-- Contextual help, usage instructions, and useful error messages.
-- Progress indicators or animated states where they add value.
-- Interactive menus and keyboard controls when appropriate.
-- Graceful fallback behavior for terminals with limited color, Unicode, or animation support.
+If the README hero should match, rebuild `assets/rex.png` from `idle.png` with nearest-neighbor scale.
 
-These are design possibilities, not requirements to implement every component immediately.
+Animation must stay slow. Never let it eat input or overwrite the log.
 
-Avoid unnecessary startup banners, giant ASCII logos, excessive emoji, and decorative output that makes real information harder to read.
+## Watch feed
 
-## 5. Dinosaur Mascot
+Cursor hooks (`~/.cursor/hooks.json`) spawn `python -m rex ingest --source cursor`. Adapters map vendor JSON to `RexEvent`; `append_event` dedupes; `EventTail(from_end=True)` paints new lines.
 
-The dinosaur is an important part of REX's identity.
+New harness = adapter (+ installer). Do not special-case vendors in `live.py`.
 
-Design the mascot to work inside a terminal rather than as an external image.
+Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`.
 
-Potential states include:
+## TUI
 
-- Idle
-- Working
-- Thinking or waiting
-- Success
-- Error
-- Warning
-- Confused or stuck
+- Left ~40 columns: mascot. Right: labeled log blocks (`thinking`, `run`, `ask`, `reply`).
+- User prompts: no `YOU` rule. Invisible column, at most half the pane, **right-aligned as a box**, **left-aligned text inside**. Color `UI["you"]`.
+- Markdown → headings, lists, stripped emphasis, fenced code as `│ ` lines.
+- Keys: ↑↓, page, Home / Ctrl+A (oldest), End / Ctrl+E (live). Composer does not send to the agent.
+- Clip ANSI by cells, not `len()`. Crop from the bottom; keep the mascot top-left.
 
-These states are illustrative. Implement only the states that make sense for the current functionality.
+## Commands and tests
 
-Requirements:
+```bash
+pip install -e ".[dev]"
+pytest
+rex start
+```
 
-- Keep the dinosaur visually recognizable across poses.
-- Prefer compact, carefully constructed Unicode or pixel-art-style terminal characters.
-- Use consistent proportions and alignment.
-- Support static poses as a fallback when animation is unavailable.
-- Avoid rapid, distracting animation.
-- Never let animation interfere with user input or overwrite important terminal output.
-- Keep mascot rendering separate from application logic so the design can evolve independently.
+CI: GitHub Actions, Ubuntu/macOS/Windows, Python 3.9/3.11/3.13 (no macOS/Windows 3.9).
 
-## 6. Architecture and Implementation
+After sprite or TUI changes, restart a running `rex start`. Tests do not replace looking at the terminal.
 
-- Separate terminal rendering, application logic, input handling, and feature-specific functionality.
-- Keep visual styling and reusable UI components centralized where practical.
-- Prefer small, composable modules over a monolithic CLI implementation.
-- Make terminal output deterministic and easy to test.
-- Handle terminal resizing, interrupted processes, and cleanup of terminal state gracefully.
-- Avoid unnecessary dependencies, abstractions, or frameworks.
-- Do not build speculative product features before their purpose is defined.
-- Do not introduce a large configuration system before there is a concrete need.
+## Definition of done
 
-Before selecting a terminal UI framework or making major architectural decisions, inspect the existing repository and its dependencies. Follow established project conventions where reasonable.
-
-## 7. Terminal Compatibility
-
-- Support common macOS and Linux terminal environments.
-- Detect terminal capabilities where necessary.
-- Respect `NO_COLOR` and non-interactive execution contexts.
-- Avoid requiring true-color support or Unicode rendering for essential functionality.
-- Keep logs and redirected output free of unnecessary terminal control sequences.
-- Ensure Ctrl+C exits cleanly and restores terminal settings.
-- Do not assume a fixed terminal size.
-
-## 8. CLI Behavior
-
-- Provide clear command names and useful `--help` output.
-- Make errors actionable and concise.
-- Use consistent exit codes.
-- Avoid surprising side effects.
-- Keep machine-readable output separate from decorative presentation when appropriate.
-- Do not require interactive input when running in a non-interactive context unless explicitly necessary.
-- Do not add commands simply to make the CLI appear feature-rich.
-
-The precise command structure will be established as the product direction becomes clearer.
-
-## 9. Development Workflow
-
-Before implementing substantial changes:
-
-1. Inspect the existing repository, entry points, dependencies, and conventions.
-2. Review all supplied visual references relevant to the task.
-3. Identify the smallest useful implementation.
-4. Preserve the existing design and architecture unless there is a concrete reason to change them.
-5. Run relevant tests and verify terminal rendering where possible.
-
-When presenting implementation decisions, explain significant trade-offs briefly and concretely.
-
-## 10. Scope Boundaries
-
-At this stage, prioritize:
-
-- The CLI foundation.
-- The terminal visual system.
-- The dinosaur mascot and rendering system.
-- Reusable terminal components.
-- A clean, extensible architecture.
-- A coherent experience across interactive and non-interactive execution.
-
-Do not assume integrations with Claude Code, Cursor, other LLMs, shell monitoring, command interception, or agent observability are finalized requirements.
-
-Those capabilities may be explored later as the product evolves.
-
-## 11. Definition of Done
-
-A CLI change is complete when:
-
-- It follows the supplied visual references and established design conventions.
-- It renders cleanly in a real terminal.
-- It handles errors and interruptions appropriately.
-- It does not break existing functionality.
-- Relevant tests pass.
-- It introduces no unnecessary product assumptions or complexity.
+- Follows this file and any PNG the human attached.
+- `pytest` passes.
+- Terminal state restores on quit / Ctrl+C.
+- No speculative product, extra commands, or architecture for a feature that was not requested.

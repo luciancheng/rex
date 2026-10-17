@@ -129,25 +129,49 @@ def _hard_wrap(text: str, width: int) -> list[str]:
     return [text[index : index + width] for index in range(0, len(text), width)]
 
 
+def _user_rows(text: str, width: int) -> list[str]:
+    """Right-aligned column up to half the pane; text is left-aligned inside it."""
+    box_w = max(8, width // 2)
+    chunks = markdown_lines(text)
+    wrapped: list[str] = []
+    for chunk in chunks:
+        if not chunk.strip():
+            wrapped.append("")
+            continue
+        lines = (
+            _hard_wrap(chunk, box_w) if chunk.startswith("│ ") else _wrap(chunk, box_w)
+        )
+        wrapped.extend(lines or [""])
+    if not wrapped:
+        wrapped = [""]
+    content_w = min(box_w, max((len(line) for line in wrapped), default=0))
+    pad = max(0, width - content_w)
+    rows: list[str] = []
+    for line in wrapped:
+        if not line.strip():
+            rows.append(" " * width)
+            continue
+        rows.append((" " * pad) + line.ljust(content_w))
+    return rows or [" " * width]
+
+
 def _body_rows(kind: str, text: str, width: int, inner: int) -> list[str]:
-    align_right = kind == "user"
-    wrap_width = inner
-    if align_right:
-        wrap_width = max(8, width // 2)
+    if kind == "user":
+        return _user_rows(text, width)
     chunks = markdown_lines(text) if kind in PROSE_KINDS else [text]
     rows: list[str] = []
     for chunk in chunks:
         if not chunk.strip():
-            rows.append(" " * width if align_right else "")
+            rows.append("")
             continue
         wrapped = (
-            _hard_wrap(chunk, wrap_width)
+            _hard_wrap(chunk, inner)
             if chunk.startswith("│ ")
-            else _wrap(chunk, wrap_width)
+            else _wrap(chunk, inner)
         ) or [""]
         for row in wrapped:
-            rows.append(row.rjust(width) if align_right else f"  {row}")
-    return rows or ([""] if not align_right else [" " * width])
+            rows.append(f"  {row}")
+    return rows or [""]
 
 
 def build_log_view(log: Sequence[object], width: int) -> list[tuple[str, str]]:

@@ -48,18 +48,22 @@ def test_user_prompt_is_right_aligned() -> None:
     assert not any("──" in line or line.strip().lower() == "you" for _, line in view)
     body = [line for kind, line in view if kind == "user" and "format this please" in line]
     assert body
-    assert body[0].endswith("format this please")
+    assert body[0].rstrip().endswith("format this please")
     assert body[0].startswith(" ")
 
 
-def test_user_prompt_spans_half_width() -> None:
+def test_user_prompt_box_is_left_aligned_inside() -> None:
     prompt = "one two three four five six seven eight nine ten eleven"
     width = 40
     view = build_log_view([RexEvent("cursor", "user", prompt)], width=width)
     body = [line for kind, line in view if kind == "user" and line.strip()]
-    assert body
+    assert len(body) > 1
     half = width // 2
+    starts = [len(line) - len(line.lstrip()) for line in body]
+    assert len(set(starts)) == 1
+    start = starts[0]
+    assert start >= width - half
     for line in body:
-        assert len(line.strip()) <= half
-        assert line.rstrip().endswith(line.strip())
-        assert line.startswith(" ")
+        assert line[start] != " "
+        assert len(line.rstrip()) - start <= half
+        assert len(line.rstrip()) <= width

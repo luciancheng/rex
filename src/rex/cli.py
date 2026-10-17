@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Sequence, TextIO
 
 from rex import __version__
-from rex.mascot import DEFAULT_PALETTE, PALETTES, color_enabled
+from rex.mascot import DEFAULT_PALETTE, color_enabled
 from rex.tui import print_card, restore_on_interrupt, run_loop
 from rex.watch.bus import default_event_path
 from rex.watch.ingest import run_ingest
@@ -22,8 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
             "examples:\n"
             "  rex start\n"
             "  rex start --static\n"
-            "  rex ingest --install-cursor-hook\n"
-            "  rex start --color blue"
+            "  rex ingest --install-cursor-hook"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -35,13 +34,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command")
     start = sub.add_parser("start", help="open the companion UI")
-    start.add_argument(
-        "-c",
-        "--color",
-        choices=tuple(PALETTES),
-        default=DEFAULT_PALETTE,
-        help=f"palette (default: {DEFAULT_PALETTE})",
-    )
     start.add_argument(
         "--no-color",
         action="store_true",
@@ -108,10 +100,10 @@ def main(
 
         enabled = False if args.no_color else color_enabled(stdout)
         if args.static or not _interactive(stdin, stdout):
-            print_card("idle", args.color, enabled=enabled, stdout=stdout)
+            print_card("idle", DEFAULT_PALETTE, enabled=enabled, stdout=stdout)
             return 0
         return run_loop(
-            color=args.color,
+            color=DEFAULT_PALETTE,
             enabled=enabled,
             animation="idle",
             stdin=stdin,

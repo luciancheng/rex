@@ -56,7 +56,6 @@ Ctrl+C twice to quit.
 ```bash
 rex start                         # live view
 rex start --static                # print one frame and exit
-rex start --color blue            # try another palette
 rex ingest --install-cursor-hook  # reinstall the Cursor watcher
 rex --help
 ```

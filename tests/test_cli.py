@@ -46,11 +46,6 @@ def test_start_noninteractive_prints_card() -> None:
     assert "REX" in stdout.getvalue()
 
 
-def test_start_color_flag() -> None:
-    args = build_parser().parse_args(["start", "--color", "blue"])
-    assert args.color == "blue"
-
-
 def test_unknown_command_is_error() -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()

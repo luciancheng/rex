@@ -164,6 +164,7 @@ def test_compose_frame_scrolls_older_events() -> None:
     assert "block-29" in live
     assert "block-00" in older
     assert "↑↓" in older
+    assert "ctrl+e bottom" in older
 
 
 def test_compose_frame_stays_top_aligned_when_short() -> None:

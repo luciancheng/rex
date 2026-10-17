@@ -104,6 +104,10 @@ def _read_key_windows(timeout: float) -> str | None:
                     "G": "home",
                     "O": "end",
                 }.get(extra, extra)
+            if ch == "\x01":
+                return "home"
+            if ch == "\x05":
+                return "end"
             return ch
         time.sleep(0.01)
     return None
@@ -119,6 +123,10 @@ def read_key(stream: TextIO, timeout: float) -> str | None:
     if not ready:
         return None
     ch = os.read(fd, 1).decode("utf-8", errors="ignore")
+    if ch == "\x01":
+        return "home"
+    if ch == "\x05":
+        return "end"
     if ch != "\x1b":
         return ch
     extra = b""
@@ -134,8 +142,12 @@ def read_key(stream: TextIO, timeout: float) -> str | None:
         "\x1b[6~": "pagedown",
         "\x1b[H": "home",
         "\x1b[1~": "home",
+        "\x1b[7~": "home",
+        "\x1bOH": "home",
         "\x1b[F": "end",
         "\x1b[4~": "end",
+        "\x1b[8~": "end",
+        "\x1bOF": "end",
         "\x1b": "esc",
     }.get(seq, seq)
 

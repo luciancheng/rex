@@ -278,10 +278,10 @@ def _text_column(
         footer_text = "press ctrl+c again to exit"
         footer_color = UI["error"]
     elif scroll:
-        footer_text = f"↑↓ {scroll} above live · ctrl+c twice"
+        footer_text = f"↑↓ {scroll} above live · ctrl+e bottom · ctrl+c twice"
         footer_color = UI["muted"]
     else:
-        footer_text = "↑↓ scroll · ctrl+c twice to exit"
+        footer_text = "↑↓ scroll · ctrl+e bottom · ctrl+c twice"
         footer_color = UI["muted"]
 
     rows = [""] * height

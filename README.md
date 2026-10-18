@@ -51,7 +51,7 @@ rex start
 
 ## Usage
 
-Ctrl+C twice to quit.
+Ctrl+C twice to quit. Type `breakdance` in the input box to play the dance sheet once.
 
 ```bash
 rex start                         # live view

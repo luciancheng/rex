@@ -29,6 +29,7 @@ Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. 
 | Live UI / keys | `internal/tui/` |
 | Event feed | `internal/watch/` |
 | Idle PNG | `assets/idle.png` |
+| Breakdance sheet | `assets/breakdance.png` (40×40 cells) |
 | README art | `assets/rex.png` (scaled idle) |
 | Importer | `cmd/importsprite` |
 | Tests | `*_test.go` next to the package |
@@ -46,6 +47,8 @@ go run ./cmd/importsprite assets/idle.png --apply
 That writes the idle `Pixels(...)` grid and the yellow palette 1:1. **Leave blink, glance, and squat as transforms** on `IdleRows` (`PaintPixels` / `ShiftBody`). Do not hand-edit a second grid that drifts from the PNG.
 
 Blink drops the top eye pixel (the face `k` at column 25, rows 13–14 on the current sprite). Squat is `ShiftBody(..., dy=1, keepBottom=7)` so the shadow stays planted.
+
+Breakdance is the 40×40 sheet `assets/breakdance.png` (left-to-right, top-to-bottom). Type `breakdance` in the composer to play it **once**, then idle resumes. Map sheet pixels onto the yellow palette and draw with the half-block renderer — do not blit the PNG.
 
 If the README hero should match, rebuild `assets/rex.png` from `idle.png` with nearest-neighbor scale.
 

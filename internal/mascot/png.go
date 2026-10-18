@@ -20,8 +20,15 @@ func LoadPNG(path string) (PngImage, error) {
 	if err != nil {
 		return PngImage{}, err
 	}
+	return LoadPNGBytes(data, path)
+}
+
+func LoadPNGBytes(data []byte, name string) (PngImage, error) {
+	if name == "" {
+		name = "png"
+	}
 	if len(data) < 8 || !bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
-		return PngImage{}, fmt.Errorf("%s is not a PNG", path)
+		return PngImage{}, fmt.Errorf("%s is not a PNG", name)
 	}
 	var width, height, bitDepth, colorType int
 	var haveIHDR bool
@@ -60,7 +67,7 @@ func LoadPNG(path string) (PngImage, error) {
 		i += 12 + length
 	}
 	if !haveIHDR {
-		return PngImage{}, fmt.Errorf("%s is missing IHDR", path)
+		return PngImage{}, fmt.Errorf("%s is missing IHDR", name)
 	}
 	rawReader, err := zlib.NewReader(bytes.NewReader(idat))
 	if err != nil {
@@ -79,7 +86,7 @@ func LoadPNG(path string) (PngImage, error) {
 	offset := 0
 	for y := 0; y < height; y++ {
 		if offset+1+rowBytes > len(raw) {
-			return PngImage{}, fmt.Errorf("%s truncated IDAT", path)
+			return PngImage{}, fmt.Errorf("%s truncated IDAT", name)
 		}
 		filterType := raw[offset]
 		scan := append([]byte{}, raw[offset+1:offset+1+rowBytes]...)

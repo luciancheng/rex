@@ -537,18 +537,39 @@ func PrintCard(spriteName, color string, enabled bool, stdout io.Writer) error {
 	return nil
 }
 
-func advance(frames []mascot.Frame, index, hold int) (int, int) {
+func advance(frames []mascot.Frame, index, hold int, loop bool) (nextIndex, nextHold int, done bool) {
 	hold--
 	if hold > 0 {
-		return index, hold
+		return index, hold, false
 	}
-	index = (index + 1) % len(frames)
-	return index, frames[index].Hold
+	next := index + 1
+	if next >= len(frames) {
+		if !loop {
+			return index, 1, true
+		}
+		next = 0
+	}
+	return next, frames[next].Hold, false
+}
+
+func animationLoops(name string) bool {
+	return name != "breakdance"
 }
 
 func isPrintableKey(key string) bool {
 	r := []rune(key)
 	return len(r) == 1 && unicode.IsPrint(r[0])
+}
+
+func ComposerAnimation(text, current string) string {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "breakdance":
+		return "breakdance"
+	case "idle":
+		return "idle"
+	default:
+		return current
+	}
 }
 
 func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.File, eventsPath string) (int, error) {
@@ -650,7 +671,17 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				case "\r", "\n":
 					quitPending = false
 					if strings.TrimSpace(draft) != "" {
-						log = append(log, watch.NewEvent("user", "text", strings.TrimSpace(draft), nil))
+						text := strings.TrimSpace(draft)
+						next := ComposerAnimation(text, sequence.Name)
+						if next != sequence.Name {
+							sequence = mascot.MustAnimation(next)
+							frameIndex = 0
+							hold = sequence.Frames[0].Hold
+							spriteName = sequence.Frames[0].Sprite
+							animated = len(sequence.Frames) > 1
+							status = sequence.Name
+						}
+						log = append(log, watch.NewEvent("user", "text", text, nil))
 						draft = ""
 						changed = true
 					}
@@ -682,11 +713,22 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 					}
 				}
 				if animated {
-					frameIndex, hold = advance(sequence.Frames, frameIndex, hold)
-					nextName := sequence.Frames[frameIndex].Sprite
-					if nextName != spriteName {
-						spriteName = nextName
+					var finished bool
+					frameIndex, hold, finished = advance(sequence.Frames, frameIndex, hold, animationLoops(sequence.Name))
+					if finished {
+						sequence = mascot.MustAnimation(mascot.DefaultAnimation)
+						frameIndex = 0
+						hold = sequence.Frames[0].Hold
+						spriteName = sequence.Frames[0].Sprite
+						animated = len(sequence.Frames) > 1
+						status = sequence.Name
 						changed = true
+					} else {
+						nextName := sequence.Frames[frameIndex].Sprite
+						if nextName != spriteName {
+							spriteName = nextName
+							changed = true
+						}
 					}
 				}
 			}

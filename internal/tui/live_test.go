@@ -77,6 +77,45 @@ func TestUserPromptBoxIsLeftAlignedInside(t *testing.T) {
 	}
 }
 
+func TestComposerAnimationBreakdance(t *testing.T) {
+	if ComposerAnimation("breakdance", "idle") != "breakdance" {
+		t.Fatal("expected breakdance")
+	}
+	if ComposerAnimation(" BreakDance ", "idle") != "breakdance" {
+		t.Fatal("case/space")
+	}
+	if ComposerAnimation("idle", "breakdance") != "idle" {
+		t.Fatal("idle restore")
+	}
+	if ComposerAnimation("hello", "idle") != "idle" {
+		t.Fatal("plain text should keep current")
+	}
+}
+
+func TestAdvanceBreakdancePlaysOnce(t *testing.T) {
+	frames := mascot.MustAnimation("breakdance").Frames
+	index, hold := 0, frames[0].Hold
+	steps := 0
+	for {
+		var done bool
+		index, hold, done = advance(frames, index, hold, false)
+		steps++
+		if done {
+			break
+		}
+		if steps > 10000 {
+			t.Fatal("did not finish")
+		}
+	}
+	if index != len(frames)-1 {
+		t.Fatalf("ended on %d, want last frame", index)
+	}
+	_, _, looped := advance(frames, len(frames)-1, 1, true)
+	if looped {
+		t.Fatal("idle-style loop should wrap, not finish")
+	}
+}
+
 func TestExtendLogDropsRepeatedThoughts(t *testing.T) {
 	var log []watch.Event
 	first := watch.NewEvent("cursor", "thought", "Looking at live.py", nil)

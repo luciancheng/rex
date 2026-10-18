@@ -9,7 +9,7 @@ Install and user docs live in `README.md`. This file is how to change the code.
 ## Do not
 
 - Add palettes or a `--color` flag. Yellow from `assets/idle.png` is the only look.
-- Add dependencies, frameworks, or a config system without a concrete need. Python 3.9+ stdlib.
+- Add dependencies, frameworks, or a config system without a concrete need. Go 1.22+ stdlib plus `golang.org/x/sys` and `golang.org/x/term` for the TTY.
 - Scrape transcripts or use the Cursor SDK to watch the in-IDE agent. Hooks only.
 - Steer, inject prompts, or auto-approve tools unless the human asked for that this turn.
 - Invent a custom `.rex` language. If a plan file happens, it is JSON named `plan.rex`.
@@ -24,14 +24,14 @@ Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. 
 
 | Area | Path |
 | --- | --- |
-| CLI | `src/rex/cli.py` |
-| Mascot | `src/rex/mascot/` |
-| Live UI / keys | `src/rex/tui/` |
-| Event feed | `src/rex/watch/` |
+| CLI | `internal/cli/` · `cmd/rex` |
+| Mascot | `internal/mascot/` |
+| Live UI / keys | `internal/tui/` |
+| Event feed | `internal/watch/` |
 | Idle PNG | `assets/idle.png` |
 | README art | `assets/rex.png` (scaled idle) |
-| Importer | `tools/import_sprite.py` |
-| Tests | `tests/` |
+| Importer | `cmd/importsprite` |
+| Tests | `*_test.go` next to the package |
 
 ## Mascot
 
@@ -40,22 +40,24 @@ Keep rendering separate from watch/TUI logic.
 To change idle: replace `assets/idle.png`, then:
 
 ```bash
-python tools/import_sprite.py assets/idle.png --apply
+go run ./cmd/importsprite assets/idle.png --apply
 ```
 
-That writes `IDLE_ROWS` and the yellow palette 1:1. **Leave blink, glance, and squat as transforms** on `IDLE_ROWS` (`paint_pixels` / `shift_body`). Do not hand-edit a second grid that drifts from the PNG.
+That writes the idle `Pixels(...)` grid and the yellow palette 1:1. **Leave blink, glance, and squat as transforms** on `IdleRows` (`PaintPixels` / `ShiftBody`). Do not hand-edit a second grid that drifts from the PNG.
 
-Blink drops the top eye pixel (the face `k` at column 25, rows 13–14 on the current sprite). Squat is `shift_body(..., dy=1, keep_bottom=7)` so the shadow stays planted.
+Blink drops the top eye pixel (the face `k` at column 25, rows 13–14 on the current sprite). Squat is `ShiftBody(..., dy=1, keepBottom=7)` so the shadow stays planted.
 
 If the README hero should match, rebuild `assets/rex.png` from `idle.png` with nearest-neighbor scale.
 
 Animation must stay slow. Never let it eat input or overwrite the log.
 
+Unix live mode is cbreak (ECHO/ICANON/ISIG off) and **must keep OPOST**. Do not use `term.MakeRaw`.
+
 ## Watch feed
 
-Cursor hooks (`~/.cursor/hooks.json`) spawn `python -m rex ingest --source cursor`. Adapters map vendor JSON to `RexEvent`; `append_event` dedupes; `EventTail(from_end=True)` paints new lines.
+Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`. Adapters map vendor JSON to `watch.Event`; `AppendEvent` dedupes; `NewEventTail(path, true)` paints new lines.
 
-New harness = adapter (+ installer). Do not special-case vendors in `live.py`.
+New harness = adapter (+ installer). Do not special-case vendors in `live.go`.
 
 Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`.
 
@@ -65,23 +67,22 @@ Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `erro
 - User prompts: no `YOU` rule. Invisible column, at most half the pane, **right-aligned as a box**, **left-aligned text inside**. Color `UI["you"]`.
 - Markdown → headings, lists, stripped emphasis, fenced code as `│ ` lines.
 - Keys: ↑↓, page, Home / Ctrl+A (oldest), End / Ctrl+E (live). Composer does not send to the agent.
-- Clip ANSI by cells, not `len()`. Crop from the bottom; keep the mascot top-left.
+- Clip ANSI by cells (runes), not `len()` bytes. Crop from the bottom; keep the mascot top-left.
 
 ## Commands and tests
 
 ```bash
-pip install -e ".[dev]"
-pytest
-rex start
+go test ./...
+go run ./cmd/rex start
 ```
 
-CI: GitHub Actions, Ubuntu/macOS/Windows, Python 3.9/3.11/3.13 (no macOS/Windows 3.9).
+CI: GitHub Actions, Ubuntu/macOS/Windows, Go 1.22 and 1.24.
 
 After sprite or TUI changes, restart a running `rex start`. Tests do not replace looking at the terminal.
 
 ## Definition of done
 
 - Follows this file and any PNG the human attached.
-- `pytest` passes.
+- `go test ./...` passes.
 - Terminal state restores on quit / Ctrl+C.
 - No speculative product, extra commands, or architecture for a feature that was not requested.

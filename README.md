@@ -18,12 +18,12 @@
 </p>
 
 <p align="center">
-  macOS · Linux · Windows 10+ &nbsp;·&nbsp; Python 3.9+ &nbsp;·&nbsp; MIT
+  macOS · Linux · Windows 10+ &nbsp;·&nbsp; Go 1.22+ &nbsp;·&nbsp; MIT
 </p>
 
 Leave him running. Talk to Cursor as usual. Thoughts, tools, questions, and your prompts show up in the pane to the right of the dino. Claude Code and Codex mappers exist; Cursor is the one that's wired today.
 
-Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install Python 3.9+ once. After that, `rex` works from any folder — it does not need to share a directory with the agent.
+Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once. After that, `rex` works from any folder — it does not need to share a directory with the agent.
 
 ## Install
 
@@ -39,12 +39,12 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.ps1 | iex
 ```
 
-That creates a private environment under `~/.rex`, puts `rex` on your PATH, and wires Cursor so this machine's agent chat is watched. Open a new terminal, then `rex start` from anywhere.
+That builds a binary into `~/.local/bin`, puts `rex` on your PATH, and wires Cursor so this machine's agent chat is watched. You need [Go 1.22+](https://go.dev/dl/). Open a new terminal, then `rex start` from anywhere.
 
-Already have [pipx](https://pipx.pypa.io/)?
+Already have Go?
 
 ```bash
-pipx install git+https://github.com/luciancheng/rex.git
+go install github.com/luciancheng/rex/cmd/rex@latest
 rex ingest --install-cursor-hook
 rex start
 ```
@@ -69,13 +69,9 @@ Idle and future poses should be 40×40.
 ```bash
 git clone https://github.com/luciancheng/rex.git
 cd rex
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-rex start
+go test ./...
+go run ./cmd/rex start
 ```
-
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`. The `dev` extra is `pytest` and `pytest-cov`.
 
 ## Edit the idle sprite
 
@@ -84,16 +80,16 @@ Idle Rex is the 40×40 PNG at `assets/idle.png`, converted pixel-for-pixel into 
 Rebuild from a PNG (reads every pixel and the palette):
 
 ```bash
-python tools/import_sprite.py assets/idle.png
-python tools/import_sprite.py assets/idle.png --apply
+go run ./cmd/importsprite assets/idle.png
+go run ./cmd/importsprite assets/idle.png --apply
 ```
 
-`--apply` writes the grid into `src/rex/mascot/sprites.py` and the sampled RGB values into the `yellow` palette. Restart `rex start` after that.
+`--apply` writes the grid into `internal/mascot/sprites.go` and the sampled RGB values into the `yellow` palette. Restart `rex start` after that.
 
 You can also edit the data by hand:
 
-- **Pixels / size** — `src/rex/mascot/sprites.py`, `IDLE_ROWS`. Each character is one pixel. Add or remove characters and lines to change size.
-- **Colors** — `src/rex/mascot/palettes.py`, the `yellow` RGB triples.
+- **Pixels / size** — `internal/mascot/sprites.go`, the idle `Pixels(...)` grid. Each character is one pixel. Add or remove characters and lines to change size.
+- **Colors** — `internal/mascot/palettes.go`, the `yellow` RGB triples.
 
 | Letter | Role |
 | --- | --- |
@@ -110,61 +106,47 @@ You can also edit the data by hand:
 
 ## Add sprites and animations later
 
-The registry lives in `src/rex/mascot/catalog.py`. `rex start` plays the `idle` animation (blink and glance) inside the 40×40 stage.
+The registry lives in `internal/mascot/catalog.go`. `rex start` plays the `idle` animation (blink and glance) inside the 40×40 stage.
 
-```python
-from rex.mascot.catalog import Animation, Sprite, register_animation, register_sprite
-from rex.mascot.sprites import pixels
-
-BLINK = register_sprite(Sprite("idle_blink", pixels("...")))
-register_animation(
-    Animation("idle", frames=(("idle", 20), ("idle_blink", 3))),
-)
+```go
+blink := mascot.RegisterSprite(mascot.Sprite{Name: "idle_blink", Rows: mascot.Pixels("...")})
+mascot.RegisterAnimation(mascot.Animation{
+    Name: "idle",
+    Frames: []mascot.Frame{{"idle", 20}, {"idle_blink", 3}},
+})
 ```
 
-`hold` is in live-viewer ticks. A one-frame animation is a still.
+`Hold` is in live-viewer ticks. A one-frame animation is a still.
 
 ## Layout
 
 ```
 assets/idle.png             source 40×40 sprite
 assets/rex.png              README art (same drawing, scaled)
-tools/import_sprite.py      PNG → CLI pixel art
-src/rex/cli.py              commands (rex start)
-src/rex/mascot/sprites.py   idle pixel grid
-src/rex/mascot/palettes.py  RGB colors
-src/rex/mascot/png.py       PNG decoder used by the importer
-src/rex/mascot/catalog.py   sprite + animation registry
-src/rex/mascot/render.py    pixels → terminal cells
-src/rex/tui/                live viewer
-src/rex/watch/              agent event feed (hooks → JSONL → pane)
+cmd/rex                     rex start / rex ingest
+cmd/importsprite            PNG → CLI pixel art
+internal/mascot/            sprites, palettes, half-block renderer
+internal/tui/               live viewer
+internal/watch/             agent event feed (hooks → JSONL → pane)
 scripts/install.sh          user install (macOS/Linux)
 scripts/install.ps1         user install (Windows)
-tests/                      pytest suite
 .github/workflows/ci.yml    GitHub Actions
 ```
 
 ## Tests
 
 ```bash
-pip install -e ".[dev]"
-pytest
+go test ./...
 ```
 
-With coverage:
-
-```bash
-pytest --cov --cov-report=term-missing
-```
-
-CI runs the same suite on Ubuntu, macOS, and Windows across Python 3.9, 3.11, and 3.13.
+CI runs the same suite on Ubuntu, macOS, and Windows across Go 1.22 and 1.24.
 
 ## Contributing
 
-1. Create a virtualenv and `pip install -e ".[dev]"`.
-2. Keep mascot rendering in `src/rex/mascot/` and commands in `src/rex/cli.py`.
-3. Add tests under `tests/` for new behavior.
-4. Run `pytest` before opening a pull request.
+1. Install Go 1.22+.
+2. Keep mascot rendering in `internal/mascot/` and commands in `internal/cli/`.
+3. Add `*_test.go` next to the package for new behavior.
+4. Run `go test ./...` before opening a pull request.
 
 ## License
 

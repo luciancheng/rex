@@ -15,15 +15,39 @@ var CursorHookEvents = []string{
 	"afterAgentThought",
 	"beforeShellExecution",
 	"preToolUse",
+	"postToolUse",
+	"postToolUseFailure",
+	"afterFileEdit",
 	"afterAgentResponse",
+	"stop",
 }
 
 func IngestCommand() string {
+	return strconv.Quote(rexExecutable()) + " ingest --source cursor"
+}
+
+func rexExecutable() string {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
-		exe = "rex"
+		return "rex"
 	}
-	return strconv.Quote(exe) + " ingest --source cursor"
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != "" {
+		exe = resolved
+	}
+	if !isEphemeralGoBuild(exe) {
+		return exe
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		stable := filepath.Join(home, ".local", "bin", "rex")
+		if info, err := os.Stat(stable); err == nil && !info.IsDir() {
+			return stable
+		}
+	}
+	return "rex"
+}
+
+func isEphemeralGoBuild(exe string) bool {
+	return strings.Contains(filepath.ToSlash(exe), "/go-build")
 }
 
 func InstallCursorHook(stdout io.Writer) error {
@@ -69,7 +93,8 @@ func InstallCursorHook(stdout io.Writer) error {
 			existing := fmt.Sprint(m["command"])
 			if existing == command {
 				already = true
-				entries = append(entries, entry)
+				m["timeout"] = 20
+				entries = append(entries, m)
 				continue
 			}
 			if isRexIngestCommand(existing) {
@@ -78,7 +103,7 @@ func InstallCursorHook(stdout io.Writer) error {
 			entries = append(entries, entry)
 		}
 		if !already {
-			entries = append(entries, map[string]any{"command": command})
+			entries = append(entries, map[string]any{"command": command, "timeout": 20})
 		}
 		hooks[name] = entries
 	}

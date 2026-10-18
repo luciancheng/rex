@@ -57,6 +57,13 @@ func Paint(text string, rgb RGB, enabled bool) string {
 	return FG(rgb) + text + Reset
 }
 
+func PaintFill(text string, fg, bg RGB, enabled bool) string {
+	if !enabled {
+		return text
+	}
+	return FG(fg) + BG(bg) + text + Reset
+}
+
 func pixelRGB(ch rune, palette Palette) (*RGB, error) {
 	if ch == '.' || ch == ' ' {
 		return nil, nil

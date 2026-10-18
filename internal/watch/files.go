@@ -1,0 +1,178 @@
+package watch
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+func toolMeta(tool, path string) map[string]any {
+	meta := map[string]any{"tool": tool}
+	if path != "" {
+		meta["path"] = path
+	}
+	return meta
+}
+
+func MetaTool(ev Event) string {
+	if ev.Meta == nil {
+		return ""
+	}
+	tool, _ := ev.Meta["tool"].(string)
+	return tool
+}
+
+func EventPath(ev Event) string {
+	if ev.Meta != nil {
+		if p, ok := ev.Meta["path"].(string); ok && strings.TrimSpace(p) != "" {
+			return strings.TrimSpace(p)
+		}
+	}
+	return pathFromText(ev.Text)
+}
+
+func pathFromText(text string) string {
+	s := strings.TrimSpace(text)
+	s = strings.TrimPrefix(s, "$ ")
+	lower := strings.ToLower(s)
+	for _, prefix := range []string{"wrote ", "deleted ", "writing ", "read "} {
+		if strings.HasPrefix(lower, prefix) {
+			return strings.TrimSpace(s[len(prefix):])
+		}
+	}
+	parts := strings.SplitN(s, " ", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	if strings.ContainsAny(parts[0], `/\:`) {
+		return ""
+	}
+	rest := strings.TrimSpace(parts[1])
+	if rest == "" || strings.Contains(rest, "://") {
+		return ""
+	}
+	if strings.ContainsAny(rest, `/\:`) || strings.HasPrefix(rest, "~") {
+		return rest
+	}
+	return ""
+}
+
+func IsShellTool(tool string) bool {
+	t := strings.ToLower(strings.TrimSpace(tool))
+	t = strings.ReplaceAll(t, "_", "")
+	t = strings.ReplaceAll(t, "-", "")
+	switch t {
+	case "shell", "bash", "zsh", "sh", "cmd", "powershell", "pwsh", "terminal":
+		return true
+	}
+	return false
+}
+
+func IsFileLookTool(tool string) bool {
+	t := strings.ToLower(strings.TrimSpace(tool))
+	t = strings.ReplaceAll(t, "_", "")
+	t = strings.ReplaceAll(t, "-", "")
+	if t == "" {
+		return false
+	}
+	for _, needle := range []string{
+		"read", "grep", "glob", "search", "semsearch", "semanticsearch",
+		"ls", "listdir", "readdir", "cat", "view",
+	} {
+		if t == needle || strings.HasPrefix(t, needle) {
+			return true
+		}
+	}
+	return t == "list"
+}
+
+func IsFileEditEvent(ev Event) bool {
+	if IsFileEditTool(MetaTool(ev)) {
+		return true
+	}
+	t := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ev.Text), "$ ")))
+	for _, prefix := range []string{"wrote ", "deleted ", "writing ", "write ", "strreplace "} {
+		if strings.HasPrefix(t, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func IsFileLookEvent(ev Event) bool {
+	if ev.Kind != "command" && ev.Kind != "result" {
+		return false
+	}
+	if IsFileEditEvent(ev) || IsShellTool(MetaTool(ev)) {
+		return false
+	}
+	if IsFileLookTool(MetaTool(ev)) {
+		return true
+	}
+	p := EventPath(ev)
+	return p != "" && !strings.Contains(p, "://")
+}
+
+func FileVerb(ev Event) string {
+	if ev.Kind == "error" {
+		return ""
+	}
+	tool := MetaTool(ev)
+	if IsFileEditTool(tool) || IsFileEditEvent(ev) {
+		lower := strings.ToLower(ev.Text + " " + tool)
+		if strings.Contains(lower, "delete") {
+			return "deleted"
+		}
+		if ev.Kind == "command" {
+			return "writing"
+		}
+		return "wrote"
+	}
+	if IsFileLookTool(tool) || IsFileLookEvent(ev) {
+		return "read"
+	}
+	return ""
+}
+
+func VerbRank(verb string) int {
+	switch verb {
+	case "read":
+		return 1
+	case "writing":
+		return 2
+	case "wrote":
+		return 3
+	case "deleted":
+		return 4
+	default:
+		return 0
+	}
+}
+
+func ShortPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	p = filepath.Clean(p)
+	if wd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(wd, p); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			p = rel
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		home = filepath.Clean(home)
+		if p == home {
+			return "~"
+		}
+		prefix := home + string(os.PathSeparator)
+		if strings.HasPrefix(p, prefix) {
+			return "~/" + filepath.ToSlash(p[len(prefix):])
+		}
+	}
+	return filepath.ToSlash(p)
+}
+
+func IsQuietResult(ev Event) bool {
+	return ev.Kind == "result"
+}

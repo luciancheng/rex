@@ -60,30 +60,74 @@ func LastEvents(path string, limit int) []Event {
 }
 
 func AppendEvent(path string, event Event) (bool, error) {
-	if IsDuplicate(event, LastEvents(path, recentN), 4) {
-		return false, nil
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, err
+	}
+	var wrote bool
+	err := withFeedLock(path, func() error {
+		recent := LastEvents(path, recentN)
+		if n := len(recent); n > 0 && IsGrowingText(recent[n-1], event) {
+			event.Text = LongerText(recent[n-1].Text, event.Text)
+			ok, err := replaceLastEvent(path, event)
+			wrote = ok
+			return err
+		}
+		if IsDuplicate(event, recent, 4) {
+			return nil
+		}
+		line, err := event.ToJSON()
+		if err != nil {
+			return err
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return err
+		}
+		_, err = f.WriteString(line + "\n")
+		cerr := f.Close()
+		if err != nil {
+			return err
+		}
+		if cerr != nil {
+			return cerr
+		}
+		wrote = true
+		return nil
+	})
+	return wrote, err
+}
+
+func replaceLastEvent(path string, event Event) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	end := len(data)
+	for end > 0 && data[end-1] == '\n' {
+		end--
+	}
+	start := end
+	for start > 0 && data[start-1] != '\n' {
+		start--
 	}
 	line, err := event.ToJSON()
 	if err != nil {
 		return false, err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(line + "\n"); err != nil {
+	out := make([]byte, 0, start+len(line)+1)
+	out = append(out, data[:start]...)
+	out = append(out, line...)
+	out = append(out, '\n')
+	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
 type EventTail struct {
-	Path   string
-	offset int64
+	Path    string
+	offset  int64
+	pending string
 }
 
 func NewEventTail(path string, fromEnd bool) *EventTail {
@@ -123,8 +167,15 @@ func (t *EventTail) Poll() []Event {
 		return nil
 	}
 	t.offset, _ = f.Seek(0, 1)
+	chunk := t.pending + string(buf[:n])
+	t.pending = ""
+	parts := strings.Split(chunk, "\n")
+	if !strings.HasSuffix(chunk, "\n") {
+		t.pending = parts[len(parts)-1]
+		parts = parts[:len(parts)-1]
+	}
 	var events []Event
-	for _, line := range strings.Split(string(buf[:n]), "\n") {
+	for _, line := range parts {
 		raw := strings.TrimSpace(line)
 		if raw == "" {
 			continue

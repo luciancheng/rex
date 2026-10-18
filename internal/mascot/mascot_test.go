@@ -140,6 +140,30 @@ func TestBreakdanceSheetIsRegistered(t *testing.T) {
 	}
 }
 
+func TestTypingSheetIsRegistered(t *testing.T) {
+	anim, err := GetAnimation("typing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(anim.Frames) < 8 {
+		t.Fatalf("too few frames: %d", len(anim.Frames))
+	}
+	for _, frame := range anim.Frames {
+		sprite := MustSprite(frame.Sprite)
+		w, h, err := SpriteSize(sprite.Rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w != StageSize || h != StageSize {
+			t.Fatalf("%s is %dx%d", sprite.Name, w, h)
+		}
+	}
+	pixels := strings.Join(MustSprite(anim.Frames[0].Sprite).Rows, "")
+	if !strings.Contains(pixels, "y") || !strings.Contains(pixels, "k") {
+		t.Fatal("first typing frame missing body/outline")
+	}
+}
+
 func TestPalettesDefineEveryRole(t *testing.T) {
 	for name, palette := range Palettes {
 		for _, role := range PixelRoles {

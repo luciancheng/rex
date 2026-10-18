@@ -113,6 +113,42 @@ func SliceSheet(img PngImage, cell int) ([][][][4]int, error) {
 	return frames, nil
 }
 
+func RegisterSheetAnimation(animName, pngName string, data []byte, hold int) {
+	img, err := LoadPNGBytes(data, pngName)
+	if err != nil {
+		panic(err)
+	}
+	frames, err := SliceSheet(img, StageSize)
+	if err != nil {
+		panic(err)
+	}
+	pal := MustPalette(DefaultPalette)
+	var anim []Frame
+	for i, pixels := range frames {
+		rows := PixelsFromRGBA(pixels, pal)
+		if !frameHasInk(rows) {
+			continue
+		}
+		if err := ValidatePixels(animName, rows); err != nil {
+			panic(err)
+		}
+		w, h, err := SpriteSize(rows)
+		if err != nil {
+			panic(err)
+		}
+		if w != StageSize || h != StageSize {
+			panic(fmt.Sprintf("%s frame %d is %dx%d", animName, i, w, h))
+		}
+		name := fmt.Sprintf("%s_%02d", animName, i)
+		RegisterSprite(Sprite{Name: name, Rows: rows})
+		anim = append(anim, Frame{Sprite: name, Hold: hold})
+	}
+	if len(anim) == 0 {
+		panic(animName + " sheet had no frames")
+	}
+	RegisterAnimation(Animation{Name: animName, Frames: anim})
+}
+
 func frameHasInk(rows []string) bool {
 	for _, row := range rows {
 		for _, ch := range row {

@@ -32,6 +32,76 @@ func TestCursorWriteSkipsFileBody(t *testing.T) {
 	if event != nil && contains(event.Text, "huge dump") {
 		t.Fatal("dumped write body")
 	}
+	if EventPath(*event) != "/tmp/note.md" {
+		t.Fatalf("path %q", EventPath(*event))
+	}
+}
+
+func TestCursorAfterFileEditIsResult(t *testing.T) {
+	event := MapPayload(map[string]any{
+		"hook_event_name": "afterFileEdit",
+		"file_path":       "/tmp/note.md",
+		"tool_name":       "Write",
+	}, "auto")
+	if event == nil || event.Kind != "result" {
+		t.Fatalf("%#v", event)
+	}
+	if event.Text != "wrote /tmp/note.md" {
+		t.Fatalf("text %q", event.Text)
+	}
+	if !IsFileEditEvent(*event) {
+		t.Fatal("should count as a file edit")
+	}
+	if EventPath(*event) != "/tmp/note.md" {
+		t.Fatalf("path %q", EventPath(*event))
+	}
+}
+
+func TestCursorAfterAgentResponse(t *testing.T) {
+	event := MapPayload(map[string]any{
+		"hook_event_name": "afterAgentResponse",
+		"text":            "Typing means a file edit is in flight.",
+	}, "auto")
+	if event == nil || event.Kind != "text" || !contains(event.Text, "file edit") {
+		t.Fatalf("%#v", event)
+	}
+}
+
+func TestCursorAfterAgentResponseContentBlocks(t *testing.T) {
+	event := MapPayload(map[string]any{
+		"hook_event_name": "afterAgentResponse",
+		"content": []any{
+			map[string]any{"type": "text", "text": "Final reply from blocks."},
+		},
+	}, "auto")
+	if event == nil || event.Kind != "text" || event.Text != "Final reply from blocks." {
+		t.Fatalf("%#v", event)
+	}
+}
+
+func TestCursorStopDoesNotBecomeReply(t *testing.T) {
+	event := MapPayload(map[string]any{
+		"hook_event_name": "stop",
+		"status":          "completed",
+		"text":            "Here is the answer.",
+	}, "auto")
+	if event != nil {
+		t.Fatalf("stop should not replace replies %#v", event)
+	}
+}
+
+func TestCursorPostToolUseWrite(t *testing.T) {
+	event := MapPayload(map[string]any{
+		"hook_event_name": "postToolUse",
+		"tool_name":       "Write",
+		"tool_input":      map[string]any{"path": "/tmp/note.md", "contents": "x"},
+	}, "auto")
+	if event == nil || event.Kind != "result" || !contains(event.Text, "/tmp/note.md") {
+		t.Fatalf("%#v", event)
+	}
+	if contains(event.Text, "contents") || event.Text == "x" {
+		t.Fatal("dumped write body")
+	}
 }
 
 func TestDuplicateThoughtIsNotAppended(t *testing.T) {
@@ -62,6 +132,15 @@ func TestCursorThoughtAndShell(t *testing.T) {
 	}, "auto")
 	if thought == nil || thought.Kind != "thought" || !contains(thought.Text, "idle sprite") {
 		t.Fatalf("thought %#v", thought)
+	}
+	blocked := MapPayload(map[string]any{
+		"hook_event_name": "afterAgentThought",
+		"content": []any{
+			map[string]any{"type": "text", "text": "Checking the hook payload."},
+		},
+	}, "auto")
+	if blocked == nil || blocked.Kind != "thought" || blocked.Text != "Checking the hook payload." {
+		t.Fatalf("thought blocks %#v", blocked)
 	}
 	command := MapPayload(map[string]any{
 		"hook_event_name": "beforeShellExecution",
@@ -134,6 +213,48 @@ func TestEventTailReadsNewLines(t *testing.T) {
 	second := tail.Poll()
 	if len(second) == 0 || second[0].Kind != "command" {
 		t.Fatalf("%#v", second)
+	}
+}
+
+func TestEventTailKeepsIncompleteLine(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(feed, []byte(`{"source":"cursor","kind":"text","text":"Hel`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tail := NewEventTail(feed, false)
+	if got := tail.Poll(); len(got) != 0 {
+		t.Fatalf("partial line leaked %#v", got)
+	}
+	f, err := os.OpenFile(feed, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`lo"}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	got := tail.Poll()
+	if len(got) != 1 || got[0].Text != "Hello" {
+		t.Fatalf("%#v", got)
+	}
+}
+
+func TestAppendReplacesGrowingReply(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	if _, err := AppendEvent(feed, NewEvent("cursor", "text", "Typing now means", nil)); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := AppendEvent(feed, NewEvent("cursor", "text", "Typing now means the agent is writing.", nil))
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	data, _ := os.ReadFile(feed)
+	lines := nonempty(string(data))
+	if len(lines) != 1 {
+		t.Fatalf("lines=%d %s", len(lines), data)
+	}
+	if !strings.Contains(lines[0], "the agent is writing") {
+		t.Fatalf("%s", lines[0])
 	}
 }
 

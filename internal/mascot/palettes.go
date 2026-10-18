@@ -40,6 +40,10 @@ var UI = map[string]RGB{
 	"accent": {244, 196, 66},
 	"error":  {232, 78, 78},
 	"you":    {92, 196, 232},
+	"folder": {253, 150, 47},
+	"action": {88, 214, 108},
+	"pick":   {92, 196, 232},
+	"pickbg": {18, 42, 58},
 }
 
 func PaletteFor(name string) (Palette, error) {

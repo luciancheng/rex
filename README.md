@@ -21,7 +21,7 @@
   macOS · Linux · Windows 10+ &nbsp;·&nbsp; Go 1.22+ &nbsp;·&nbsp; MIT
 </p>
 
-Leave him running. Talk to Cursor as usual. Thoughts, tools, questions, and your prompts show up in the pane to the right of the dino. Claude Code and Codex mappers exist; Cursor is the one that's wired today.
+Leave him running. Talk to Cursor as usual. Thoughts, file edits, shell, questions, and your prompts show up in the pane to the right of the dino. Claude Code and Codex mappers exist; Cursor is the one that's wired today.
 
 Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once. After that, `rex` works from any folder — it does not need to share a directory with the agent.
 
@@ -51,7 +51,7 @@ rex start
 
 ## Usage
 
-Ctrl+C twice to quit. Type `breakdance` in the input box to play the dance sheet once.
+`rex start` opens plans in `rex/plans/` (safe to commit and share). Create, open, or jump to the latest; Tab is the live chat. Ctrl+C twice to quit. Type `breakdance` in the chat box to play the dance sheet once.
 
 ```bash
 rex start                         # live view

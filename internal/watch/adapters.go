@@ -11,7 +11,11 @@ var cursorEvents = map[string]bool{
 	"beforeSubmitPrompt":   true,
 	"beforeShellExecution": true,
 	"preToolUse":           true,
+	"postToolUse":          true,
+	"postToolUseFailure":   true,
+	"afterFileEdit":        true,
 	"afterAgentResponse":   true,
+	"AgentResponse":        true,
 	"stop":                 true,
 }
 
@@ -134,6 +138,55 @@ func toolKind(tool string) string {
 	return "command"
 }
 
+func IsFileEditTool(tool string) bool {
+	t := strings.ToLower(strings.TrimSpace(tool))
+	if t == "" || strings.Contains(t, "read") {
+		return false
+	}
+	for _, needle := range []string{
+		"write", "strreplace", "search_replace", "searchreplace",
+		"delete", "edit", "applypatch", "apply_patch", "notebook", "multiedit",
+	} {
+		if strings.Contains(t, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func payloadToolName(payload map[string]any) string {
+	tool := strField(payload, "tool_name")
+	if tool == "" {
+		tool = strField(payload, "toolName")
+	}
+	if tool == "" {
+		tool = strField(payload, "tool")
+	}
+	if tool == "" {
+		tool = "tool"
+	}
+	return tool
+}
+
+func payloadPath(payload map[string]any) string {
+	for _, key := range []string{"file_path", "filePath", "path"} {
+		if p := strField(payload, key); p != "" {
+			return p
+		}
+	}
+	input := payload["tool_input"]
+	if input == nil {
+		input = payload["toolInput"]
+	}
+	data := asDict(input)
+	for _, key := range []string{"file_path", "filePath", "path"} {
+		if p := strField(data, key); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
 func strField(data map[string]any, key string) string {
 	v, ok := data[key]
 	if !ok || v == nil {
@@ -144,6 +197,47 @@ func strField(data map[string]any, key string) string {
 		return ""
 	}
 	return s
+}
+
+func extractProse(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := extractProse(item); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	case map[string]any:
+		if s := strings.TrimSpace(strField(v, "text")); s != "" {
+			return s
+		}
+		if inner, ok := v["content"]; ok {
+			if s := extractProse(inner); s != "" {
+				return s
+			}
+		}
+		if s := strings.TrimSpace(strField(v, "message")); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func assistantText(payload map[string]any) string {
+	for _, key := range []string{"text", "content", "message", "response"} {
+		if v, ok := payload[key]; ok {
+			if s := extractProse(v); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 func toolText(tool string, rawInput any) string {
@@ -214,7 +308,10 @@ func MapCursor(payload map[string]any) *Event {
 		ev := NewEvent("cursor", "user", text, nil)
 		return &ev
 	case "afterAgentThought":
-		text := strings.TrimSpace(strField(payload, "text"))
+		text := assistantText(payload)
+		if text == "" {
+			text = strings.TrimSpace(strField(payload, "text"))
+		}
 		if text == "" {
 			return nil
 		}
@@ -228,16 +325,10 @@ func MapCursor(payload map[string]any) *Event {
 		if command == "" {
 			return nil
 		}
-		ev := NewEvent("cursor", "command", command, map[string]any{"tool": "shell"})
+		ev := NewEvent("cursor", "command", command, toolMeta("shell", ""))
 		return &ev
 	case "preToolUse":
-		tool := strField(payload, "tool_name")
-		if tool == "" {
-			tool = strField(payload, "toolName")
-		}
-		if tool == "" {
-			tool = "tool"
-		}
+		tool := payloadToolName(payload)
 		input := payload["tool_input"]
 		if input == nil {
 			input = payload["toolInput"]
@@ -246,15 +337,43 @@ func MapCursor(payload map[string]any) *Event {
 		if text == "" {
 			return nil
 		}
-		ev := NewEvent("cursor", toolKind(tool), text, map[string]any{"tool": tool})
+		ev := NewEvent("cursor", toolKind(tool), text, toolMeta(tool, payloadPath(payload)))
 		return &ev
-	case "afterAgentResponse":
-		text := strings.TrimSpace(strField(payload, "text"))
+	case "postToolUse", "postToolUseFailure", "afterFileEdit":
+		tool := payloadToolName(payload)
+		if tool == "tool" && name == "afterFileEdit" {
+			tool = "Write"
+		}
+		path := payloadPath(payload)
+		text := tool
+		if path != "" {
+			lower := strings.ToLower(tool)
+			switch {
+			case strings.Contains(lower, "delete"):
+				text = "deleted " + path
+			case name == "afterFileEdit" || IsFileEditTool(tool):
+				text = "wrote " + path
+			default:
+				text = tool + " " + path
+			}
+		}
+		if name == "postToolUseFailure" {
+			ev := NewEvent("cursor", "error", text, toolMeta(tool, path))
+			return &ev
+		}
+		ev := NewEvent("cursor", "result", strings.TrimSpace(text), toolMeta(tool, path))
+		return &ev
+	case "afterAgentResponse", "AgentResponse":
+		text := assistantText(payload)
 		if text == "" {
 			return nil
 		}
 		ev := NewEvent("cursor", "text", text, nil)
 		return &ev
+	case "stop":
+		// End-of-turn status only. Mapping it as text hid earlier replies
+		// when Cursor sent the full concatenated message.
+		return nil
 	}
 	return nil
 }
@@ -278,7 +397,7 @@ func MapClaude(payload map[string]any) *Event {
 		if text == "" {
 			return nil
 		}
-		ev := NewEvent("claude", toolKind(tool), text, map[string]any{"tool": tool})
+		ev := NewEvent("claude", toolKind(tool), text, toolMeta(tool, payloadPath(payload)))
 		return &ev
 	case "PostToolUse":
 		tool := strField(payload, "tool_name")
@@ -288,7 +407,8 @@ func MapClaude(payload map[string]any) *Event {
 		if tool == "" {
 			tool = "tool"
 		}
-		ev := NewEvent("claude", "result", tool, map[string]any{"tool": tool})
+		path := payloadPath(payload)
+		ev := NewEvent("claude", "result", tool, toolMeta(tool, path))
 		return &ev
 	case "Notification":
 		text := strings.TrimSpace(strField(payload, "message"))
@@ -340,7 +460,11 @@ func MapCodex(payload map[string]any) *Event {
 	if text == "" {
 		return nil
 	}
-	ev := NewEvent("codex", kind, text, map[string]any{"item": itemType})
+	meta := map[string]any{"item": itemType}
+	if kind == "command" {
+		meta["tool"] = "shell"
+	}
+	ev := NewEvent("codex", kind, text, meta)
 	return &ev
 }
 

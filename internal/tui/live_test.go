@@ -116,12 +116,117 @@ func TestAdvanceBreakdancePlaysOnce(t *testing.T) {
 	}
 }
 
+func TestApplyTurnStartsThinkingOnHookPrompt(t *testing.T) {
+	turn := ApplyTurn(TurnIdle, watch.Event{Source: "cursor", Kind: "user", Text: "hello"})
+	if turn != TurnThinking {
+		t.Fatalf("got %d", turn)
+	}
+	if AnimationForTurn(turn) != "typing" {
+		t.Fatal("thinking should type")
+	}
+	turn = ApplyTurn(turn, watch.Event{Source: "cursor", Kind: "thought", Text: "hmm"})
+	if turn != TurnThinking {
+		t.Fatal("thought should stay thinking")
+	}
+	if AnimationForTurn(turn) != "typing" {
+		t.Fatal("thought should keep typing")
+	}
+	turn = ApplyTurn(turn, watch.Event{Source: "cursor", Kind: "command", Text: "ls"})
+	if turn != TurnRunning {
+		t.Fatal("tool should be running")
+	}
+	if AnimationForTurn(turn) != "typing" {
+		t.Fatal("running should type")
+	}
+	turn = ApplyTurn(turn, watch.Event{Source: "cursor", Kind: "result", Text: "ok"})
+	if turn != TurnRunning {
+		t.Fatal("result should not idle mid-turn")
+	}
+	turn = ApplyTurn(turn, watch.Event{Source: "cursor", Kind: "text", Text: "done"})
+	if turn != TurnIdle {
+		t.Fatal("reply should idle")
+	}
+	if AnimationForTurn(turn) != "idle" {
+		t.Fatal("idle animation")
+	}
+}
+
+func TestApplyTurnIgnoresLocalComposer(t *testing.T) {
+	turn := ApplyTurn(TurnThinking, watch.Event{Source: "user", Kind: "text", Text: "a note"})
+	if turn != TurnThinking {
+		t.Fatal("composer must not end the turn")
+	}
+	turn = ApplyTurn(TurnIdle, watch.Event{Source: "user", Kind: "text", Text: "hello"})
+	if turn != TurnIdle {
+		t.Fatal("composer must not start thinking")
+	}
+}
+
+func viewText(view []LogLine) string {
+	var b strings.Builder
+	for _, line := range view {
+		b.WriteString(line.Text)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func TestBuildLogViewKeepsRunReplyHidesDone(t *testing.T) {
+	view := BuildLogView([]watch.Event{
+		{Source: "cursor", Kind: "thought", Text: "Checking the sprite."},
+		{Source: "cursor", Kind: "command", Text: "Write /tmp/a.go", Meta: map[string]any{"tool": "Write", "path": "/tmp/a.go"}},
+		{Source: "cursor", Kind: "result", Text: "wrote /tmp/a.go", Meta: map[string]any{"tool": "Write", "path": "/tmp/a.go"}},
+		{Source: "cursor", Kind: "command", Text: "Read /tmp/a.go", Meta: map[string]any{"tool": "Read", "path": "/tmp/a.go"}},
+		{Source: "cursor", Kind: "text", Text: "First reply."},
+		{Source: "cursor", Kind: "text", Text: "Second reply."},
+	}, 48)
+	text := viewText(view)
+	for _, needle := range []string{"── thinking", "── run", "── reply", "$ Write", "First reply", "Second reply"} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("missing %q in\n%s", needle, text)
+		}
+	}
+	if strings.Contains(text, "── done") || strings.Contains(text, "wrote /tmp") {
+		t.Fatalf("done spam still in\n%s", text)
+	}
+	if strings.Contains(text, "Read /tmp") {
+		t.Fatalf("file look still in\n%s", text)
+	}
+	replies := strings.Count(text, "── reply")
+	if replies != 2 {
+		t.Fatalf("want two reply blocks, got %d\n%s", replies, text)
+	}
+}
+
+func TestChatHeaderShowsStateAndPlan(t *testing.T) {
+	got := chatHeaderMeta("thinking", "rex/plans/archive/sprint.rex.json", 80)
+	if !strings.Contains(got, "thinking") || !strings.Contains(got, "rex/plans/archive/sprint.rex.json") {
+		t.Fatalf("%q", got)
+	}
+	short := chatHeaderMeta("idle", "rex/plans/deep/nested/sprint.rex.json", 24)
+	if !strings.HasPrefix(short, "idle") || !strings.Contains(short, "rex.json") {
+		t.Fatalf("clipped %q", short)
+	}
+}
+
+func TestExtendLogGrowsStreamingReply(t *testing.T) {
+	var log []watch.Event
+	ExtendLog(&log, []watch.Event{watch.NewEvent("cursor", "text", "Typing now means", nil)})
+	added := ExtendLog(&log, []watch.Event{watch.NewEvent("cursor", "text", "Typing now means a file edit.", nil)})
+	if len(log) != 1 || len(added) != 1 {
+		t.Fatalf("log=%d added=%d", len(log), len(added))
+	}
+	if !strings.Contains(log[0].Text, "file edit") {
+		t.Fatalf("%q", log[0].Text)
+	}
+}
+
 func TestExtendLogDropsRepeatedThoughts(t *testing.T) {
 	var log []watch.Event
 	first := watch.NewEvent("cursor", "thought", "Looking at live.py", nil)
 	added := ExtendLog(&log, []watch.Event{first, watch.NewEvent("cursor", "thought", "Looking at live.py", nil)})
-	if added != 1 || len(log) != 1 {
-		t.Fatalf("added=%d len=%d", added, len(log))
+	if len(added) != 1 || len(log) != 1 {
+		t.Fatalf("added=%d len=%d", len(added), len(log))
 	}
 }
 

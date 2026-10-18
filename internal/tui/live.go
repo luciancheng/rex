@@ -236,6 +236,7 @@ func bodyRows(kind, text string, width, inner int) []string {
 type LogLine struct {
 	Kind string
 	Text string
+	Fill string
 }
 
 func BuildLogView(log []watch.Event, width int) []LogLine {
@@ -251,8 +252,11 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 	}
 	var groups []group
 	for _, entry := range log {
+		if watch.IsFileLookEvent(entry) || watch.IsQuietResult(entry) {
+			continue
+		}
 		kind, text := asLogEntry(entry)
-		if n := len(groups); n > 0 && groups[n-1].kind == kind {
+		if n := len(groups); n > 0 && groups[n-1].kind == kind && kind != "text" && kind != "user" {
 			groups[n-1].texts = append(groups[n-1].texts, text)
 			continue
 		}
@@ -280,9 +284,14 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 	return lines
 }
 
-func ExtendLog(log *[]watch.Event, incoming []watch.Event) int {
-	added := 0
+func ExtendLog(log *[]watch.Event, incoming []watch.Event) []watch.Event {
+	var added []watch.Event
 	for _, event := range incoming {
+		if n := len(*log); n > 0 && watch.IsGrowingText((*log)[n-1], event) {
+			(*log)[n-1].Text = watch.LongerText((*log)[n-1].Text, event.Text)
+			added = append(added, (*log)[n-1])
+			continue
+		}
 		start := 0
 		if n := len(*log); n > 12 {
 			start = n - 12
@@ -291,12 +300,64 @@ func ExtendLog(log *[]watch.Event, incoming []watch.Event) int {
 			continue
 		}
 		*log = append(*log, event)
-		added++
+		added = append(added, event)
 	}
 	if len(*log) > MaxLog {
 		*log = (*log)[len(*log)-MaxLog:]
 	}
 	return added
+}
+
+type Turn int
+
+const (
+	TurnIdle Turn = iota
+	TurnThinking
+	TurnRunning
+)
+
+func ApplyTurn(turn Turn, ev watch.Event) Turn {
+	if ev.Source == "user" {
+		return turn
+	}
+	switch ev.Kind {
+	case "user", "thought":
+		return TurnThinking
+	case "command", "question":
+		return TurnRunning
+	case "result":
+		return turn
+	case "text", "error", "idle":
+		return TurnIdle
+	default:
+		return turn
+	}
+}
+
+func AnimationForTurn(turn Turn) string {
+	switch turn {
+	case TurnThinking, TurnRunning:
+		return "typing"
+	default:
+		return mascot.DefaultAnimation
+	}
+}
+
+func statusForTurn(turn Turn, lastKind string) string {
+	switch turn {
+	case TurnThinking:
+		return "thinking"
+	case TurnRunning:
+		if s, ok := kindStatus[lastKind]; ok && lastKind != "user" {
+			return s
+		}
+		return "running"
+	default:
+		if s, ok := kindStatus[lastKind]; ok {
+			return s
+		}
+		return mascot.DefaultAnimation
+	}
 }
 
 func PaneBodyHeight(termLines int) int {
@@ -333,16 +394,76 @@ func header(width int, meta string, enabled bool) string {
 	if width < runeLen(left) {
 		return mascot.Paint(clip(left, width), mascot.UI["title"], enabled)
 	}
+	room := width - runeLen(left) - 1
+	if room < 1 {
+		return mascot.Paint(clip(left, width), mascot.UI["title"], enabled)
+	}
+	if runeLen(meta) > room {
+		meta = clipPathLeft(meta, room)
+	}
 	gap := width - runeLen(left) - runeLen(meta)
 	if gap < 1 {
-		return mascot.Paint(clip(left, width), mascot.UI["title"], enabled)
+		gap = 1
 	}
 	return mascot.Paint(left, mascot.UI["title"], enabled) + strings.Repeat(" ", gap) + mascot.Paint(meta, mascot.UI["muted"], enabled)
 }
 
-func inputBox(draft string, width int, enabled bool) []string {
+func chatHeaderMeta(state, planRel string, width int) string {
+	state = strings.TrimSpace(state)
+	planRel = strings.TrimSpace(planRel)
+	if state == "" {
+		state = "idle"
+	}
+	if planRel == "" {
+		return state
+	}
+	meta := state + " · " + planRel
+	if width <= 0 {
+		return meta
+	}
+	room := max(8, width-5)
+	if runeLen(meta) <= room {
+		return meta
+	}
+	keep := room - runeLen(state) - 3
+	if keep < 8 {
+		r := []rune(state + " · " + planRel)
+		if len(r) > room {
+			return string(r[:room])
+		}
+		return string(r)
+	}
+	return state + " · " + clipPathLeft(planRel, keep)
+}
+
+func clipPathLeft(path string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	r := []rune(path)
+	if len(r) <= width {
+		return path
+	}
+	if width <= 1 {
+		return "…"
+	}
+	base := path
+	if i := strings.LastIndexAny(path, `/\`); i >= 0 {
+		base = path[i+1:]
+	}
+	br := []rune(base)
+	if 2+len(br) <= width {
+		return "…/" + base
+	}
+	return "…" + string(r[len(r)-(width-1):])
+}
+
+func inputBox(draft string, width int, enabled bool, prefix string) []string {
+	if prefix == "" {
+		prefix = InputPrefix
+	}
 	inner := max(0, width-2)
-	room := max(0, inner-runeLen(InputPrefix))
+	room := max(0, inner-runeLen(prefix))
 	visible := draft
 	if room == 0 {
 		visible = ""
@@ -352,7 +473,7 @@ func inputBox(draft string, width int, enabled bool) []string {
 			visible = string(r[len(r)-room:])
 		}
 	}
-	content := clip(InputPrefix+visible, inner)
+	content := clip(prefix+visible, inner)
 	top := "╭" + strings.Repeat("─", inner) + "╮"
 	bot := "╰" + strings.Repeat("─", inner) + "╯"
 	if width < 4 {
@@ -369,7 +490,7 @@ func inputBox(draft string, width int, enabled bool) []string {
 	}
 }
 
-func textColumn(width, height int, meta string, log []watch.Event, draft string, quitPending, enabled bool, scroll int) []string {
+func textColumn(width, height int, meta string, opt ComposeOptions) []string {
 	if width <= 0 || height <= 0 {
 		out := make([]string, max(0, height))
 		for i := range out {
@@ -384,29 +505,50 @@ func textColumn(width, height int, meta string, log []watch.Event, draft string,
 		bodyBottom -= InputRows
 	}
 	bodyH := max(0, bodyBottom-bodyTop)
-	body := BuildLogView(log, width)
-	scroll = ClampScroll(len(body), bodyH, scroll)
+	var body []LogLine
+	scroll := opt.Scroll
+	fromTop := false
+	if opt.Pane == PanePlans && opt.Plans != nil {
+		body = BuildPlanView(opt.Plans, width)
+		scroll = planWindowStart(body, bodyH)
+		fromTop = true
+	} else {
+		body = BuildLogView(opt.Log, width)
+		scroll = ClampScroll(len(body), bodyH, scroll)
+	}
 	var visible []LogLine
 	if bodyH > 0 {
-		end := len(body) - scroll
-		start := max(0, end-bodyH)
-		if end > len(body) {
-			end = len(body)
+		var start, end int
+		if fromTop {
+			start = scroll
+			end = min(len(body), start+bodyH)
+		} else {
+			end = len(body) - scroll
+			start = max(0, end-bodyH)
+			if end > len(body) {
+				end = len(body)
+			}
+		}
+		if start > end {
+			start = end
 		}
 		visible = body[start:end]
 	}
 	var footerText string
 	var footerColor mascot.RGB
-	if quitPending {
+	if opt.Pane == PanePlans {
+		footerText, footerColor = planFooter(opt.Plans, opt.QuitPending)
+	} else if opt.QuitPending {
 		footerText = "press ctrl+c again to exit"
 		footerColor = mascot.UI["error"]
 	} else if scroll > 0 {
 		footerText = fmt.Sprintf("↑↓ %d above live · ctrl+e bottom · ctrl+c twice", scroll)
 		footerColor = mascot.UI["muted"]
 	} else {
-		footerText = "↑↓ scroll · ctrl+e bottom · ctrl+c twice"
+		footerText = "↑↓ scroll · tab plans · ctrl+c twice"
 		footerColor = mascot.UI["muted"]
 	}
+	enabled := opt.Enabled
 	rows := make([]string, height)
 	rows[0] = header(width, meta, enabled)
 	if height > 1 {
@@ -417,11 +559,20 @@ func textColumn(width, height int, meta string, log []watch.Event, draft string,
 			rows[bodyTop+offset] = strings.Repeat(" ", width)
 			continue
 		}
-		colorName := kindColor[line.Kind]
-		if colorName == "" {
-			colorName = "text"
+		rgb, ok := mascot.UI[line.Kind]
+		if !ok {
+			colorName := kindColor[line.Kind]
+			if colorName == "" {
+				colorName = "text"
+			}
+			rgb = mascot.UI[colorName]
 		}
-		rows[bodyTop+offset] = mascot.Paint(clip(line.Text, width), mascot.UI[colorName], enabled)
+		text := clip(line.Text, width)
+		if fill, ok := mascot.UI[line.Fill]; ok {
+			rows[bodyTop+offset] = mascot.PaintFill(text, rgb, fill, enabled)
+			continue
+		}
+		rows[bodyTop+offset] = mascot.Paint(text, rgb, enabled)
 	}
 	for index := bodyTop; index < bodyBottom; index++ {
 		if rows[index] == "" {
@@ -429,7 +580,7 @@ func textColumn(width, height int, meta string, log []watch.Event, draft string,
 		}
 	}
 	if showBox {
-		box := inputBox(draft, width, enabled)
+		box := inputBox(opt.Draft, width, enabled, composerPrefix(opt))
 		boxStart := height - FooterRows - InputRows
 		for offset, line := range box {
 			rows[boxStart+offset] = line
@@ -437,6 +588,29 @@ func textColumn(width, height int, meta string, log []watch.Event, draft string,
 	}
 	rows[len(rows)-1] = mascot.Paint(clip(footerText, width), footerColor, enabled)
 	return rows
+}
+
+func planWindowStart(body []LogLine, viewH int) int {
+	if viewH <= 0 || len(body) <= viewH {
+		return 0
+	}
+	sel := 0
+	for i, line := range body {
+		trimmed := strings.TrimLeft(line.Text, " ")
+		if strings.HasPrefix(line.Text, "▌") || strings.HasPrefix(trimmed, "▌") || strings.HasPrefix(line.Text, "> ") {
+			sel = i
+			break
+		}
+	}
+	start := sel - viewH + 1
+	if start < 0 {
+		start = 0
+	}
+	maxStart := len(body) - viewH
+	if start > maxStart {
+		start = maxStart
+	}
+	return start
 }
 
 type ComposeOptions struct {
@@ -449,6 +623,8 @@ type ComposeOptions struct {
 	QuitPending   bool
 	Status        string
 	Scroll        int
+	Pane          PaneKind
+	Plans         *PlanBrowser
 }
 
 func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
@@ -481,7 +657,7 @@ func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
 	if status == "" {
 		status = opt.AnimationName
 	}
-	text := textColumn(textWidth, lines, status, opt.Log, opt.Draft, opt.QuitPending, opt.Enabled, opt.Scroll)
+	text := textColumn(textWidth, lines, status, opt)
 	out := make([]string, 0, lines)
 	for index := 0; index < lines; index++ {
 		left := blankMascot
@@ -496,8 +672,9 @@ func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
 	}
 	frame := Home + Clear + strings.Join(out, "\r\n")
 	if textWidth >= 4 && lines >= InputRows+FooterRows+3 {
+		prefix := composerPrefix(opt)
 		inner := textWidth - 2
-		room := max(0, inner-runeLen(InputPrefix))
+		room := max(0, inner-runeLen(prefix))
 		visible := opt.Draft
 		if room == 0 {
 			visible = ""
@@ -508,7 +685,7 @@ func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
 			}
 		}
 		cursorRow := lines - 2
-		cursorCol := mascotCols + Gutter + 1 + 1 + runeLen(InputPrefix) + runeLen(visible)
+		cursorCol := mascotCols + Gutter + 1 + 1 + runeLen(prefix) + runeLen(visible)
 		frame += fmt.Sprintf("\033[%d;%dH%s", cursorRow, cursorCol, ShowCursor)
 	} else {
 		frame += HideCursor
@@ -561,6 +738,91 @@ func isPrintableKey(key string) bool {
 	return len(r) == 1 && unicode.IsPrint(r[0])
 }
 
+func handlePlanKey(b *PlanBrowser, draft *string, key string, page int) (bool, bool) {
+	switch key {
+	case "up":
+		b.Move(-1)
+		return true, false
+	case "down":
+		b.Move(1)
+		return true, false
+	case "pageup":
+		b.Move(-max(1, page))
+		return true, false
+	case "pagedown":
+		b.Move(max(1, page))
+		return true, false
+	case "home":
+		b.Cursor = 0
+		return true, false
+	case "end":
+		if n := len(b.Rows); n > 0 {
+			b.Cursor = n - 1
+		}
+		return true, false
+	case "left":
+		return b.Up(), false
+	case "esc":
+		if b.Prompting() {
+			b.CancelPrompt()
+			*draft = ""
+			return true, false
+		}
+		if b.Up() {
+			*draft = ""
+			return true, false
+		}
+		return true, true
+	case "\r", "\n":
+		if b.Screen == ScreenCreate {
+			act := b.CommitCreate(*draft)
+			if act == PlanOpenChat {
+				*draft = ""
+			}
+			return true, act == PlanOpenChat
+		}
+		if b.Screen == ScreenFolder {
+			_ = b.CommitFolder(*draft)
+			*draft = ""
+			return true, false
+		}
+		act := b.Activate()
+		switch act {
+		case PlanStartCreate:
+			b.Screen = ScreenCreate
+			*draft = ""
+			return true, false
+		case PlanStartFolder:
+			b.Screen = ScreenFolder
+			*draft = ""
+			return true, false
+		case PlanStartBrowse:
+			*draft = ""
+			return true, false
+		case PlanOpenChat:
+			return true, true
+		default:
+			return true, false
+		}
+	case "\x7f", "\x08":
+		if *draft != "" {
+			r := []rune(*draft)
+			*draft = string(r[:len(r)-1])
+			return true, false
+		}
+		if !b.Prompting() {
+			return b.Up(), false
+		}
+		return false, false
+	default:
+		if isPrintableKey(key) && runeLen(*draft) < 256 {
+			*draft += key
+			return true, false
+		}
+		return false, false
+	}
+}
+
 func ComposerAnimation(text, current string) string {
 	switch strings.ToLower(strings.TrimSpace(text)) {
 	case "breakdance":
@@ -580,19 +842,55 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 	columns, lines := Size()
 	animated := len(sequence.Frames) > 1
 	draft := ""
+	chatDraft := ""
 	var log []watch.Event
 	quitPending := false
 	quitTicks := 0
 	status := sequence.Name
+	lastKind := ""
 	scroll := 0
+	pane := PanePlans
+	plans := NewPlanBrowser("")
 	path := eventsPath
 	if path == "" {
 		path = watch.DefaultEventPath()
 	}
 	tail := watch.NewEventTail(path, true)
+	turn := TurnIdle
 	code := 0
 	err := LiveScreen(stdout, stdin, func() error {
+		play := func(name string) {
+			if sequence.Name == name {
+				return
+			}
+			sequence = mascot.MustAnimation(name)
+			frameIndex = 0
+			hold = sequence.Frames[0].Hold
+			spriteName = sequence.Frames[0].Sprite
+			animated = len(sequence.Frames) > 1
+		}
+		syncTurn := func() {
+			want := AnimationForTurn(turn)
+			if sequence.Name == "breakdance" {
+				return
+			}
+			play(want)
+		}
 		draw := func() {
+			meta := status
+			if pane == PanePlans {
+				meta = "plans"
+				switch plans.Screen {
+				case ScreenCreate:
+					meta = "new plan"
+				case ScreenFolder:
+					meta = "new folder"
+				case ScreenBrowse:
+					meta = "open"
+				}
+			} else {
+				meta = chatHeaderMeta(statusForTurn(turn, lastKind), plans.CurrentRel(), PaneTextWidth(columns))
+			}
 			_, _ = io.WriteString(stdout, ComposeFrame(spriteName, color, ComposeOptions{
 				Enabled:       enabled,
 				Columns:       columns,
@@ -601,8 +899,10 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				Draft:         draft,
 				Log:           log,
 				QuitPending:   quitPending,
-				Status:        status,
+				Status:        meta,
 				Scroll:        scroll,
+				Pane:          pane,
+				Plans:         plans,
 			}))
 			_ = stdout.Sync()
 		}
@@ -622,15 +922,16 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				if textW > 0 {
 					after = len(BuildLogView(log, textW))
 				}
-				if added > 0 {
+				if len(added) > 0 {
 					if scroll > 0 {
 						scroll += max(0, after-before)
 					}
-					if s, ok := kindStatus[fresh[len(fresh)-1].Kind]; ok {
-						status = s
-					} else {
-						status = sequence.Name
+					for _, ev := range added {
+						turn = ApplyTurn(turn, ev)
 					}
+					lastKind = added[len(added)-1].Kind
+					status = statusForTurn(turn, lastKind)
+					syncTurn()
 					changed = true
 				}
 			}
@@ -641,26 +942,8 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 			}
 			maxScroll := ClampScroll(totalLines, bodyH, totalLines)
 			if haveKey {
-				switch key {
-				case "up":
-					scroll = min(maxScroll, scroll+1)
-					changed = true
-				case "down":
-					scroll = max(0, scroll-1)
-					changed = true
-				case "pageup":
-					scroll = min(maxScroll, scroll+max(1, bodyH))
-					changed = true
-				case "pagedown":
-					scroll = max(0, scroll-max(1, bodyH))
-					changed = true
-				case "home":
-					scroll = maxScroll
-					changed = true
-				case "end":
-					scroll = 0
-					changed = true
-				case CtrlC:
+				switch {
+				case key == CtrlC:
 					if quitPending {
 						code = 0
 						return nil
@@ -668,40 +951,86 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 					quitPending = true
 					quitTicks = QuitWindowTicks
 					changed = true
-				case "\r", "\n":
+				case key == "\t":
 					quitPending = false
-					if strings.TrimSpace(draft) != "" {
-						text := strings.TrimSpace(draft)
-						next := ComposerAnimation(text, sequence.Name)
-						if next != sequence.Name {
-							sequence = mascot.MustAnimation(next)
-							frameIndex = 0
-							hold = sequence.Frames[0].Hold
-							spriteName = sequence.Frames[0].Sprite
-							animated = len(sequence.Frames) > 1
-							status = sequence.Name
+					if pane == PanePlans {
+						if plans.Browsing() {
+							plans.Filter = draft
 						}
-						log = append(log, watch.NewEvent("user", "text", text, nil))
+						pane = PaneChat
+						draft = chatDraft
+					} else {
+						chatDraft = draft
+						pane = PanePlans
 						draft = ""
-						changed = true
+						if plans.Browsing() {
+							draft = plans.Filter
+						}
+						plans.Rebuild()
 					}
-				case "\x7f", "\x08":
+					changed = true
+				case pane == PanePlans:
 					quitPending = false
-					if draft != "" {
-						r := []rune(draft)
-						draft = string(r[:len(r)-1])
-						changed = true
+					var openChat bool
+					changed, openChat = handlePlanKey(plans, &draft, key, bodyH)
+					if openChat {
+						pane = PaneChat
+						draft = chatDraft
 					}
 				default:
-					if isPrintableKey(key) {
+					switch key {
+					case "up":
+						scroll = min(maxScroll, scroll+1)
+						changed = true
+					case "down":
+						scroll = max(0, scroll-1)
+						changed = true
+					case "pageup":
+						scroll = min(maxScroll, scroll+max(1, bodyH))
+						changed = true
+					case "pagedown":
+						scroll = max(0, scroll-max(1, bodyH))
+						changed = true
+					case "home":
+						scroll = maxScroll
+						changed = true
+					case "end":
+						scroll = 0
+						changed = true
+					case "\r", "\n":
 						quitPending = false
-						if runeLen(draft) < 256 {
-							draft += key
+						if strings.TrimSpace(draft) != "" {
+							text := strings.TrimSpace(draft)
+							next := ComposerAnimation(text, sequence.Name)
+							if next != sequence.Name {
+								if next == mascot.DefaultAnimation {
+									turn = TurnIdle
+								}
+								play(next)
+								status = sequence.Name
+							}
+							log = append(log, watch.NewEvent("user", "text", text, nil))
+							draft = ""
 							changed = true
 						}
-					} else if quitPending {
+					case "\x7f", "\x08":
 						quitPending = false
-						changed = true
+						if draft != "" {
+							r := []rune(draft)
+							draft = string(r[:len(r)-1])
+							changed = true
+						}
+					default:
+						if isPrintableKey(key) {
+							quitPending = false
+							if runeLen(draft) < 256 {
+								draft += key
+								changed = true
+							}
+						} else if quitPending {
+							quitPending = false
+							changed = true
+						}
 					}
 				}
 			} else {
@@ -716,12 +1045,8 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 					var finished bool
 					frameIndex, hold, finished = advance(sequence.Frames, frameIndex, hold, animationLoops(sequence.Name))
 					if finished {
-						sequence = mascot.MustAnimation(mascot.DefaultAnimation)
-						frameIndex = 0
-						hold = sequence.Frames[0].Hold
-						spriteName = sequence.Frames[0].Sprite
-						animated = len(sequence.Frames) > 1
-						status = sequence.Name
+						play(AnimationForTurn(turn))
+						status = statusForTurn(turn, "")
 						changed = true
 					} else {
 						nextName := sequence.Frames[frameIndex].Sprite
@@ -731,6 +1056,11 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 						}
 					}
 				}
+			}
+			if pane == PanePlans && plans.Browsing() && plans.Filter != draft {
+				plans.Filter = draft
+				plans.Rebuild()
+				changed = true
 			}
 			newColumns, newLines := Size()
 			if newColumns != columns || newLines != lines {

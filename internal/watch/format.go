@@ -26,6 +26,27 @@ func NormalizeText(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
+func IsGrowingText(prev, next Event) bool {
+	if prev.Kind != "text" || next.Kind != "text" {
+		return false
+	}
+	if prev.Source != next.Source {
+		return false
+	}
+	a, b := NormalizeText(prev.Text), NormalizeText(next.Text)
+	if a == "" || b == "" || a == b {
+		return false
+	}
+	return strings.HasPrefix(b, a)
+}
+
+func LongerText(a, b string) string {
+	if len([]rune(b)) >= len([]rune(a)) {
+		return b
+	}
+	return a
+}
+
 func IsDuplicate(event Event, recent []Event, window float64) bool {
 	if window == 0 {
 		window = 4

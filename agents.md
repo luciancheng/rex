@@ -12,11 +12,11 @@ Install and user docs live in `README.md`. This file is how to change the code.
 - Add dependencies, frameworks, or a config system without a concrete need. Go 1.22+ stdlib plus `golang.org/x/sys` and `golang.org/x/term` for the TTY.
 - Scrape transcripts or use the Cursor SDK to watch the in-IDE agent. Hooks only.
 - Steer, inject prompts, or auto-approve tools unless the human asked for that this turn.
-- Invent a custom `.rex` language. If a plan file happens, it is JSON named `plan.rex`.
+- Invent a custom `.rex` language. Plan files are JSON named `<name>.rex.json` under `rex/plans/` (commit that folder). Do not load them into the agent this turn. Don't `go build -o rex` at the repo root — that path is the plans directory.
 - Dump Write bodies, duplicate thoughts, or flatten markdown into one blob in the pane.
 - Giant ASCII, extra emoji, or a web UI squeezed into the terminal.
 - Assume Claude Code or Codex are wired. Mappers exist; only Cursor hooks are installed.
-- Build `plan.rex`, drift detection, or extra mascot poses unless asked this turn.
+- Build plan JSON schema, drift detection, or extra mascot poses unless asked this turn.
 
 Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. macOS, Linux, and Windows 10+ (VT).
 
@@ -30,6 +30,7 @@ Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. 
 | Event feed | `internal/watch/` |
 | Idle PNG | `assets/idle.png` |
 | Breakdance sheet | `assets/breakdance.png` (40×40 cells) |
+| Typing sheet | `assets/typing.png` (40×40 cells) |
 | README art | `assets/rex.png` (scaled idle) |
 | Importer | `cmd/importsprite` |
 | Tests | `*_test.go` next to the package |
@@ -48,7 +49,7 @@ That writes the idle `Pixels(...)` grid and the yellow palette 1:1. **Leave blin
 
 Blink drops the top eye pixel (the face `k` at column 25, rows 13–14 on the current sprite). Squat is `ShiftBody(..., dy=1, keepBottom=7)` so the shadow stays planted.
 
-Breakdance is the 40×40 sheet `assets/breakdance.png` (left-to-right, top-to-bottom). Type `breakdance` in the composer to play it **once**, then idle resumes. Map sheet pixels onto the yellow palette and draw with the half-block renderer — do not blit the PNG.
+Breakdance is the 40×40 sheet `assets/breakdance.png` (left-to-right, top-to-bottom). Type `breakdance` in the composer to play it **once**, then resume the turn pose. Typing is `assets/typing.png`. Hook `user` / `thought` → thinking; shell / tools → running; `text` / `error` → idle. Thinking and running play **typing**; idle is only when nothing is in flight. Local composer does not start or end a turn. Map sheet pixels onto the yellow palette — do not blit the PNG. Do not dump Write bodies.
 
 If the README hero should match, rebuild `assets/rex.png` from `idle.png` with nearest-neighbor scale.
 
@@ -58,7 +59,7 @@ Unix live mode is cbreak (ECHO/ICANON/ISIG off) and **must keep OPOST**. Do not 
 
 ## Watch feed
 
-Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`. Adapters map vendor JSON to `watch.Event`; `AppendEvent` dedupes; `NewEventTail(path, true)` paints new lines.
+Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`. Adapters map vendor JSON to `watch.Event`; `AppendEvent` dedupes; `NewEventTail(path, true)` paints new lines. Visible assistant replies come from `afterAgentResponse`, which Cursor currently fires with the **final** message of the turn. In-between chat lines are not on any hook — do not scrape transcripts to invent them. Thoughts still arrive via `afterAgentThought`. Do not map `stop` as text.
 
 New harness = adapter (+ installer). Do not special-case vendors in `live.go`.
 
@@ -66,10 +67,12 @@ Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `erro
 
 ## TUI
 
-- Left ~40 columns: mascot. Right: labeled log blocks (`thinking`, `run`, `ask`, `reply`).
+- Left ~40 columns: mascot. Right: labeled log blocks (`thinking`, `run`, `ask`, `reply`). Commands yellow, replies bright, thoughts muted. Skip file-look commands and `done`/result echoes. Each assistant `text` event is its own reply block.
+- Chat header always shows turn state **and** the open plan as a repo-relative path (`thinking · rex/plans/foo.rex.json`).
 - User prompts: no `YOU` rule. Invisible column, at most half the pane, **right-aligned as a box**, **left-aligned text inside**. Color `UI["you"]`.
 - Markdown → headings, lists, stripped emphasis, fenced code as `│ ` lines.
-- Keys: ↑↓, page, Home / Ctrl+A (oldest), End / Ctrl+E (live). Composer does not send to the agent.
+- Start opens the **plans** home: Create, Open, Open latest (cards), then recents. Open browses `rex/plans/` like a file picker: cyan `▌` selection, orange folders, green `[ + New folder ]` / `[ + New plan ]`, white plans. Duplicate names warn and do not overwrite. Tab switches to chat. Opening a plan is a no-op load.
+- Chat keys: ↑↓, page, Home / Ctrl+A (oldest), End / Ctrl+E (live). Composer does not send to the agent.
 - Clip ANSI by cells (runes), not `len()` bytes. Crop from the bottom; keep the mascot top-left.
 
 ## Commands and tests

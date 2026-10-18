@@ -176,3 +176,7 @@ func ShortPath(p string) string {
 func IsQuietResult(ev Event) bool {
 	return ev.Kind == "result"
 }
+
+func KeepInPane(ev Event) bool {
+	return !IsFileLookEvent(ev) && !IsQuietResult(ev)
+}

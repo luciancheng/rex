@@ -221,6 +221,23 @@ func TestExtendLogGrowsStreamingReply(t *testing.T) {
 	}
 }
 
+func TestExtendLogKeepsThoughtsAndRepliesNotResults(t *testing.T) {
+	var log []watch.Event
+	added := ExtendLog(&log, []watch.Event{
+		watch.NewEvent("cursor", "thought", "Checking the card.", nil),
+		{Source: "cursor", Kind: "command", Text: "Read a.go", Meta: map[string]any{"tool": "Read", "path": "a.go"}},
+		{Source: "cursor", Kind: "result", Text: "wrote a.go", Meta: map[string]any{"tool": "Write", "path": "a.go"}},
+		watch.NewEvent("cursor", "text", "The bar should span the card.", nil),
+		{Source: "cursor", Kind: "command", Text: "Write a.go", Meta: map[string]any{"tool": "Write", "path": "a.go"}},
+	})
+	if len(log) != 3 {
+		t.Fatalf("log=%d added=%d", len(log), len(added))
+	}
+	if log[0].Kind != "thought" || log[1].Kind != "text" || log[2].Kind != "command" {
+		t.Fatalf("%#v", log)
+	}
+}
+
 func TestExtendLogDropsRepeatedThoughts(t *testing.T) {
 	var log []watch.Event
 	first := watch.NewEvent("cursor", "thought", "Looking at live.py", nil)

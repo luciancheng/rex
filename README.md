@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  A terminal companion that sits next to your coding agent<br />
-  and turns the firehose into something a human can actually read.
+  Write a plan, send the work off to your coding agent,<br />
+  and watch the tape from a terminal that stays out of the way.
 </p>
 
 <p align="center">
@@ -21,9 +21,74 @@
   macOS · Linux · Windows 10+ &nbsp;·&nbsp; Go 1.22+ &nbsp;·&nbsp; MIT
 </p>
 
-Leave him running. Talk to Cursor as usual. Thoughts, file edits, shell, questions, and your prompts show up in the pane to the right of the dino. Claude Code and Codex mappers exist; Cursor is the one that's wired today.
+REX is a watch-only sidecar. It does not run tools, approve them, or steer the agent. You talk to Cursor as usual. Rex holds the plan you are sending off, and the pane next to the dino shows thoughts, edits, shell, questions, and your prompts as they happen.
 
-Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once. After that, `rex` works from any folder — it does not need to share a directory with the agent.
+Plans live in the repo at `rex/plans/` as JSON named `<name>.rex.json`. Commit that folder. Teammates open the same breakdown, pick a plan, and watch the same send-off.
+
+Claude Code and Codex mappers exist; Cursor is the one that's wired today. Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once — after that it works from any folder.
+
+## Send off a project
+
+1. **Break the work down** in `rex/plans/`. Folders are for grouping (`rex/plans/onboarding/auth.rex.json`). Duplicate names are refused.
+2. **`rex start`** from the repo. Create a plan, open one, or jump to the latest. Tab is the live tape. The header stays on the current plan path.
+3. **Leave him running** and prompt Cursor. Rex watches. Idle when nothing is in flight; typing while the agent is working. Ctrl+C twice to quit.
+
+Opening a plan selects it in Rex. It does not inject the JSON into the agent — you still send the work off in chat. The file is the shared map, not a script.
+
+## Plan files
+
+One file is one unit of work (a feature, a fix, a migration), not the whole repo. Folders are human hierarchy. Inside the file, tasks are a **flat list** with `parent` for outline and `depends_on` for order.
+
+```json
+{
+  "version": 1,
+  "id": "file-storage",
+  "title": "Plan file storage and navigator",
+  "goal": "People can create, open, and share plans under rex/plans.",
+  "status": "active",
+  "scope": {
+    "in": ["JSON plan format", "folder browser"],
+    "out": ["agent auto-loads the plan"]
+  },
+  "tasks": [
+    {
+      "id": "card-highlight",
+      "title": "Selected plan card is one block",
+      "parent": "plans-ui",
+      "status": "done",
+      "scope": {
+        "in": ["home cards", "browse rows"],
+        "out": ["chat log chrome"]
+      },
+      "needs": ["Cyan ▌ only marked the top border"],
+      "does": ["Bar, border, and fill cover the whole card"],
+      "depends_on": ["plans-ui"],
+      "verify": [
+        "Open latest: ▌ on all three card rows",
+        "go test ./internal/tui -run PlanCardSelection"
+      ],
+      "files": [
+        "internal/tui/plans.go",
+        "internal/tui/live.go",
+        "internal/tui/plans_test.go"
+      ]
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `scope.in` / `scope.out` | Hard edges so a task does not eat the next one |
+| `needs` | Preconditions — facts and blockers, not the work |
+| `does` | Accomplishments — what is true when it is done |
+| `depends_on` | Other task ids that should be done first |
+| `verify` | How a stranger would check success |
+| `files` | Probable paths (hints, not a lockfile) |
+
+Status is `pending`, `active`, `done`, `blocked`, or `skipped`. Write it down; do not infer it. Empty `{}` is a valid stub until you fill the breakdown. New files from the TUI start that way.
+
+Do not put agent prompts, auto-approve lists, or diffs in the plan. That is steering. Keep ids as readable slugs so git blame and deps stay human.
 
 ## Install
 
@@ -39,7 +104,7 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.ps1 | iex
 ```
 
-That builds a binary into `~/.local/bin`, puts `rex` on your PATH, and wires Cursor so this machine's agent chat is watched. You need [Go 1.22+](https://go.dev/dl/). Open a new terminal, then `rex start` from anywhere.
+That builds a binary into `~/.local/bin`, puts `rex` on your PATH, and wires Cursor so this machine's agent chat is watched. You need [Go 1.22+](https://go.dev/dl/). Open a new terminal, then `rex start` from the repo you want to send off.
 
 Already have Go?
 
@@ -51,18 +116,14 @@ rex start
 
 ## Usage
 
-`rex start` opens plans in `rex/plans/` (safe to commit and share). Create, open, or jump to the latest; Tab is the live chat. Ctrl+C twice to quit. Type `breakdance` in the chat box to play the dance sheet once.
-
 ```bash
-rex start                         # live view
+rex start                         # plans, then the live tape
 rex start --static                # print one frame and exit
 rex ingest --install-cursor-hook  # reinstall the Cursor watcher
 rex --help
 ```
 
-`NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
-
-Idle and future poses should be 40×40.
+Tab switches plans ↔ chat. In the navigator: create, open, open latest, recents; browse folders and `.rex.json` files. Type `breakdance` in the chat box to play the dance sheet once. `NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
 
 ## Hack on it
 
@@ -73,23 +134,17 @@ go test ./...
 go run ./cmd/rex start
 ```
 
+Do not `go build -o rex` at the repo root — `rex/` is the plans directory.
+
 ## Edit the idle sprite
 
 Idle Rex is the 40×40 PNG at `assets/idle.png`, converted pixel-for-pixel into terminal art. `assets/rex.png` is the same drawing, scaled up for this README.
 
-Rebuild from a PNG (reads every pixel and the palette):
-
 ```bash
-go run ./cmd/importsprite assets/idle.png
 go run ./cmd/importsprite assets/idle.png --apply
 ```
 
-`--apply` writes the grid into `internal/mascot/sprites.go` and the sampled RGB values into the `yellow` palette. Restart `rex start` after that.
-
-You can also edit the data by hand:
-
-- **Pixels / size** — `internal/mascot/sprites.go`, the idle `Pixels(...)` grid. Each character is one pixel. Add or remove characters and lines to change size.
-- **Colors** — `internal/mascot/palettes.go`, the `yellow` RGB triples.
+`--apply` writes the grid into `internal/mascot/sprites.go` and the sampled RGB values into the `yellow` palette. Restart `rex start` after that. Idle and future poses should stay 40×40.
 
 | Letter | Role |
 | --- | --- |
@@ -104,29 +159,18 @@ You can also edit the data by hand:
 | `p` | blush |
 | `s` | shadow |
 
-## Add sprites and animations later
-
-The registry lives in `internal/mascot/catalog.go`. `rex start` plays the `idle` animation (blink and glance) inside the 40×40 stage.
-
-```go
-blink := mascot.RegisterSprite(mascot.Sprite{Name: "idle_blink", Rows: mascot.Pixels("...")})
-mascot.RegisterAnimation(mascot.Animation{
-    Name: "idle",
-    Frames: []mascot.Frame{{"idle", 20}, {"idle_blink", 3}},
-})
-```
-
-`Hold` is in live-viewer ticks. A one-frame animation is a still.
+Blink, glance, and squat stay transforms on the idle grid. Breakdance and typing are 40×40 sheets (`assets/breakdance.png`, `assets/typing.png`) mapped onto the yellow palette — not blit.
 
 ## Layout
 
 ```
+rex/plans/                  commitable send-off plans (<name>.rex.json)
 assets/idle.png             source 40×40 sprite
 assets/rex.png              README art (same drawing, scaled)
 cmd/rex                     rex start / rex ingest
 cmd/importsprite            PNG → CLI pixel art
 internal/mascot/            sprites, palettes, half-block renderer
-internal/tui/               live viewer
+internal/tui/               plans navigator + live tape
 internal/watch/             agent event feed (hooks → JSONL → pane)
 scripts/install.sh          user install (macOS/Linux)
 scripts/install.ps1         user install (Windows)

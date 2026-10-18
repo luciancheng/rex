@@ -20,7 +20,7 @@ const (
 	InputRows       = 3
 	FooterRows      = 1
 	InputPrefix     = " > "
-	MaxLog          = 120
+	MaxLog          = 400
 )
 
 var kindColor = map[string]string{
@@ -287,6 +287,9 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 func ExtendLog(log *[]watch.Event, incoming []watch.Event) []watch.Event {
 	var added []watch.Event
 	for _, event := range incoming {
+		if !watch.KeepInPane(event) {
+			continue
+		}
 		if n := len(*log); n > 0 && watch.IsGrowingText((*log)[n-1], event) {
 			(*log)[n-1].Text = watch.LongerText((*log)[n-1].Text, event.Text)
 			added = append(added, (*log)[n-1])
@@ -917,19 +920,22 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				if textW > 0 {
 					before = len(BuildLogView(log, textW))
 				}
+				prevTurn := turn
+				for _, ev := range fresh {
+					turn = ApplyTurn(turn, ev)
+					if watch.KeepInPane(ev) {
+						lastKind = ev.Kind
+					}
+				}
 				added := ExtendLog(&log, fresh)
 				after := 0
 				if textW > 0 {
 					after = len(BuildLogView(log, textW))
 				}
-				if len(added) > 0 {
-					if scroll > 0 {
-						scroll += max(0, after-before)
-					}
-					for _, ev := range added {
-						turn = ApplyTurn(turn, ev)
-					}
-					lastKind = added[len(added)-1].Kind
+				if len(added) > 0 && scroll > 0 {
+					scroll += max(0, after-before)
+				}
+				if len(added) > 0 || turn != prevTurn {
 					status = statusForTurn(turn, lastKind)
 					syncTurn()
 					changed = true

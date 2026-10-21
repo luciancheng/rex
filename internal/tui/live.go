@@ -27,6 +27,7 @@ const (
 )
 
 var kindColor = map[string]string{
+	"before":   "muted",
 	"note":     "muted",
 	"thought":  "muted",
 	"command":  "accent",
@@ -50,6 +51,7 @@ var kindStatus = map[string]string{
 }
 
 var kindLabel = map[string]string{
+	"before":   "before rex started",
 	"note":     "note · local",
 	"thought":  "thinking",
 	"command":  "run",
@@ -260,6 +262,9 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 				label = g.kind
 			}
 			lines = append(lines, LogLine{Kind: g.kind, Text: rule(label, width)})
+		}
+		if g.kind == "before" {
+			continue // just the rule
 		}
 		for _, text := range g.texts {
 			for _, row := range bodyRows(g.kind, text, width, inner) {
@@ -736,6 +741,7 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 	}
 	a.feed = path
 	tail := watch.NewEventTail(path, true)
+	a.warmStart(watch.LastEvents(path, warmRead), time.Now())
 	keys := newKeyReader(stdin)
 	paint := &renderer{full: true}
 	err := LiveScreen(stdout, stdin, func(sig screenSignals) error {

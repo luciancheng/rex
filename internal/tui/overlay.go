@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/luciancheng/rex/internal/watch"
+import (
+	"fmt"
+
+	"github.com/luciancheng/rex/internal/watch"
+)
 
 type overlayKind int
 
@@ -19,7 +23,7 @@ type Overlay struct {
 
 // helpLines wraps every row to width: at 50+ cells the key sits left of
 // its description, narrower it sits above it.
-func helpLines(width int, feed string) []LogLine {
+func helpLines(width int, feed string, hidden int) []LogLine {
 	var lines []LogLine
 	text := func(indent, s string) {
 		for _, w := range wrap(s, max(8, width-cellLen(indent))) {
@@ -80,6 +84,13 @@ func helpLines(width int, feed string) []LogLine {
 		case string:
 			text("  ", v)
 		}
+	}
+	if hidden > 0 {
+		noun := "events"
+		if hidden == 1 {
+			noun = "event"
+		}
+		lines = append(lines, LogLine{Kind: "idle", Text: "  " + fmt.Sprintf("%d %s from other folders hidden", hidden, noun)})
 	}
 	return lines
 }

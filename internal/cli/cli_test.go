@@ -498,9 +498,21 @@ func TestInstallScripts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{"install.sh": string(sh), "install.ps1": string(ps)} {
-		for _, want := range []string{"REX_REF", "fetch -q --depth 1 origin", "FETCH_HEAD", "ingest --install cursor", "rex ingest --install claude", "rex ingest --install codex", "rex ingest --install opencode", "cd <your-repo>"} {
-			if !strings.Contains(body, want) {
-				t.Errorf("%s: missing %q", name, want)
+		want := []string{"REX_REF", "fetch -q --depth 1 origin", "FETCH_HEAD", "ingest --install-cursor-hook", "cd <your-repo>"}
+		for _, h := range watch.Harnesses() {
+			want = append(want, "rex ingest --install "+h.Name) // adding a harness touches the scripts
+		}
+		for _, w := range want {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: missing %q", name, w)
+			}
+		}
+		for _, line := range strings.Split(body, "\n") {
+			if strings.Contains(line, "go install") && (strings.Contains(line, "2>") || strings.Contains(line, "Out-Null")) {
+				t.Errorf("%s: go install errors are shown, not swallowed: %q", name, line)
+			}
+			if strings.Contains(line, "ingest --install ") && !strings.Contains(line, "#") && !strings.Contains(line, "once it is") && !strings.HasPrefix(strings.TrimSpace(line), "Write-Host") && !strings.HasPrefix(strings.TrimSpace(line), "say") {
+				t.Errorf("%s: only Cursor is wired, and through the alias every binary knows: %q", name, line)
 			}
 		}
 		for _, bad := range []string{"rex.git/cmd/rex", "clone --branch", "--install auto", "go build -o rex "} {
@@ -508,9 +520,6 @@ func TestInstallScripts(t *testing.T) {
 				t.Errorf("%s: must not contain %q", name, bad)
 			}
 		}
-	}
-	if strings.Contains(string(sh), "go install") && strings.Contains(string(sh), "@latest\" 2>/dev/null") {
-		t.Error("go install errors are shown, not swallowed")
 	}
 	if bash, err := exec.LookPath("bash"); err == nil && runtime.GOOS != "windows" {
 		if out, err := exec.Command(bash, "-n", filepath.Join("..", "..", "scripts", "install.sh")).CombinedOutput(); err != nil {

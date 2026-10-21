@@ -3,12 +3,14 @@
 # Other agents are opt-in; the script prints the command for each one it finds.
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.sh | bash
-#   curl -fsSL …/install.sh | REX_REF=v0.2.0 bash     # a tag, branch or commit
+#   curl -fsSL …/install.sh | REX_REF=dev bash        # a tag, branch or commit
 #   ./scripts/install.sh                                # from a clone: installs this tree
 set -euo pipefail
 
 MODULE="github.com/luciancheng/rex"
 REPO_URL="${REX_REPO:-https://$MODULE.git}"
+# A local path is taken from here, not from the temp folder git runs in.
+[[ -d "$REPO_URL" ]] && REPO_URL="$(cd "$REPO_URL" && pwd)"
 REF="${REX_REF:-}"
 BIN_DIR="${REX_BIN:-$HOME/.local/bin}"
 
@@ -64,21 +66,24 @@ fi
 REX="$BIN_DIR/rex"
 "$REX" --version
 
-# Cursor is the one agent wired by default, as before.
+# Cursor is the one agent wired by default, as before. The old flag is
+# used because every rex binary knows it, whatever REX_REF installed.
 hints=()
 if [[ -d "$HOME/.cursor" ]]; then
-  "$REX" ingest --install cursor || say "rex is installed, but the Cursor hook could not be written"
+  "$REX" ingest --install-cursor-hook || say "rex is installed, but the Cursor hook could not be written"
 else
-  hints+=("rex ingest --install cursor        # once Cursor is installed")
+  say "Cursor isn't here; once it is: rex ingest --install cursor"
 fi
-[[ -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ]] && hints+=("rex ingest --install claude        # Claude Code (add --project for one repo)")
+claude="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+[[ -d "$claude" ]] && hints+=("rex ingest --install claude        # Claude Code (add --project for one repo)")
 [[ -d "${CODEX_HOME:-$HOME/.codex}" ]] && hints+=("rex ingest --install codex         # Codex, then trust the hooks in /hooks")
 [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/opencode" ]] && hints+=("rex ingest --install opencode      # OpenCode")
+# The skill lives in ~/.claude/skills: offered only where that folder is.
+[[ -d "$claude" ]] && hints+=("rex ingest --install-skill         # teach Claude Code, Cursor and OpenCode the plan format")
 if ((${#hints[@]})); then
   say
   say "Other agents (opt-in):"
   for h in "${hints[@]}"; do say "  $h"; done
-  say "  rex ingest --install-skill         # teach agents the plan format"
 fi
 
 say

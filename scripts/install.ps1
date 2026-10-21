@@ -8,6 +8,8 @@ $ErrorActionPreference = "Stop"
 
 $Module = "github.com/luciancheng/rex"
 $RepoUrl = if ($env:REX_REPO) { $env:REX_REPO } else { "https://$Module.git" }
+# A local path is taken from here, not from the temp folder git runs in.
+if (Test-Path -PathType Container $RepoUrl) { $RepoUrl = (Resolve-Path $RepoUrl).Path }
 $Ref = $env:REX_REF
 $BinDir = if ($env:REX_BIN) { $env:REX_BIN } else { Join-Path $HOME ".local\bin" }
 
@@ -78,25 +80,27 @@ if (";$userPath;" -notlike "*;$BinDir;*") {
 $env:Path = "$BinDir;$env:Path"
 & $Rex --version
 
-# Cursor is the one agent wired by default, as before.
+# Cursor is the one agent wired by default, as before. The old flag is
+# used because every rex binary knows it, whatever REX_REF installed.
 $hints = @()
-if (Test-Path (Join-Path $HOME ".cursor")) {
-    & $Rex ingest --install cursor
+if (Test-Path -PathType Container (Join-Path $HOME ".cursor")) {
+    & $Rex ingest --install-cursor-hook
     if ($LASTEXITCODE -ne 0) { Write-Host "rex is installed, but the Cursor hook could not be written" }
 } else {
-    $hints += "rex ingest --install cursor        # once Cursor is installed"
+    Write-Host "Cursor isn't here; once it is: rex ingest --install cursor"
 }
 $claude = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
 $codex = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
 $opencode = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode" } else { Join-Path $HOME ".config\opencode" }
-if (Test-Path $claude) { $hints += "rex ingest --install claude        # Claude Code (add --project for one repo)" }
-if (Test-Path $codex) { $hints += "rex ingest --install codex         # Codex, then trust the hooks in /hooks" }
-if (Test-Path $opencode) { $hints += "rex ingest --install opencode      # OpenCode" }
+if (Test-Path -PathType Container $claude) { $hints += "rex ingest --install claude        # Claude Code (add --project for one repo)" }
+if (Test-Path -PathType Container $codex) { $hints += "rex ingest --install codex         # Codex, then trust the hooks in /hooks" }
+if (Test-Path -PathType Container $opencode) { $hints += "rex ingest --install opencode      # OpenCode" }
+# The skill lives in ~/.claude/skills: offered only where that folder is.
+if (Test-Path -PathType Container $claude) { $hints += "rex ingest --install-skill         # teach Claude Code, Cursor and OpenCode the plan format" }
 if ($hints.Count -gt 0) {
     Write-Host ""
     Write-Host "Other agents (opt-in):"
     foreach ($h in $hints) { Write-Host "  $h" }
-    Write-Host "  rex ingest --install-skill         # teach agents the plan format"
 }
 
 Write-Host ""

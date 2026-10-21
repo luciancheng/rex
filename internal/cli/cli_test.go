@@ -404,7 +404,7 @@ func TestProjectInstallsAreClaudeOnly(t *testing.T) {
 	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
 	for _, name := range []string{"auto", "cursor"} {
 		var stdout, stderr bytes.Buffer
-		if code := Main([]string{"ingest", "--install", name, "--project"}, bytes.NewReader(nil), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "claude only") {
+		if code := Main([]string{"ingest", "--install", name, "--project"}, bytes.NewReader(nil), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "only; nothing changed") {
 			t.Fatalf("%s --project: code=%d %q", name, code, stderr.String())
 		}
 	}
@@ -429,5 +429,37 @@ func TestInstallSkillCLI(t *testing.T) {
 	}
 	if code := Main([]string{"ingest", "--uninstall-skill"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("%d %s", code, stderr.String())
+	}
+}
+
+func TestSkillFlagsGoOnTheirOwn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	for _, args := range [][]string{
+		{"--install-skill", "--uninstall-skill"},
+		{"--install-skill", "--install", "claude"},
+		{"--uninstall-skill", "--uninstall", "claude"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Main(append([]string{"ingest"}, args...), strings.NewReader(""), &stdout, &stderr); code != 1 {
+			t.Errorf("%v: code %d", args, code)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); err == nil {
+		t.Fatal("a refused command installed nothing")
+	}
+	plain := t.TempDir()
+	wd, _ := os.Getwd()
+	os.Chdir(plain)
+	defer os.Chdir(wd)
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"ingest", "--install-skill", "--project"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "needs a git repo") {
+		t.Fatalf("outside git, --project refuses: %d %q", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(plain, ".claude")); err == nil {
+		t.Fatal("nothing is written outside a repo")
 	}
 }

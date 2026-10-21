@@ -13,7 +13,7 @@ import (
 )
 
 func TestFrontmatter(t *testing.T) {
-	s := string(RexPlan)
+	s := strings.ReplaceAll(string(RexPlan), "\r\n", "\n") // a Windows checkout may turn the file CRLF
 	if !strings.HasPrefix(s, "---\nname: rex-plan\ndescription: ") {
 		t.Fatalf("frontmatter must start the file: %q", s[:60])
 	}
@@ -24,6 +24,10 @@ func TestFrontmatter(t *testing.T) {
 	desc := s[strings.Index(s, "description: ")+len("description: ") : 4+end]
 	if strings.Contains(desc, "\n") || len(desc) > 1024 {
 		t.Fatalf("description is one line under 1024 bytes: %d", len(desc))
+	}
+	// Valid YAML for strict loaders: quoted, and the quote closes it.
+	if len(desc) < 2 || desc[0] != '\'' || desc[len(desc)-1] != '\'' || strings.Contains(desc[1:len(desc)-1], "'") {
+		t.Fatalf("the description is one single-quoted YAML scalar: %s", desc)
 	}
 	if !strings.Contains(s, marker) {
 		t.Fatal("the generated marker lets Rex tell its file from yours")
@@ -91,5 +95,22 @@ func TestDir(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/c")
 	if Dir("/h", "/r", false) != filepath.Join("/c", "skills", "rex-plan") {
 		t.Fatal("CLAUDE_CONFIG_DIR")
+	}
+}
+
+func TestInstallLeavesAnUnreadableSkillAlone(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SKILL.md")
+	os.WriteFile(path, []byte("my own skill"), 0o000)
+	defer os.Chmod(path, 0o644)
+	if err := Install(dir, io.Discard); err == nil {
+		t.Fatal("a SKILL.md Rex can't read is never replaced")
+	}
+	os.Chmod(path, 0o644)
+	if data, _ := os.ReadFile(path); string(data) != "my own skill" {
+		t.Fatal("it is untouched")
 	}
 }

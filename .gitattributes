@@ -1,0 +1,3 @@
+# The embedded skill must be the same bytes on every OS (a CRLF checkout
+# would change what Rex installs and what its tests read).
+internal/skill/rex-plan/SKILL.md text eol=lf

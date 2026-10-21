@@ -138,21 +138,20 @@ func (a *app) frameRows() Frame {
 
 func (a *app) composeOptions() ComposeOptions {
 	opt := ComposeOptions{
-		Placeholder:   a.placeholder(),
-		Preview:       a.preview(),
-		Enabled:       a.enabled,
-		Columns:       a.columns,
-		Lines:         a.lines,
-		AnimationName: a.sequence.Name,
-		Draft:         a.draft,
-		Log:           a.log,
-		QuitPending:   a.quitPending,
-		Status:        statusForTurn(a.turn, a.lastKind),
-		Scroll:        a.scroll,
-		Pane:          a.pane,
-		Plans:         a.plans,
-		PlanRel:       a.plans.CurrentRel(),
-		Line:          a.statusLine(),
+		Placeholder: a.placeholder(),
+		Preview:     a.preview(),
+		Enabled:     a.enabled,
+		Columns:     a.columns,
+		Lines:       a.lines,
+		Draft:       a.draft,
+		Log:         a.log,
+		QuitPending: a.quitPending,
+		Status:      statusForTurn(a.turn, a.lastKind),
+		Scroll:      a.scroll,
+		Pane:        a.pane,
+		Plans:       a.plans,
+		PlanRel:     a.plans.CurrentRel(),
+		Line:        a.statusLine(),
 	}
 	textW := PaneTextWidth(a.columns)
 	if textW > 0 {

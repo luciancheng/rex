@@ -423,7 +423,7 @@ func TestComposeFramePlansPane(t *testing.T) {
 	repo := t.TempDir()
 	b := NewPlanBrowser(repo)
 	frame := ComposeFrame("idle", "yellow", ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle",
+		Enabled: false, Columns: 80, Lines: 24,
 		Pane: PanePlans, Plans: b,
 	})
 	if !strings.Contains(frame, "── plans") || !strings.Contains(frame, "Create a plan") {

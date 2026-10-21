@@ -52,7 +52,7 @@ func TestRendererFullRepaintRules(t *testing.T) {
 }
 
 func TestComposeFrameStringMatchesRows(t *testing.T) {
-	opt := ComposeOptions{Enabled: false, Columns: 100, Lines: 24, AnimationName: "idle", Pane: PaneChat,
+	opt := ComposeOptions{Enabled: false, Columns: 100, Lines: 24, Pane: PaneChat,
 		Log: []watch.Event{watch.NewEvent("cursor", "text", "hello", nil)}}
 	f := composeRows("idle", "yellow", opt)
 	if got := ComposeFrame("idle", "yellow", opt); !strings.Contains(got, strings.Join(f.Rows, "\r\n")) {

@@ -33,7 +33,7 @@ func TestLayoutTiers(t *testing.T) {
 
 func frameAt(t *testing.T, cols, lines int, opt ComposeOptions) []string {
 	t.Helper()
-	opt.Columns, opt.Lines, opt.AnimationName = cols, lines, "idle"
+	opt.Columns, opt.Lines = cols, lines
 	f := composeRows("idle", "yellow", opt)
 	if len(f.Rows) != lines {
 		t.Fatalf("%dx%d: %d rows", cols, lines, len(f.Rows))
@@ -260,7 +260,7 @@ func TestExitLine(t *testing.T) {
 
 func TestHeaderColorsAskAndError(t *testing.T) {
 	opt := ComposeOptions{Enabled: true, Pane: PaneChat, Status: "ask", Log: []watch.Event{}}
-	opt.Columns, opt.Lines, opt.AnimationName = 120, 32, "idle"
+	opt.Columns, opt.Lines = 120, 32
 	row := composeRows("idle", "yellow", opt).Rows[0]
 	if !strings.Contains(row, "\033[38;2;232;78;78mask") {
 		t.Fatalf("ask should use the error color: %q", row)

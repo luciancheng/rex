@@ -101,6 +101,8 @@ go run ./cmd/rex start
 
 CI: GitHub Actions, Ubuntu/macOS/Windows, Go 1.22 and 1.24: `go vet`, `go test`, then `go build -o dist/rex ./cmd/rex` (never `-o rex`; `rex/` is the plans directory). A separate job on stable Go runs gofmt and `go vet` for darwin, linux and windows, whose stdversion check catches APIs newer than go.mod's 1.22.
 
+`internal/tui/cuj_test.go` holds the whole journey (open → watch → done → pin → send off → drift → quit) against the keystroke budget in docs/ux.md §14, and a frame matrix: every screen at 24/80/120 columns × 7/12/24 rows must fit, carry no control bytes, and show the header and a footer. A new screen or overlay joins the matrix. `rex/plans/cuj/sendoff-demo.rex.json` is the CUJ fixture.
+
 After sprite or TUI changes, restart a running `rex start`. Tests do not replace looking at the terminal.
 
 ## Code conventions

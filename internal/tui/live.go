@@ -622,27 +622,26 @@ func paintLine(line LogLine, width int, enabled bool) string {
 }
 
 type ComposeOptions struct {
-	Enabled       bool
-	Columns       int
-	Lines         int
-	AnimationName string
-	Draft         string
-	Log           []watch.Event
-	QuitPending   bool
-	Status        string
-	Scroll        int
-	Pane          PaneKind
-	Plans         *PlanBrowser
-	LogView       []LogLine // laid-out tape, when the caller already has it
-	PlanRel       string    // open plan, repo-relative, for the header
-	Line          StatusLine
-	Overlay       *Overlay
-	Placeholder   string    // dim hint in an empty composer
-	Preview       string    // what ⏎ will do with the draft, shown in the footer
-	Prefix        string    // composer prefix, when an overlay names its field
-	PlanView      []LogLine // the open plan's screen, when PLAN shows it
-	PlanScroll    int       // its first visible line
-	PlanFooter    []string
+	Enabled     bool
+	Columns     int
+	Lines       int
+	Draft       string
+	Log         []watch.Event
+	QuitPending bool
+	Status      string
+	Scroll      int
+	Pane        PaneKind
+	Plans       *PlanBrowser
+	LogView     []LogLine // laid-out tape, when the caller already has it
+	PlanRel     string    // open plan, repo-relative, for the header
+	Line        StatusLine
+	Overlay     *Overlay
+	Placeholder string    // dim hint in an empty composer
+	Preview     string    // what ⏎ will do with the draft, shown in the footer
+	Prefix      string    // composer prefix, when an overlay names its field
+	PlanView    []LogLine // the open plan's screen, when PLAN shows it
+	PlanScroll  int       // its first visible line
+	PlanFooter  []string
 }
 
 // Frame is one screen: full-width rows plus where the cursor goes.

@@ -690,8 +690,11 @@ func (b *PlanBrowser) addHints() {
 				row.Hint = strings.TrimSuffix(strings.TrimSpace("open · "+row.Hint), " ·")
 			}
 		case PlanRowPlan:
+			if b.Screen == ScreenHome && b.Find != "" {
+				row.Hint = b.progressHint(row.Path) // a find result reads like a recent
+			}
 			if row.Path == b.Current {
-				row.Hint = "open"
+				row.Hint = strings.TrimSpace("open · " + row.Hint)
 			}
 		}
 	}

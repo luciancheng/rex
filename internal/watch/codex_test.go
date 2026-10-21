@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -28,8 +29,8 @@ func TestMapCodexHooks(t *testing.T) {
 		{`{"hook_event_name":"UserPromptSubmit","turn_id":"t","prompt":"fix the cards"}`, "user", "fix the cards"},
 		{`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"go test ./..."}}`, "command", "go test ./..."},
 		{`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"go test ./..."},"tool_response":"ok"}`, "result", "ran go test ./..."},
-		{`{"hook_event_name":"PreToolUse","cwd":"/repo","tool_name":"apply_patch","tool_input":{"command":` + string(patch) + `}}`, "command", "Edit /repo/internal/tui/live.go (+2 more)"},
-		{`{"hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"apply_patch","tool_input":{"command":` + string(patch) + `}}`, "result", "wrote /repo/internal/tui/live.go (+2 more)"},
+		{`{"hook_event_name":"PreToolUse","cwd":"/repo","tool_name":"apply_patch","tool_input":{"command":` + string(patch) + `}}`, "command", "Edit " + filepath.Join("/repo", "internal", "tui", "live.go") + " (+2 more)"},
+		{`{"hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"apply_patch","tool_input":{"command":` + string(patch) + `}}`, "result", "wrote " + filepath.Join("/repo", "internal", "tui", "live.go") + " (+2 more)"},
 		{`{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}`, "question", "Bash wants permission: rm -rf build"},
 		{`{"hook_event_name":"Stop","last_assistant_message":"Done.\naccomplished: x"}`, "text", "Done.\naccomplished: x"},
 		{`{"hook_event_name":"Stop","last_assistant_message":null}`, "idle", "turn completed"},
@@ -47,7 +48,8 @@ func TestMapCodexHooks(t *testing.T) {
 		}
 	}
 	post := codexMap(t, `{"hook_event_name":"PostToolUse","cwd":"/repo","tool_name":"apply_patch","tool_input":{"command":`+string(patch)+`}}`)
-	if got := EventPaths(*post); strings.Join(got, ",") != "/repo/internal/tui/live.go,/repo/docs/new.md,/repo/old.go" {
+	// paths join the OS's way, as a real cwd is
+	if got, want := EventPaths(*post), []string{filepath.Join("/repo", "internal", "tui", "live.go"), filepath.Join("/repo", "docs", "new.md"), filepath.Join("/repo", "old.go")}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("%q", got)
 	}
 	if _, ok := codexMap(t, `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"x"}}`).Meta["ok"]; ok {
@@ -104,7 +106,7 @@ func TestInstallCodex(t *testing.T) {
 			t.Fatalf("missing %s", name)
 		}
 	}
-	if !strings.Contains(out.String(), "/hooks and trust") || !strings.Contains(out.String(), "login shell") {
+	if !strings.Contains(out.String(), "/hooks and trust") || strings.Contains(out.String(), "login shell") == (runtime.GOOS == "windows") { // no login-shell note on Windows
 		t.Fatalf("%q", out.String())
 	}
 	before := data

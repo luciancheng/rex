@@ -294,7 +294,7 @@ func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task) {
 	if base != nil {
 		body += " and the PR it sits on"
 	}
-	line("- Cut the branch from the base. If it already exists, switch to it and add commits, and if it isn't on the base yet, rebase it onto the base (--autostash) and retarget its PR. Once the repo's checks pass, push it and, if it has no PR yet, open one against the base with %s in the body (GitHub: gh pr create --base %s --head %s).", body, on, head)
+	line("- Cut the branch from the base. If it already exists, switch to it and add commits, and if it isn't on the base yet, rebase it onto the base (--autostash) and retarget its PR. Once the repo's checks pass and the review is done, push it and, if it has no PR yet, open one against the base with %s in the body (GitHub: gh pr create --base %s --head %s).", body, on, head)
 	if base != nil {
 		line("- If the forge links stacks, add this PR to the stack the PR below is in (GitHub: %s). Without that, the chain of base branches is the stack.", g.linkCommand(pin, use, trunkArg, head))
 	}

@@ -22,9 +22,10 @@ const (
 func Fingerprint(rel, task string) string { return "rex-sendoff: " + rel + "#" + task }
 
 // Sendoff is the handoff for the next chat or person, generated only from
-// the plan (issue #9's template, plus a short Done section, for a stacked
-// plan a Stack part saying where the pin's PR goes, the reply trailer
-// request and the fingerprint). rel is the plan's repo-relative
+// the plan (issue #9's template, plus a short Done section, a request to
+// review the pin's PR read-only before it opens, for a stacked plan a Stack
+// part saying where that PR goes, the reply trailer request and the
+// fingerprint). rel is the plan's repo-relative
 // path. Every field is cleaned of terminal control characters.
 func Sendoff(p *Plan, rel string) (string, error) {
 	if p == nil || len(p.Tasks) == 0 {
@@ -55,7 +56,13 @@ func keepTail(s string, n int) string {
 	if j := strings.LastIndex(s, "\nFor the next chat\n"); j >= 0 {
 		s, foot = s[:j], s[j:]
 	}
-	if len(foot)+len(cut)+64 > n { // a huge pin id or path: no room to keep it whole
+	if len(foot)+len(cut)+64 > n {
+		// No room for the whole footer: keep its end, the trailer request
+		// and the fingerprint, and cut what comes before it. A huge pin id
+		// or path leaves no room even for that.
+		if k := strings.LastIndex(foot, "\nWhen you finish, "); k >= 0 && len(foot)-k+len(cut)+64 <= n {
+			return capBytes(s+foot[:k], n-(len(foot)-k)-len(cut)) + cut + foot[k:]
+		}
 		return capBytes(s+foot, n)
 	}
 	n -= len(foot)
@@ -191,11 +198,11 @@ func sendoff(p *Plan, rel string, done, open int) string {
 		line("Work only on the pinned task. Stay in scope. Open the plan file in Rex.")
 	}
 	line("Do not inject tools or expand into scope.out. If the plan is wrong, edit the JSON.")
+	if pin != nil {
+		line("Before you open or update the PR, review it read-only, one reviewer per job (design, the UI if it changed, breaking it, lint and checks); fix or explain each finding, then a final readiness check. Repo review rules win.")
+	}
 	if pin != nil && p.Stacked() {
 		stackLines(line, p, g, pin)
-	}
-	if pin != nil {
-		line("Before opening the PR, review it read-only, one reviewer per job (design, the UI if it changed, breaking it, lint and checks); fix or explain each finding, then a final readiness check. Repo review rules win.")
 	}
 	line("When you finish, end your final reply with these lines:")
 	line("accomplished: <what you actually did>")

@@ -131,6 +131,16 @@ func (a *app) ingest(fresh []watch.Event) bool {
 
 // handleKey applies one key. It sets a.quit on the second Ctrl+C.
 func (a *app) handleKey(key string) bool {
+	if text, ok := IsPaste(key); ok {
+		// A paste is typed into the draft as one line; it never submits.
+		a.quitPending = false
+		next := capDraft(a.draft + text)
+		if next == a.draft {
+			return false
+		}
+		a.draft = next
+		return true
+	}
 	bodyH := PaneBodyHeight(a.lines)
 	total := a.logLines()
 	maxScroll := ClampScroll(total, bodyH, total)
@@ -216,7 +226,7 @@ func (a *app) handleKey(key string) bool {
 	}
 	if isPrintableKey(key) {
 		a.quitPending = false
-		if runeLen(a.draft) < 256 {
+		if runeLen(a.draft) < draftCap {
 			a.draft += key
 			return true
 		}
@@ -275,4 +285,14 @@ func (a *app) settle(columns, lines int) bool {
 		changed = true
 	}
 	return changed
+}
+
+const draftCap = 256
+
+// capDraft keeps the composer to draftCap whole runes.
+func capDraft(s string) string {
+	if r := []rune(s); len(r) > draftCap {
+		return string(r[:draftCap])
+	}
+	return s
 }

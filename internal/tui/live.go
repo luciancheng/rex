@@ -827,7 +827,7 @@ func handlePlanKey(b *PlanBrowser, draft *string, key string, page int) (bool, b
 		}
 		return false, false
 	default:
-		if isPrintableKey(key) && runeLen(*draft) < 256 {
+		if isPrintableKey(key) && runeLen(*draft) < draftCap {
 			*draft += key
 			return true, false
 		}
@@ -854,23 +854,33 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 		path = watch.DefaultEventPath()
 	}
 	tail := watch.NewEventTail(path, true)
-	err := LiveScreen(stdout, stdin, func() error {
+	keys := newKeyReader(stdin)
+	err := LiveScreen(stdout, stdin, func(sig screenSignals) error {
 		draw := func() {
 			_, _ = io.WriteString(stdout, a.frame())
 			_ = stdout.Sync()
 		}
 		draw()
 		for {
-			key, haveKey := ReadKey(stdin, time.Duration(FrameTick)*time.Millisecond)
+			select {
+			case <-sig.quit:
+				return nil
+			case <-sig.resume:
+				reenterRaw(int(stdin.Fd()))
+				draw()
+			default:
+			}
+			pressed := keys.Read(time.Duration(FrameTick) * time.Millisecond)
 			changed := a.ingest(tail.Poll())
-			if haveKey {
+			for _, key := range pressed {
 				if a.handleKey(key) {
 					changed = true
 				}
 				if a.quit {
 					return nil
 				}
-			} else if a.tick() {
+			}
+			if len(pressed) == 0 && a.tick() {
 				changed = true
 			}
 			if a.settle(Size()) {

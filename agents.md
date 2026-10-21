@@ -56,7 +56,7 @@ If the README hero should match, rebuild `assets/rex.png` from `idle.png` with n
 
 Animation must stay slow. Never let it eat input or overwrite the log.
 
-Unix live mode is cbreak (ECHO/ICANON/ISIG off) and **must keep OPOST**. Do not use `term.MakeRaw`.
+Unix live mode is cbreak (ECHO/ICANON/ISIG/IEXTEN off, IXON off so Ctrl+S can't freeze output) and **must keep OPOST**. Do not use `term.MakeRaw`. Input goes through `keyDecoder` (whole escape sequences, whole UTF-8 runes, bracketed paste as one token that never submits). On Windows, `ENABLE_PROCESSED_INPUT` is cleared so Ctrl+C is a key. SIGTERM/SIGHUP/interrupt leave through the same restore path as Ctrl+C twice.
 
 ## Watch feed
 

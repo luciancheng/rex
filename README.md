@@ -135,7 +135,7 @@ CI runs the same suite on Ubuntu, macOS, and Windows across Go 1.22 and 1.24.
 1. Install Go 1.22+.
 2. Keep mascot rendering in `internal/mascot/` and commands in `internal/cli/`.
 3. Add `*_test.go` next to the package for new behavior.
-4. Run the pre-PR gate in [agents.md](agents.md) (Workflow) before opening a pull request. If you can't install its tools, run at least `go test ./...`; CI and review run the rest.
+4. Run the pre-PR gate in [agents.md](agents.md) (Workflow) before opening a pull request. If you can't install its tools, run at least `go test ./...`: CI runs the tests on Go 1.22 and 1.24, and reviewers run the rest of the gate.
 
 Code conventions, the Go 1.22 floor, and the branch / PR workflow are in [agents.md](agents.md).
 

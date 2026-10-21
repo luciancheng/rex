@@ -113,7 +113,7 @@ After sprite or TUI changes, restart a running `rex start`. Tests do not replace
 - **Branches.** Branch from `dev`. When a change depends on unmerged work, stack it: cut the branch from the previous one and open the PR against it. Name branches after the issue: `feature/task_completion`, `fix/key_input`, `docs/ux_spec`.
 - **One branch, one issue.** Each branch closes exactly one issue. Work with no issue gets one first.
 - **PR body.** Include the problem, what changed, why it is needed, how it works, the tests run (with output), terminal captures for TUI changes, and any existing behavior or test that changed on purpose. Stacked PRs say what they sit on: merge them bottom-up and don't squash.
-- **Fixing a lower PR in a stack.** Add a commit to that branch, never amend. Then rebase everything above it and push each moved branch:
+- **Fixing a lower PR in a stack.** Add a commit to that branch, never amend. Then rebase everything above it and push each moved branch (`--update-refs` needs Git 2.38+):
 
 ```bash
 git checkout <top-of-stack>
@@ -121,16 +121,20 @@ git rebase --update-refs <fixed-branch>   # moves every branch in between too
 git push --force-with-lease origin <each moved branch>
 ```
 
-- **Before opening a PR,** run the gate (bash) and a review pass:
+- **Before opening a PR,** run the gate and a review pass. Save the gate as a script and run it with `bash gate.sh <base-branch>` (don't paste it into your login shell: it stops at the first failure):
 
 ```bash
-test -z "$(gofmt -l .)"
-for os in darwin linux windows; do GOOS=$os go vet ./... || exit 1; done
-staticcheck ./...                           # honnef.co/go/tools/cmd/staticcheck@2026.2.2
+set -euo pipefail
+out=$(gofmt -l .); [ -z "$out" ] || { echo "gofmt needed: $out"; exit 1; }
+for os in darwin linux windows; do GOOS=$os go vet ./...; done
+staticcheck ./...                           # go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
 go test -race ./...
-GOTOOLCHAIN=local go1.22.12 test ./...      # golang.org/dl/go1.22.12, then: go1.22.12 download
-git diff --exit-code <base-branch> -- go.mod go.sum   # no new deps, no toolchain line
+GOTOOLCHAIN=local go1.22.12 test ./...      # go install golang.org/dl/go1.22.12@latest && go1.22.12 download
+git diff --exit-code "$1" -- go.mod go.sum  # no new deps, no toolchain line
+echo "gate ok"
 ```
+
+  `dev` has two staticcheck findings until #19 lands; until then the staticcheck step means "no new findings compared with the base branch".
 
 - **Review pass.** Read-only reviewers, each with one job:
   - critique the design and how it interacts with the system;

@@ -9,6 +9,7 @@ const (
 	overlayHelp
 	overlayPin
 	overlayDone
+	overlaySendoff
 )
 
 // pinAsk is a pin waiting for its confirm: the task, the status the user
@@ -98,6 +99,8 @@ func helpLines(width int) []LogLine {
 		row("? help", "this screen"),
 		row("p  pin [id]", "pin the selected task, or next up, or that id"),
 		row("d  done", "mark the pin done: what was done, how it was checked"),
+		row("s  sendoff", "a brief of the plan to paste into the next chat"),
+		row("b  brief", "a brief that asks an agent to fill this plan"),
 		row("breakdance", "one dance"),
 		row("/word", "in plans, where typing finds or names, a verb starts with /"),
 		row("anything else", "on the tape, a note: local, never sent"),

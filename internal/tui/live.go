@@ -31,6 +31,8 @@ var kindColor = map[string]string{
 	"note":     "muted",
 	"plan":     "muted",
 	"done":     "muted", // a verb's record line, like the rest
+	"sendoff":  "muted",
+	"brief":    "muted",
 	"thought":  "muted",
 	"command":  "accent",
 	"question": "error",
@@ -57,6 +59,8 @@ var kindLabel = map[string]string{
 	"note":     "note · local",
 	"plan":     "plan",
 	"done":     "done",
+	"sendoff":  "sendoff",
+	"brief":    "brief",
 	"thought":  "thinking",
 	"command":  "run",
 	"question": "ask",
@@ -258,6 +262,12 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 			continue
 		}
 		kind, text := asLogEntry(entry)
+		if m := fingerprint.FindStringSubmatch(entry.Text); kind == "user" && m != nil {
+			// A send-off pasted back as a prompt: the new chat started
+			// from the pin. One line, not the whole brief again.
+			kind = "sendoff"
+			text = fmt.Sprintf("%s pasted (%d lines)", m[2], strings.Count(strings.TrimRight(entry.Text, "\n"), "\n")+1)
+		}
 		if n := len(groups); n > 0 && groups[n-1].kind == kind && kind != "text" && kind != "user" {
 			groups[n-1].texts = append(groups[n-1].texts, text)
 			continue
@@ -780,6 +790,19 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 	paint := &renderer{full: true}
 	err := LiveScreen(stdout, stdin, func(sig screenSignals) error {
 		draw := func() {
+			if a.plainShown {
+				return // the brief is on the normal screen
+			}
+			if a.plainOut != "" {
+				_, _ = io.WriteString(stdout, plainScreen(a.plainOut))
+				a.plainOut, a.plainShown = "", true
+				return
+			}
+			if a.plainBack {
+				_, _ = io.WriteString(stdout, screenSetup)
+				a.plainBack = false
+				paint.invalidate()
+			}
 			if a.repaint {
 				paint.invalidate()
 				a.repaint = false

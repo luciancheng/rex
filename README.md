@@ -69,6 +69,7 @@ rex ingest --install claude       # wire Claude Code (~/.claude/settings.json, o
 rex ingest --install claude --project   # this repo only, git-excluded
 rex ingest --install codex        # wire Codex ($CODEX_HOME/hooks.json), then /hooks → trust
 rex ingest --install opencode     # an OpenCode plugin (~/.config/opencode/plugins/rex.js, or $XDG_CONFIG_HOME)
+rex ingest --install-skill        # teach Claude Code, Cursor and OpenCode the plan format (~/.claude/skills/rex-plan); --project for this repo
 rex --help
 ```
 

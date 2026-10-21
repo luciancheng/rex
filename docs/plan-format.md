@@ -159,3 +159,7 @@ Creating a plan writes every plan field, empty, ready for an agent or a human to
 ```
 
 An old `{}` plan is still valid: it is a plan with no tasks.
+
+## Teaching an agent
+
+`rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan/SKILL.md`, or the repo's `.claude/skills/` with `--project`), which teaches this format, the rules above, and the reply trailer. In Rex, `b⏎` copies a shorter planning brief to paste into any agent.

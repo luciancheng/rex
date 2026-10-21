@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/luciancheng/rex/internal/mascot"
+	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/tui"
 	"github.com/luciancheng/rex/internal/version"
 	"github.com/luciancheng/rex/internal/watch"
@@ -44,13 +45,14 @@ options:
 
 const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex,opencode}] [--events EVENTS]
        rex ingest --install HARNESS | --uninstall HARNESS [--project]
+       rex ingest --install-skill [--project] | --uninstall-skill [--project]
 
 append an agent event to the watch feed
 
 When run from a hook, ingest always exits 0 and writes nothing to stdout,
 so it cannot block or steer the agent; problems go to stderr. Only
--h/--help, --version, --install, --uninstall and --install-cursor-hook
-print to stdout.
+-h/--help, --version, --install, --uninstall, --install-cursor-hook and
+the skill flags print to stdout.
 
 options:
   -h, --help              show this help message and exit
@@ -59,7 +61,13 @@ options:
   --install HARNESS       wire an agent so it writes the feed: cursor, claude,
                           codex, opencode, or auto for every one found here
   --project               with claude: wire only this git repo
-                          (.claude/settings.local.json, kept out of git)
+                          (.claude/settings.local.json, kept out of git);
+                          with the skill: install it in this repo
+                          (.claude/skills/rex-plan)
+  --install-skill         install the rex-plan skill, which teaches Claude
+                          Code, Cursor and OpenCode the plan format
+                          (~/.claude/skills/rex-plan; Codex: use b⏎)
+  --uninstall-skill       remove the rex-plan skill Rex installed
   --uninstall HARNESS     take Rex's hook back out of that agent's config
   --install-cursor-hook   same as --install cursor
   --events EVENTS         JSONL event feed (default: ~/.rex/session.jsonl)
@@ -162,7 +170,9 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	installCursor := fs.Bool("install-cursor-hook", false, "install ~/.cursor/hooks.json")
 	install := fs.String("install", "", "wire an agent's hooks")
 	uninstall := fs.String("uninstall", "", "remove Rex's hooks from an agent")
-	project := fs.Bool("project", false, "claude: wire only this repo (.claude/settings.local.json)")
+	project := fs.Bool("project", false, "claude or the skill: only this repo")
+	installSkill := fs.Bool("install-skill", false, "install the rex-plan agent skill")
+	uninstallSkill := fs.Bool("uninstall-skill", false, "remove the rex-plan agent skill")
 	events := fs.String("events", "", "JSONL event feed")
 	if err := fs.Parse(args); err != nil {
 		for _, a := range args {
@@ -188,10 +198,41 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		*install = "cursor"
 	}
 	// Installing is interactive, so it may fail loudly; ingest never does.
+	if *installSkill || *uninstallSkill {
+		// One thing at a time, so nothing asked for is silently skipped.
+		if (*installSkill && *uninstallSkill) || set["install"] || set["uninstall"] || *installCursor {
+			fmt.Fprintln(stderr, "rex: --install-skill and --uninstall-skill go on their own; nothing changed")
+			return 1
+		}
+		repo, inRepo := tui.FindRepo("")
+		if *project && !inRepo {
+			fmt.Fprintf(stderr, "rex: --project needs a git repo, and %s isn't one; run it from inside the repo\n", repo)
+			return 1
+		}
+		home, err := os.UserHomeDir()
+		if err != nil && !*project && os.Getenv("CLAUDE_CONFIG_DIR") == "" {
+			fmt.Fprintf(stderr, "rex: %v\n", err)
+			return 1
+		}
+		dir := skill.Dir(home, repo, *project)
+		if *installSkill {
+			err = skill.Install(dir, stdout)
+			if err == nil && !*project && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+				fmt.Fprintln(stdout, "that is $CLAUDE_CONFIG_DIR, which only Claude Code reads; Cursor and OpenCode read ~/.claude/skills (or use --project)")
+			}
+		} else {
+			err = skill.Uninstall(dir, stdout)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "rex: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if *project && *install != "claude" && *uninstall != "claude" {
 		// Only Claude Code has a per-repo hook file; never fall through to
 		// the machine-wide config the user just asked to avoid.
-		fmt.Fprintln(stderr, "rex: --project works with claude only; nothing changed")
+		fmt.Fprintln(stderr, "rex: --project works with claude or the skill only; nothing changed")
 		return 1
 	}
 	if *project {

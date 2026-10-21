@@ -107,6 +107,9 @@ func FindRepoRoot(start string) string {
 	return root
 }
 
+// FindRepo is FindRepoRoot, and whether a repo was found at all.
+func FindRepo(start string) (string, bool) { return findRepo(start) }
+
 // findRepo walks up from start to the directory holding .git. Outside a
 // repo it returns start itself and false.
 func findRepo(start string) (string, bool) {

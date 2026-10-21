@@ -382,7 +382,7 @@ sendoff · esc close · c⏎ copy · o⏎ print plain
 - **Always from the file as it is now.** An open overlay is rebuilt when the plan changes, and `c⏎` / `o⏎` use the plan as it is at that moment. A missing or unparsable file refuses (`can't send off: …`) rather than send the last good copy.
 - **Copying is honest.**
   - Rex uses the native tool (`pbcopy`, `wl-copy`, `xclip`, `clip.exe`) and says `copied (<tool>)` only if it exited 0.
-  - Over SSH, or with no tool available, it sends OSC 52 and says `sent (OSC 52) · may be blocked`.
+  - Over SSH, with no tool available, or when every tool fails within the 2 s the copy gets, it sends OSC 52 and says `sent (OSC 52) · may be blocked`. Until the tool answers, the overlay says `copying…`; copies run one at a time, in the order asked, so the last brief asked for is the one on the clipboard.
   - `o⏎` leaves the alternate screen and prints the plain brief to the normal screen. Mouse selection is then clean, and the text stays in scrollback. ⏎ returns.
 - **No saved copy.** Rex keeps no handoff file, so nothing can drift from the JSON. The brief can always be regenerated, and `o⏎` covers terminals where copying fails.
 - **On the tape.** Rex adds a one-line record: `── sendoff · card-highlight · copied (pbcopy) ──`. When the brief comes back as a user prompt (the fingerprint on a line of its own), the tape collapses it to `── sendoff ── card-highlight pasted (24 lines)`, followed by any words the user typed before it. That confirms the new chat started from the pin.

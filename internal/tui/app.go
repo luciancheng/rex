@@ -67,6 +67,7 @@ type app struct {
 	briefs     [2]*briefView                  // per place, while the Send-off overlay is open
 	copy       func(string) <-chan copyResult // copies a brief off the UI goroutine; nil = no clipboard
 	oscOut     string                         // an OSC 52 copy for the loop to write between frames
+	copying    []*briefView                   // briefs whose copy is still running
 	plainOut   string                         // a brief to print on the normal screen (o⏎)
 	plainText  string                         // the brief on the normal screen, to print again after a stop
 	plainShown bool                           // the brief is on the normal screen; ⏎ returns

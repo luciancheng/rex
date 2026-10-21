@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -97,5 +99,74 @@ func TestClipExeGetsUTF16WithABOM(t *testing.T) {
 func TestOSC52(t *testing.T) {
 	if osc52("hi") != "\x1b]52;c;aGk=\a" {
 		t.Fatalf("%q", osc52("hi"))
+	}
+}
+
+func TestCopiesFinishInTheOrderAsked(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var order []string
+	c := &clipboard{goos: "darwin", getenv: func(string) string { return "" }, lookPath: func(n string) (string, error) { return n, nil },
+		run: func(ctx context.Context, path string, args []string, stdin []byte) error {
+			if string(stdin) == "first" {
+				<-release // the first copy is slow
+			}
+			mu.Lock()
+			order = append(order, string(stdin))
+			mu.Unlock()
+			return nil
+		}}
+	first, second := c.copyAsync("first"), c.copyAsync("second")
+	close(release)
+	<-first
+	<-second
+	if strings.Join(order, ",") != "first,second" {
+		t.Fatalf("the last brief asked for is the one left on the clipboard: %v", order)
+	}
+}
+
+func TestToolsShareOneDeadline(t *testing.T) {
+	var deadlines []time.Time
+	display := func(k string) string {
+		if k == "WAYLAND_DISPLAY" || k == "DISPLAY" {
+			return ":0"
+		}
+		return ""
+	}
+	c := &clipboard{goos: "linux", getenv: display, lookPath: func(n string) (string, error) { return n, nil },
+		run: func(ctx context.Context, path string, args []string, stdin []byte) error {
+			d, _ := ctx.Deadline()
+			deadlines = append(deadlines, d)
+			return errors.New("no display")
+		}}
+	if r := c.Copy("x"); r.osc == "" {
+		t.Fatal("every tool failed: OSC 52")
+	}
+	if len(deadlines) != 3 || !deadlines[0].Equal(deadlines[2]) {
+		t.Fatalf("wl-copy, xclip and xsel share one %v deadline: %v", copyTimeout, deadlines)
+	}
+}
+
+func TestAReplacedBriefStillGetsItsRecord(t *testing.T) {
+	a, _, _ := openDemo(t, demoPlan, 120, 32)
+	slow := make(chan copyResult, 1)
+	a.copy = func(string) <-chan copyResult { return slow }
+	typeText(a, "s")
+	press(a, "\r") // copying…
+	press(a, "esc")
+	var copied []string
+	a.copy = fakeCopy(&copied, copyResult{status: "copied (fake)"})
+	typeText(a, "b")
+	press(a, "\r")
+	slow <- copyResult{status: "copied (slow)"}
+	a.pollCopies()
+	var records []string
+	for _, ev := range a.log {
+		if ev.Kind == "sendoff" || ev.Kind == "brief" {
+			records = append(records, ev.Kind+": "+ev.Text)
+		}
+	}
+	if len(records) != 2 || !strings.Contains(strings.Join(records, "|"), "copied (slow)") {
+		t.Fatalf("both briefs leave their line on the tape: %v", records)
 	}
 }

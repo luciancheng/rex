@@ -30,16 +30,17 @@ func (a *app) startCopy(v *briefView) {
 		return
 	}
 	v.status, v.pending = "copying…", a.copy(v.text)
+	a.copying = append(a.copying, v)
 }
 
 // pollCopies takes in finished copies: the status they earned, the OSC 52
 // sequence for the loop to write, and the brief's line on the tape.
+// A brief closed or replaced while its copy runs still gets its result and
+// its tape line.
 func (a *app) pollCopies() bool {
 	changed := false
-	for _, v := range a.briefs {
-		if v == nil || v.pending == nil {
-			continue
-		}
+	left := a.copying[:0]
+	for _, v := range a.copying {
 		select {
 		case r := <-v.pending:
 			v.status, v.pending = r.status, nil
@@ -47,8 +48,10 @@ func (a *app) pollCopies() bool {
 			a.recordBrief(v)
 			changed = true
 		default:
+			left = append(left, v)
 		}
 	}
+	a.copying = left
 	return changed
 }
 

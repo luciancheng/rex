@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 	"time"
 	"unicode/utf16"
 )
@@ -27,6 +28,12 @@ type clipboard struct {
 	getenv   func(string) string
 	lookPath func(string) (string, error)
 	run      func(ctx context.Context, path string, args []string, stdin []byte) error
+
+	// turn passes from one copy to the next, so copies run one at a time
+	// in the order they were asked for: the last brief asked for is the
+	// one left on the clipboard.
+	turn chan struct{}
+	once sync.Once
 }
 
 func newClipboard() *clipboard {
@@ -75,10 +82,15 @@ func (c *clipboard) tools() []copyTool {
 }
 
 // Copy runs the first tool that is installed and works, else falls back
-// to OSC 52. It blocks for at most copyTimeout (plus the pipe wait), so
-// callers run it off the UI goroutine.
+// to OSC 52. All the tools it tries share one copyTimeout (plus the pipe
+// wait of the last one), so callers run it off the UI goroutine.
 func (c *clipboard) Copy(text string) copyResult {
+	ctx, cancel := context.WithTimeout(context.Background(), copyTimeout)
+	defer cancel()
 	for _, t := range c.tools() {
+		if ctx.Err() != nil {
+			break
+		}
 		path, err := c.lookPath(t.name)
 		if err != nil {
 			continue
@@ -87,10 +99,7 @@ func (c *clipboard) Copy(text string) copyResult {
 		if t.utf16 {
 			data = utf16LE(text)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), copyTimeout)
-		err = c.run(ctx, path, t.args, data)
-		cancel()
-		if err == nil {
+		if err = c.run(ctx, path, t.args, data); err == nil {
 			return copyResult{status: "copied (" + t.name + ")"}
 		}
 	}
@@ -113,8 +122,20 @@ func utf16LE(text string) []byte {
 }
 
 // copyAsync starts copying text and returns where the result arrives.
+// Copies wait their turn, in the order they were asked for.
 func (c *clipboard) copyAsync(text string) <-chan copyResult {
+	c.once.Do(func() {
+		c.turn = make(chan struct{}, 1)
+		c.turn <- struct{}{}
+	})
 	done := make(chan copyResult, 1)
-	go func() { done <- c.Copy(text) }()
+	ready := c.turn
+	next := make(chan struct{}, 1)
+	c.turn = next
+	go func() {
+		<-ready
+		done <- c.Copy(text)
+		next <- struct{}{}
+	}()
 	return done
 }

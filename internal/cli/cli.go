@@ -28,7 +28,7 @@ options:
 examples:
   rex start
   rex start --static
-  rex ingest --install-cursor-hook
+  rex ingest --install cursor
 `
 
 const startHelp = `usage: rex start [-h] [--no-color] [--static] [--events EVENTS]
@@ -49,7 +49,7 @@ append an agent event to the watch feed
 
 When run from a hook, ingest always exits 0 and writes nothing to stdout,
 so it cannot block or steer the agent; problems go to stderr. Only
--h/--help, --version and --install-cursor-hook print to stdout.
+-h/--help, --version, --install, --uninstall and --install-cursor-hook print to stdout.
 
 options:
   -h, --help              show this help message and exit
@@ -161,7 +161,16 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	uninstall := fs.String("uninstall", "", "remove Rex's hooks from an agent")
 	events := fs.String("events", "", "JSONL event feed")
 	if err := fs.Parse(args); err != nil {
+		for _, a := range args {
+			if strings.HasPrefix(strings.TrimLeft(a, "-"), "install") || strings.HasPrefix(strings.TrimLeft(a, "-"), "uninstall") {
+				return 1 // a person installing, not a hook: say it failed
+			}
+		}
 		return 0
+	}
+	if *install != "" && *uninstall != "" {
+		fmt.Fprintln(stderr, "rex: use --install or --uninstall, not both")
+		return 1
 	}
 	if *installCursor && *install == "" {
 		*install = "cursor"

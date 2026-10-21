@@ -14,6 +14,7 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("HOME", home)
 	os.Setenv("USERPROFILE", home)
+	os.Unsetenv("REX_EVENTS") // a feed set in the shell is never written by a test
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)

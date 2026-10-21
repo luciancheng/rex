@@ -381,3 +381,59 @@ func TestHarnessRegistryCursor(t *testing.T) {
 		t.Fatal("unknown harness")
 	}
 }
+
+func TestCursorUninstallLeavesAnEmptyFileAlone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte("  \n"), 0o644)
+	var out bytes.Buffer
+	if err := UninstallHarness("cursor", &out); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "  \n" {
+		t.Fatalf("an empty hooks.json was rewritten: %q", data)
+	}
+	if _, err := os.Stat(path + ".bak"); err == nil {
+		t.Fatal("nothing changed, so no .bak")
+	}
+	if !strings.Contains(out.String(), "no hooks") {
+		t.Fatalf("said %q", out.String())
+	}
+}
+
+func TestWiredCountsOnlyEntriesHarnessesRun(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	cmd := ingestCommand("cursor", rexExecutable(), runtimeGOOS)
+	single, _ := json.Marshal(map[string]any{"version": 1, "hooks": map[string]any{"stop": map[string]any{"command": cmd}}})
+	os.WriteFile(path, single, 0o644)
+	if harnesses["cursor"].Wired(home) {
+		t.Fatal("an object where a list belongs is never run, so it isn't wired")
+	}
+	list, _ := json.Marshal(map[string]any{"version": 1, "hooks": map[string]any{"stop": []any{map[string]any{"command": cmd}}}})
+	os.WriteFile(path, list, 0o644)
+	if !harnesses["cursor"].Wired(home) {
+		t.Fatal("a list entry is wired")
+	}
+}
+
+func TestInstallAutoReturnsEachFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte("{broken"), 0o644)
+	var out bytes.Buffer
+	err := InstallHarness("auto", &out)
+	if err == nil || !strings.Contains(err.Error(), "cursor:") {
+		t.Fatalf("auto returned %v", err)
+	}
+	if strings.Contains(out.String(), "broken") {
+		t.Fatal("the error goes back to the caller (stderr), not to stdout")
+	}
+}

@@ -8,14 +8,15 @@ on:
 permissions:
   contents: read
 
-# A force-pushed PR stack cancels its stale runs; pushes to dev/main always finish.
+# A force-pushed PR stack cancels its stale runs. Each push to dev/main
+# gets its own group, so a push run is never cancelled or left queued.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   format:
-    name: gofmt
+    name: gofmt and vet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +32,11 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      # A current vet knows every API's Go version (stdversion), so it
+      # catches anything newer than the go 1.22 line in go.mod.
+      - name: vet (every OS, current Go)
+        shell: bash
+        run: for os in darwin linux windows; do GOOS=$os go vet ./...; done
 
   test:
     name: test (${{ matrix.os }}, go ${{ matrix.go-version }})

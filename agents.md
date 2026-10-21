@@ -56,7 +56,7 @@ If the README hero should match, rebuild `assets/rex.png` from `idle.png` with n
 
 Animation must stay slow. Never let it eat input or overwrite the log.
 
-Unix live mode is cbreak (ECHO/ICANON/ISIG off) and **must keep OPOST**. Do not use `term.MakeRaw`.
+Unix live mode is cbreak (ECHO/ICANON/ISIG/IEXTEN off, IXON off so Ctrl+S can't freeze output) and **must keep OPOST**. Do not use `term.MakeRaw`. On Unix, input goes through `keyDecoder`: whole escape sequences, whole UTF-8 runes, Alt chords dropped (never Esc plus a key), bracketed paste as one token that never submits, even when it stalls. On Windows, `consoleKeys` maps key records (Esc, surrogate pairs), a burst with text after a newline (or 16+ characters) becomes one paste on a best-effort basis, bracketed paste stays off (the console has no markers), and `ENABLE_PROCESSED_INPUT` / VT input are cleared so Ctrl+C is a key. Keys from one read are applied one at a time (`app.keys`); the mascot ticks on the clock, not on empty reads. SIGTERM/SIGHUP/interrupt leave through the same restore path as Ctrl+C twice.
 
 ## Watch feed
 

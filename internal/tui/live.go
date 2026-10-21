@@ -827,7 +827,7 @@ func handlePlanKey(b *PlanBrowser, draft *string, key string, page int) (bool, b
 		}
 		return false, false
 	default:
-		if isPrintableKey(key) && runeLen(*draft) < 256 {
+		if isPrintableKey(key) && runeLen(*draft) < draftCap {
 			*draft += key
 			return true, false
 		}
@@ -854,24 +854,40 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 		path = watch.DefaultEventPath()
 	}
 	tail := watch.NewEventTail(path, true)
-	err := LiveScreen(stdout, stdin, func() error {
+	keys := newKeyReader(stdin)
+	err := LiveScreen(stdout, stdin, func(sig screenSignals) error {
 		draw := func() {
 			_, _ = io.WriteString(stdout, a.frame())
 			_ = stdout.Sync()
 		}
 		draw()
+		frame := time.Duration(FrameTick) * time.Millisecond
+		nextTick := time.Now().Add(frame)
 		for {
-			key, haveKey := ReadKey(stdin, time.Duration(FrameTick)*time.Millisecond)
+			select {
+			case <-sig.quit:
+				return nil
+			case <-sig.resume:
+				reenterRaw(int(stdin.Fd()))
+				_, _ = io.WriteString(stdout, screenSetup) // bracketed paste etc. are off after a stop
+				draw()
+			default:
+			}
+			pressed := keys.Read(max(time.Millisecond, time.Until(nextTick)))
 			changed := a.ingest(tail.Poll())
-			if haveKey {
-				if a.handleKey(key) {
+			if a.keys(pressed) {
+				changed = true
+			}
+			if a.quit {
+				return nil
+			}
+			// The mascot advances on the clock, not on reads: key-ups and
+			// dropped sequences produce reads with no keys in them.
+			if now := time.Now(); !now.Before(nextTick) {
+				nextTick = now.Add(frame)
+				if a.tick() {
 					changed = true
 				}
-				if a.quit {
-					return nil
-				}
-			} else if a.tick() {
-				changed = true
 			}
 			if a.settle(Size()) {
 				changed = true

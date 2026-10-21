@@ -3,6 +3,7 @@ package tui
 import (
 	"io"
 	"os"
+	"os/signal"
 
 	"golang.org/x/term"
 )
@@ -17,9 +18,15 @@ const (
 	Home       = "\033[H"
 	Clear      = "\033[2J"
 	ClearDown  = "\033[J"
+	PasteOn    = "\033[?2004h"
+	PasteOff   = "\033[?2004l"
 	Reset      = "\033[0m"
 	CtrlC      = "\x03"
 )
+
+// screenSetup puts the terminal in Rex's live mode: alternate screen, no
+// autowrap, hidden cursor, bracketed paste, cleared.
+const screenSetup = AltEnter + WrapOff + HideCursor + pasteModeOn + Clear + Home
 
 func Size() (int, int) {
 	w, h, err := term.GetSize(int(os.Stdout.Fd()))
@@ -29,20 +36,37 @@ func Size() (int, int) {
 	return w, h
 }
 
-func LiveScreen(stdout *os.File, stdin *os.File, fn func() error) error {
-	enableWindowsVT(stdout)
-	_, _ = stdout.WriteString(AltEnter + WrapOff + HideCursor + Clear + Home)
+// screenSignals tells the live loop to leave (quit) or to restore cbreak and
+// repaint after the process was stopped and continued (resume).
+type screenSignals struct {
+	quit   <-chan os.Signal
+	resume <-chan os.Signal
+}
+
+// LiveScreen runs fn on the alternate screen in cbreak mode and always puts
+// the terminal back: on return, on panic, and on SIGTERM/SIGHUP/interrupt,
+// which make fn return through the same path.
+func LiveScreen(stdout *os.File, stdin *os.File, fn func(screenSignals) error) error {
+	restoreOut := enableWindowsVT(stdout)
+	_, _ = stdout.WriteString(screenSetup)
 	_ = stdout.Sync()
 	restore, err := enterRaw(int(stdin.Fd()))
 	defer func() {
-		_, _ = stdout.WriteString(WrapOn + ShowCursor + AltLeave + Reset)
+		_, _ = stdout.WriteString(pasteModeOff + WrapOn + ShowCursor + AltLeave + Reset)
 		_ = stdout.Sync()
+		restoreOut()
 	}()
 	if err != nil {
 		return err
 	}
 	defer restore()
-	return fn()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, quitSignals...)
+	defer signal.Stop(quit)
+	resume := make(chan os.Signal, 1)
+	notifyResume(resume)
+	defer signal.Stop(resume)
+	return fn(screenSignals{quit: quit, resume: resume})
 }
 
 func RestoreOnInterrupt(w io.Writer) {
@@ -51,7 +75,7 @@ func RestoreOnInterrupt(w io.Writer) {
 			return
 		}
 	}
-	_, _ = io.WriteString(w, ShowCursor+Reset)
+	_, _ = io.WriteString(w, pasteModeOff+ShowCursor+Reset)
 	if f, ok := w.(*os.File); ok {
 		_ = f.Sync()
 	}

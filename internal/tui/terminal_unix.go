@@ -4,28 +4,52 @@ package tui
 
 import (
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-func enableWindowsVT(_ *os.File) {}
+var quitSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
 
+func notifyResume(ch chan os.Signal) { signal.Notify(ch, syscall.SIGCONT) }
+
+// reenterRaw restores cbreak after a stop/continue, when the shell may
+// have put the TTY back into cooked mode.
+func reenterRaw(fd int) {
+	if mode, err := unix.IoctlGetTermios(fd, ioctlReadTermios); err == nil {
+		next := cbreak(*mode)
+		_ = unix.IoctlSetTermios(fd, ioctlWriteTermios, &next)
+	}
+}
+
+func enableWindowsVT(_ *os.File) func() { return func() {} }
+
+// enterRaw puts the TTY in cbreak: no echo, no line buffering, no signal
+// keys (Ctrl+C reaches Rex as a byte), no XON/XOFF (Ctrl+S would freeze
+// output) and no IEXTEN (^V/^O). OPOST stays on so "\n" still returns the
+// carriage; Rex never uses full raw mode.
 func enterRaw(fd int) (func(), error) {
 	orig, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
 	if err != nil {
 		return func() {}, err
 	}
-	mode := *orig
-	mode.Lflag &^= unix.ECHO | unix.ICANON | unix.ISIG
-	mode.Cc[unix.VMIN] = 1
-	mode.Cc[unix.VTIME] = 0
+	mode := cbreak(*orig)
 	if err := unix.IoctlSetTermios(fd, ioctlWriteTermios, &mode); err != nil {
 		return func() {}, err
 	}
 	return func() {
 		_ = unix.IoctlSetTermios(fd, ioctlWriteTermios, orig)
 	}, nil
+}
+
+func cbreak(mode unix.Termios) unix.Termios {
+	mode.Lflag &^= unix.ECHO | unix.ICANON | unix.ISIG | unix.IEXTEN
+	mode.Iflag &^= unix.IXON
+	mode.Cc[unix.VMIN] = 1
+	mode.Cc[unix.VTIME] = 0
+	return mode
 }
 
 func waitRead(fd int, timeout time.Duration) bool {
@@ -36,54 +60,70 @@ func waitRead(fd int, timeout time.Duration) bool {
 	return err == nil && n > 0
 }
 
-func ReadKey(stream *os.File, timeout time.Duration) (string, bool) {
-	fd := int(stream.Fd())
-	if !waitRead(fd, timeout) {
-		return "", false
-	}
-	buf := make([]byte, 1)
-	n, err := unix.Read(fd, buf)
-	if err != nil || n == 0 {
-		return "", false
-	}
-	ch := string(buf[:n])
-	if ch == "\x01" {
-		return "home", true
-	}
-	if ch == "\x05" {
-		return "end", true
-	}
-	if ch != "\x1b" {
-		return ch, true
-	}
-	extra := ""
-	if waitRead(fd, 20*time.Millisecond) {
-		rest := make([]byte, 8)
-		n, err := unix.Read(fd, rest)
-		if err == nil && n > 0 {
-			extra = string(rest[:n])
+// keyReader reads every byte the terminal has ready and decodes it into
+// key tokens, so queued arrows, a scroll burst or a paste arrive whole.
+type keyReader struct {
+	fd  int
+	dec keyDecoder
+	buf []byte
+}
+
+func newKeyReader(stream *os.File) *keyReader {
+	return &keyReader{fd: int(stream.Fd()), buf: make([]byte, 4096)}
+}
+
+// Read waits up to timeout for input and returns the keys it decoded.
+// When the input is gone (EOF, EIO after a hangup) it resolves whatever
+// is pending and waits out the timeout, so the caller's loop still reaches
+// its signal checks instead of spinning on a dead terminal.
+func (k *keyReader) Read(timeout time.Duration) []string {
+	var out []string
+	if waitRead(k.fd, timeout) {
+		toks, ok := k.read()
+		out = append(out, toks...)
+		if !ok {
+			return k.gone(out, timeout)
 		}
 	}
-	seq := ch + extra
-	names := map[string]string{
-		"\x1b[A":  "up",
-		"\x1b[B":  "down",
-		"\x1b[C":  "right",
-		"\x1b[D":  "left",
-		"\x1b[5~": "pageup",
-		"\x1b[6~": "pagedown",
-		"\x1b[H":  "home",
-		"\x1b[1~": "home",
-		"\x1b[7~": "home",
-		"\x1bOH":  "home",
-		"\x1b[F":  "end",
-		"\x1b[4~": "end",
-		"\x1b[8~": "end",
-		"\x1bOF":  "end",
-		"\x1b":    "esc",
+	for {
+		pending, wait := k.dec.waiting()
+		if !pending {
+			return out
+		}
+		if waitRead(k.fd, wait) {
+			toks, ok := k.read()
+			out = append(out, toks...)
+			if !ok {
+				return k.gone(out, timeout)
+			}
+			continue
+		}
+		return append(out, k.dec.flush(time.Now().Add(wait))...)
 	}
-	if name, ok := names[seq]; ok {
-		return name, true
-	}
-	return seq, true
 }
+
+func (k *keyReader) gone(out []string, timeout time.Duration) []string {
+	far := time.Now().Add(time.Hour)
+	out = append(out, k.dec.flush(far)...)
+	out = append(out, k.dec.flush(far)...) // a stalled paste needs a second flush to end
+	time.Sleep(timeout)
+	return out
+}
+
+// read reports false when the terminal can't be read any more.
+func (k *keyReader) read() ([]string, bool) {
+	n, err := unix.Read(k.fd, k.buf)
+	if err == unix.EINTR || err == unix.EAGAIN {
+		return nil, true
+	}
+	if err != nil || n <= 0 {
+		return nil, false
+	}
+	return k.dec.feed(k.buf[:n], time.Now()), true
+}
+
+// Bracketed paste is decoded by keyDecoder, so Unix turns it on.
+const (
+	pasteModeOn  = PasteOn
+	pasteModeOff = PasteOff
+)

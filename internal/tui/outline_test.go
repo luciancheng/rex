@@ -531,3 +531,11 @@ func TestFilledPlanSelectsItsPin(t *testing.T) {
 		t.Fatalf("when an agent fills the plan the cursor goes to the pin, got %q", a.outline.sel)
 	}
 }
+
+func TestNarrowRuleKeepsProgress(t *testing.T) {
+	a, _, _ := openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "A very long plan title that cannot fit"`, 1), 80, 24)
+	rule := a.frameRows().Rows[2]
+	if !strings.Contains(rule, "── A very") || !strings.Contains(rule, "· active · 1/3") {
+		t.Fatalf("%q", rule)
+	}
+}

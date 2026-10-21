@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -252,5 +253,23 @@ func TestCtrlLDisarmsQuitAndResizeRepaints(t *testing.T) {
 	a.settle(100, 30)
 	if !a.repaint {
 		t.Fatal("a resize asks for a full repaint")
+	}
+}
+
+// The TUI paints event kinds. Vendors live in internal/watch.
+func TestTUINeverBranchesOnVendor(t *testing.T) {
+	files, _ := filepath.Glob("*.go")
+	vendor := regexp.MustCompile(`(?i)"(cursor|claude|codex|opencode)"`)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m := vendor.Find(data); m != nil {
+			t.Errorf("%s names a vendor: %s", f, m)
+		}
 	}
 }

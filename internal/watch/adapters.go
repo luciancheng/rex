@@ -20,12 +20,15 @@ var cursorEvents = map[string]bool{
 }
 
 var claudeEvents = map[string]bool{
-	"PreToolUse":       true,
-	"PostToolUse":      true,
-	"UserPromptSubmit": true,
-	"Notification":     true,
-	"Stop":             true,
-	"SessionStart":     true,
+	"PreToolUse":         true,
+	"PostToolUse":        true,
+	"PostToolUseFailure": true,
+	"UserPromptSubmit":   true,
+	"Notification":       true,
+	"Stop":               true,
+	"StopFailure":        true,
+	"SessionStart":       true,
+	"SessionEnd":         true,
 }
 
 var codexTypes = map[string]bool{
@@ -46,6 +49,12 @@ var skipToolKeys = map[string]bool{
 	"new_string": true,
 	"new_text":   true,
 	"diff":       true,
+	"edits":      true,
+	"oldString":  true,
+	"newString":  true,
+	"patchText":  true,
+	"new_source": true, // NotebookEdit's cell body
+	"old_source": true,
 }
 
 func asDict(value any) map[string]any {
@@ -130,9 +139,16 @@ func DetectSource(payload map[string]any, hint string) string {
 	return "cursor"
 }
 
+// toolKind says whether a tool call asks the human something. "Task" and
+// its friends contain "ask" but are agent work, not questions; an MCP
+// tool (server__ask_user) is judged by its own name.
 func toolKind(tool string) string {
 	lowered := strings.ToLower(tool)
-	if strings.Contains(lowered, "ask") || strings.Contains(lowered, "question") {
+	name := lowered
+	if i := strings.LastIndex(name, "__"); i >= 0 {
+		name = name[i+2:]
+	}
+	if strings.HasPrefix(name, "ask") || strings.Contains(lowered, "question") {
 		return "question"
 	}
 	return "command"
@@ -179,7 +195,7 @@ func payloadPath(payload map[string]any) string {
 		input = payload["toolInput"]
 	}
 	data := asDict(input)
-	for _, key := range []string{"file_path", "filePath", "path"} {
+	for _, key := range []string{"file_path", "filePath", "path", "notebook_path"} {
 		if p := strField(data, key); p != "" {
 			return p
 		}
@@ -261,19 +277,37 @@ func toolText(tool string, rawInput any) string {
 	if q := strField(data, "question"); q != "" {
 		return q
 	}
+	if qs, ok := data["questions"].([]any); ok {
+		var parts []string
+		for _, item := range qs {
+			if q := strField(asDict(item), "question"); q != "" {
+				parts = append(parts, q)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, " · ")
+		}
+	}
+	_, hasCommand := data["command"]
+	if _, ok := data["cmd"]; ok {
+		hasCommand = true
+	}
+	if u := strField(data, "url"); u != "" && !hasCommand {
+		return tool + " " + u // WebFetch: the page, not its prompt
+	}
 	if p := strField(data, "prompt"); p != "" {
 		return p
 	}
-	if _, ok := data["command"]; ok {
-		return asCommand(data)
-	}
-	if _, ok := data["cmd"]; ok {
+	if hasCommand {
 		return asCommand(data)
 	}
 	if p := strField(data, "file_path"); p != "" {
 		return tool + " " + p
 	}
 	if p := strField(data, "path"); p != "" {
+		return tool + " " + p
+	}
+	if p := strField(data, "notebook_path"); p != "" {
 		return tool + " " + p
 	}
 	if q := strField(data, "query"); q != "" {
@@ -411,48 +445,31 @@ func MapCursor(payload map[string]any) *Event {
 	return nil
 }
 
+func claudeTool(payload map[string]any) (string, any) {
+	tool := strField(payload, "tool_name")
+	if tool == "" {
+		tool = strField(payload, "toolName")
+	}
+	if tool == "" {
+		tool = "tool"
+	}
+	input := payload["tool_input"]
+	if input == nil {
+		input = payload["toolInput"]
+	}
+	return tool, input
+}
+
+// MapClaude maps Claude Code hook payloads. Claude has no hook for
+// thinking, so the tape shows prompts, tool calls, results and the final
+// reply (Stop's last_assistant_message), never a transcript.
 func MapClaude(payload map[string]any) *Event {
+	if _, fromCursor := payload["cursor_version"]; fromCursor {
+		// Cursor runs Claude Code hooks too; its own hooks already report this.
+		return nil
+	}
 	name := hookName(payload)
 	switch name {
-	case "PreToolUse":
-		tool := strField(payload, "tool_name")
-		if tool == "" {
-			tool = strField(payload, "toolName")
-		}
-		if tool == "" {
-			tool = "tool"
-		}
-		input := payload["tool_input"]
-		if input == nil {
-			input = payload["toolInput"]
-		}
-		text := strings.TrimSpace(toolText(tool, input))
-		if text == "" {
-			return nil
-		}
-		ev := NewEvent("claude", toolKind(tool), text, toolMeta(tool, payloadPath(payload)))
-		return &ev
-	case "PostToolUse":
-		tool := strField(payload, "tool_name")
-		if tool == "" {
-			tool = strField(payload, "toolName")
-		}
-		if tool == "" {
-			tool = "tool"
-		}
-		path := payloadPath(payload)
-		ev := NewEvent("claude", "result", tool, toolMeta(tool, path))
-		return &ev
-	case "Notification":
-		text := strings.TrimSpace(strField(payload, "message"))
-		if text == "" {
-			text = strings.TrimSpace(strField(payload, "text"))
-		}
-		if text == "" {
-			return nil
-		}
-		ev := NewEvent("claude", "question", text, nil)
-		return &ev
 	case "UserPromptSubmit":
 		text := strings.TrimSpace(strField(payload, "prompt"))
 		if text == "" {
@@ -463,8 +480,148 @@ func MapClaude(payload map[string]any) *Event {
 		}
 		ev := NewEvent("claude", "user", text, nil)
 		return &ev
+	case "PreToolUse":
+		tool, input := claudeTool(payload)
+		text := strings.TrimSpace(claudeToolText(tool, input))
+		if text == "" {
+			return nil
+		}
+		ev := NewEvent("claude", toolKind(tool), text, toolMeta(tool, payloadPath(payload)))
+		return &ev
+	case "PostToolUse":
+		tool, input := claudeTool(payload)
+		path := payloadPath(payload)
+		meta := toolMeta(tool, path)
+		meta["ok"] = true
+		text := tool
+		switch {
+		case IsFileEditTool(tool) && path != "":
+			text = "wrote " + path
+		case IsShellTool(tool):
+			if cmd := strings.TrimSpace(asCommand(asDict(input)["command"])); cmd != "" {
+				text = "ran " + cmd
+				meta["command"] = cmd
+			}
+		case path != "":
+			text = tool + " " + path
+		}
+		ev := NewEvent("claude", "result", text, meta)
+		return &ev
+	case "PostToolUseFailure":
+		tool, input := claudeTool(payload)
+		if interrupted, _ := payload["is_interrupt"].(bool); interrupted {
+			ev := NewEvent("claude", "idle", "turn interrupted", map[string]any{"status": "aborted"})
+			return &ev
+		}
+		path := payloadPath(payload)
+		meta := toolMeta(tool, path)
+		meta["ok"] = false
+		text := tool + " failed"
+		if cmd := strings.TrimSpace(asCommand(asDict(input)["command"])); IsShellTool(tool) && cmd != "" {
+			text += " · " + cmd
+			meta["command"] = cmd
+		} else if path != "" {
+			text += " · " + path
+		}
+		if msg := firstLine(strField(payload, "error")); msg != "" {
+			text += ": " + msg
+		}
+		ev := NewEvent("claude", "error", text, meta)
+		return &ev
+	case "Notification":
+		text := strings.TrimSpace(strField(payload, "message"))
+		switch strField(payload, "notification_type") {
+		case "idle_prompt":
+			ev := NewEvent("claude", "idle", "waiting for you", nil)
+			return &ev
+		case "", "permission_prompt", "elicitation_dialog", "agent_needs_input":
+		default:
+			return nil // auth, quota and plugin notices are not the agent asking
+		}
+		if text == "" {
+			text = strings.TrimSpace(strField(payload, "text"))
+		}
+		if text == "" {
+			return nil
+		}
+		ev := NewEvent("claude", "question", text, nil)
+		return &ev
+	case "Stop":
+		if text := strings.TrimSpace(strField(payload, "last_assistant_message")); text != "" {
+			ev := NewEvent("claude", "text", text, nil)
+			return &ev
+		}
+		ev := NewEvent("claude", "idle", "turn completed", nil)
+		return &ev
+	case "StopFailure":
+		text := "turn failed"
+		if msg := firstLine(strField(payload, "error")); msg != "" {
+			text += ": " + msg
+		}
+		ev := NewEvent("claude", "error", text, nil)
+		return &ev
+	case "SessionStart":
+		if strField(payload, "source") == "compact" {
+			return nil // a compaction mid-turn; the turn goes on
+		}
+		ev := NewEvent("claude", "idle", "session started", nil)
+		return &ev
+	case "SessionEnd":
+		ev := NewEvent("claude", "idle", "session ended", nil)
+		return &ev
 	}
 	return nil
+}
+
+// claudeToolText is a short line for one of Claude Code's own tools: a
+// plan, a todo list or a subagent prompt is never flattened onto the tape,
+// and nothing falls back to a JSON dump of the input.
+func claudeToolText(tool string, input any) string {
+	data := asDict(input)
+	first := func(keys ...string) string {
+		for _, k := range keys {
+			if v := firstLine(strField(data, k)); v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	labelled := func(label, detail string) string {
+		if detail == "" {
+			return label
+		}
+		return label + " " + detail
+	}
+	switch tool {
+	case "ExitPlanMode":
+		return labelled("plan ready", first("planFilePath"))
+	case "TodoWrite":
+		todos, _ := data["todos"].([]any)
+		for _, item := range todos {
+			if t := asDict(item); strField(t, "status") == "in_progress" {
+				return labelled("todo:", firstLine(strField(t, "content")))
+			}
+		}
+		return "todo list updated"
+	case "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop":
+		return labelled(tool, first("subject", "description", "taskId", "task_id"))
+	case "Task", "Agent":
+		return labelled(tool, first("description", "subagent_type"))
+	case "Skill":
+		return labelled(tool, first("skill"))
+	}
+	if strings.HasPrefix(tool, "mcp__") {
+		if q := first("question"); q != "" {
+			return q // an MCP tool that asks the human
+		}
+		name := strings.ReplaceAll(strings.TrimPrefix(tool, "mcp__"), "__", ".")
+		return labelled(name, first("query", "url", "path", "file_path", "title", "name"))
+	}
+	text := toolText(tool, input)
+	if t := strings.TrimSpace(text); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+		return tool // an input with nothing to show by name: just the tool
+	}
+	return text
 }
 
 func MapCodex(payload map[string]any) *Event {

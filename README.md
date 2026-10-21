@@ -21,17 +21,17 @@
   macOS · Linux · Windows 10+ &nbsp;·&nbsp; Go 1.22+ &nbsp;·&nbsp; MIT
 </p>
 
-REX is a watch-only sidecar. It does not run tools, approve them, or steer the agent. You talk to Cursor as usual. Rex holds the plan you are sending off, and the pane next to the dino shows thoughts, edits, shell, questions, and your prompts as they happen.
+REX is a watch-only sidecar. It does not run tools, approve them, or steer the agent. You talk to Cursor or Claude Code as usual. Rex holds the plan you are sending off, and the pane next to the dino shows thoughts, edits, shell, questions, and your prompts as they happen.
 
 Plans live in the repo at `rex/plans/` as JSON named `<name>.rex.json`. Commit that folder. Teammates pick the same plan and watch the same send-off. The file format is not finalized yet — new plans start as `{}`.
 
-Claude Code and Codex mappers exist; Cursor is the one that's wired today. Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once — after that it works from any folder.
+The install script wires Cursor. Claude Code is one opt-in command away (`rex ingest --install claude`, or add `--project` to wire just this repo). Codex has a mapper but no hooks yet. Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once — after that it works from any folder.
 
 ## Send off a project
 
 1. **Pick or create a plan** in `rex/plans/`. Folders are for grouping (`rex/plans/onboarding/auth.rex.json`). Duplicate names are refused.
 2. **`rex start`** from the repo. Create a plan, open one, or jump to the latest. Tab is the live tape. The header stays on the current plan path.
-3. **Leave him running** and prompt Cursor. Rex watches. Idle when nothing is in flight; typing while the agent is working. Ctrl+C twice to quit.
+3. **Leave him running** and prompt your agent. Rex watches. Idle when nothing is in flight; typing while the agent is working. Ctrl+C twice to quit.
 
 Opening a plan selects it in Rex. It does not inject the JSON into the agent — you still send the work off in chat.
 
@@ -65,6 +65,8 @@ rex start
 rex start                         # plans, then the live tape
 rex start --static                # print one frame and exit
 rex ingest --install cursor       # (re)wire Cursor; --uninstall cursor takes it out
+rex ingest --install claude       # wire Claude Code (~/.claude/settings.json, or $CLAUDE_CONFIG_DIR)
+rex ingest --install claude --project   # this repo only, git-excluded
 rex --help
 ```
 

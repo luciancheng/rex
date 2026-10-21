@@ -43,7 +43,7 @@ options:
 `
 
 const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex}] [--events EVENTS]
-       rex ingest --install HARNESS | --uninstall HARNESS
+       rex ingest --install HARNESS | --uninstall HARNESS [--project]
 
 append an agent event to the watch feed
 
@@ -56,8 +56,10 @@ options:
   -h, --help              show this help message and exit
   --source {auto,cursor,claude,codex}
                           payload dialect (default: auto)
-  --install HARNESS       wire an agent so it writes the feed: cursor, or auto
-                          for every one found on this machine
+  --install HARNESS       wire an agent so it writes the feed: cursor, claude,
+                          or auto for every one found on this machine
+  --project               with claude: wire only this git repo
+                          (.claude/settings.local.json, kept out of git)
   --uninstall HARNESS     take Rex's hook back out of that agent's config
   --install-cursor-hook   same as --install cursor
   --events EVENTS         JSONL event feed (default: ~/.rex/session.jsonl)
@@ -160,6 +162,7 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	installCursor := fs.Bool("install-cursor-hook", false, "install ~/.cursor/hooks.json")
 	install := fs.String("install", "", "wire an agent's hooks")
 	uninstall := fs.String("uninstall", "", "remove Rex's hooks from an agent")
+	project := fs.Bool("project", false, "claude: wire only this repo (.claude/settings.local.json)")
 	events := fs.String("events", "", "JSONL event feed")
 	if err := fs.Parse(args); err != nil {
 		for _, a := range args {
@@ -185,6 +188,26 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		*install = "cursor"
 	}
 	// Installing is interactive, so it may fail loudly; ingest never does.
+	if *project && *install != "claude" && *uninstall != "claude" {
+		// Only Claude Code has a per-repo hook file; never fall through to
+		// the machine-wide config the user just asked to avoid.
+		fmt.Fprintln(stderr, "rex: --project works with claude only; nothing changed")
+		return 1
+	}
+	if *project {
+		repo := tui.FindRepoRoot("")
+		var err error
+		if *install != "" {
+			err = watch.InstallClaudeProject(repo, stdout)
+		} else {
+			err = watch.UninstallClaudeProject(repo, stdout)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "rex: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if *install != "" {
 		if err := watch.InstallHarness(*install, stdout); err != nil {
 			fmt.Fprintf(stderr, "rex: %v\n", err)

@@ -106,10 +106,19 @@ func IsFileLookEvent(ev Event) bool {
 	if IsFileEditEvent(ev) || IsShellTool(MetaTool(ev)) {
 		return false
 	}
-	if IsFileLookTool(MetaTool(ev)) {
+	tool := MetaTool(ev)
+	if IsFileLookTool(tool) {
 		return true
 	}
-	p := EventPath(ev)
+	if p, _ := ev.Meta["path"].(string); strings.TrimSpace(p) != "" {
+		return !strings.Contains(p, "://")
+	}
+	if tool != "" {
+		// A named tool that isn't a file look ("plan ready /r/plan.md",
+		// "Agent explore internal/watch"): a slash in its line is no path.
+		return false
+	}
+	p := pathFromText(ev.Text)
 	return p != "" && !strings.Contains(p, "://")
 }
 

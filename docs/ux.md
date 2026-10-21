@@ -444,13 +444,16 @@ If the pin lists no files, only the `scope.out` rule applies.
   - Tabs are expanded.
 - **Scope.** Paths in tool lines are shown relative to the repo; replies, thoughts and prompts are shown as written. Where an event came from (its working directory or workspace roots) decides whose it is, so another repo's agent reading a file here stays hidden. Events from other repos' agents (same machine, same feed) are hidden, and the count appears under Help. An event with no working directory or roots is judged by the file it names; with nothing to go on at all, it is shown.
 - **Starting mid-turn.** If the newest feed event is under 2 minutes old, the turn state is restored, so the dino is already typing. The last ~20 events from this repo are drawn under a muted `── before rex started ──` rule.
-- **Feed health** replaces the bare "Ready. Watching…":
+- **Feed health** replaces the bare "Ready. Watching…". Help shows the same block titled just `feed`. The wiring is re-read every few seconds while it is on screen, so an install in another terminal shows up, and the last event follows the feed:
 
 ```
-── feed ── waiting for agent events
-  feed     ~/.rex/session.jsonl · last event 3h ago (cursor)
+── feed · waiting for agent events ──────
+  feed     ~/.rex/session.jsonl · last
+           event 3h ago (cursor)
   cursor   wired
-  claude   not wired · rex ingest --install claude
+  claude   wired (this repo)
+  codex    not wired · rex ingest
+           --install codex
   4 events from other folders hidden
 ```
 

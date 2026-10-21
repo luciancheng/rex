@@ -348,15 +348,23 @@ func TestHarnessRegistryCursor(t *testing.T) {
 		t.Fatalf("auto with nothing present: %v %q", err, out.String())
 	}
 	os.MkdirAll(filepath.Join(home, ".cursor"), 0o755)
-	statuses := HarnessStatuses()
-	if len(statuses) == 0 || statuses[0].Name != "cursor" || !statuses[0].Present || statuses[0].Wired {
-		t.Fatalf("%#v", statuses)
+	cursorStatus := func() HarnessStatus {
+		for _, s := range HarnessStatuses() {
+			if s.Name == "cursor" {
+				return s
+			}
+		}
+		t.Fatal("cursor not registered")
+		return HarnessStatus{}
+	}
+	if s := cursorStatus(); !s.Present || s.Wired {
+		t.Fatalf("%#v", s)
 	}
 	out.Reset()
 	if err := InstallHarness("auto", &out); err != nil || !strings.Contains(out.String(), "installed cursor hooks") {
 		t.Fatalf("%v %q", err, out.String())
 	}
-	if !HarnessStatuses()[0].Wired {
+	if !cursorStatus().Wired {
 		t.Fatal("wired after install")
 	}
 	path := filepath.Join(home, ".cursor", "hooks.json")
@@ -366,7 +374,7 @@ func TestHarnessRegistryCursor(t *testing.T) {
 	if err := UninstallHarness("cursor", &out); err != nil {
 		t.Fatal(err)
 	}
-	if HarnessStatuses()[0].Wired {
+	if cursorStatus().Wired {
 		t.Fatal("still wired after uninstall")
 	}
 	got := readHooks(t, path)

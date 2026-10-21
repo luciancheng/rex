@@ -549,7 +549,11 @@ func TestFeedPermissionsTightenOnOldInstalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]os.FileMode{dir: 0o700, feed: 0o600} {
-		if info, _ := os.Stat(path); info.Mode().Perm() != want {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
 			t.Fatalf("%s mode %o, want %o", path, info.Mode().Perm(), want)
 		}
 	}

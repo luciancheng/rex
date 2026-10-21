@@ -285,3 +285,17 @@ func TestIngestNeverWritesStdout(t *testing.T) {
 		t.Fatalf("code=%d stdout=%q", code, stdout.String())
 	}
 }
+
+// A feed that can't be written is reported on stderr; the hook still exits
+// 0 with nothing on stdout.
+func TestIngestReportsAnUnwritableFeed(t *testing.T) {
+	dir := t.TempDir()
+	blocker := dir + "/not-a-dir"
+	os.WriteFile(blocker, []byte("x"), 0o600)
+	var stdout, stderr bytes.Buffer
+	payload := `{"hook_event_name":"beforeSubmitPrompt","prompt":"hi"}`
+	code := Main([]string{"ingest", "--source", "cursor", "--events", blocker + "/feed.jsonl"}, strings.NewReader(payload), &stdout, &stderr)
+	if code != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "rex: ") {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+}

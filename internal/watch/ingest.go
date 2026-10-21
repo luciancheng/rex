@@ -185,19 +185,30 @@ func PayloadsFromRaw(raw string) []map[string]any {
 }
 
 func IngestRaw(raw, source, path string) []Event {
+	written, _ := ingest(raw, source, path)
+	return written
+}
+
+// ingest is IngestRaw that also returns the first write error, so a hook
+// can report it on stderr. It keeps going after an error.
+func ingest(raw, source, path string) ([]Event, error) {
 	var written []Event
+	var first error
 	for _, payload := range PayloadsFromRaw(raw) {
 		event := MapPayload(payload, source)
 		if event == nil || strings.TrimSpace(event.Text) == "" {
 			continue
 		}
 		ok, err := AppendEvent(path, *event)
+		if err != nil && first == nil {
+			first = err
+		}
 		if err != nil || !ok {
 			continue
 		}
 		written = append(written, *event)
 	}
-	return written
+	return written, first
 }
 
 // RunIngest maps one hook payload from stdin into the feed. It runs inside
@@ -208,8 +219,8 @@ func RunIngest(stdin io.Reader, source string, eventsPath string) error {
 	if path == "" {
 		path = DefaultEventPath()
 	}
-	IngestRaw(string(readPayload(stdin, stdinWait)), source, path)
-	return nil
+	_, err := ingest(string(readPayload(stdin, stdinWait)), source, path)
+	return err
 }
 
 const (

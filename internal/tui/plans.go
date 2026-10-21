@@ -43,6 +43,7 @@ const (
 	PlanRowRecent
 	PlanRowMkdir
 	PlanRowCreateNamed // "+ Create 'x'" at the end of a find
+	PlanRowContinue    // the open plan, else the last one opened in this repo
 )
 
 type PlanRow struct {
@@ -63,13 +64,17 @@ type PlanBrowser struct {
 	Screen  PlanScreen
 	From    PlanScreen
 	Current string
-	Err     string
-	Notice  string
-	Rows    []PlanRow
-	View    int // first visible body line, kept between frames
+	// Continue is the plan the Continue card reopens: the open plan, else
+	// the last one opened in this repo (from ~/.rex/state.json).
+	Continue string
+	Err      string
+	Notice   string
+	Rows     []PlanRow
+	View     int // first visible body line, kept between frames
 
 	fresh    bool // the screen just changed: put the cursor on its default row
 	walk     planWalk
+	hints    map[string]planHint
 	findMore int // find matches past maxMatches, left out
 
 	inGit bool
@@ -308,8 +313,9 @@ func (b *PlanBrowser) Rebuild() {
 	case ScreenBrowse:
 		b.Rows = buildBrowseRows(b.Root, b.Dir, b.Filter)
 	default:
-		b.Rows, b.findMore = buildHomeRows(b.plans(), b.Find)
+		b.Rows, b.findMore = buildHomeRows(b.plans(), b.Find, b.Continue)
 	}
+	b.addHints()
 	switch {
 	case b.fresh:
 		b.Cursor = b.defaultRow()
@@ -363,9 +369,11 @@ func (b *PlanBrowser) defaultRow() int {
 	case b.Find != "":
 		return 0
 	default:
-		for i, row := range b.Rows {
-			if row.Kind == PlanRowLatest {
-				return i
+		for _, kind := range []PlanRowKind{PlanRowContinue, PlanRowLatest} {
+			for i, row := range b.Rows {
+				if row.Kind == kind {
+					return i
+				}
 			}
 		}
 	}
@@ -422,7 +430,7 @@ func (b *PlanBrowser) Activate() PlanAction {
 	}
 	row := b.Rows[b.Cursor]
 	switch row.Kind {
-	case PlanRowLatest, PlanRowRecent, PlanRowPlan:
+	case PlanRowLatest, PlanRowRecent, PlanRowPlan, PlanRowContinue:
 		if row.Path == "" {
 			b.Err = "no plans yet"
 			return PlanStay
@@ -619,12 +627,71 @@ func (b *PlanBrowser) CancelPrompt() {
 
 func (b *PlanBrowser) open(path string) PlanAction {
 	b.Current = path
-	b.Load(path)
+	b.Continue = path
 	return PlanOpenChat
 }
 
-func (b *PlanBrowser) Load(_ string) {
-	// Plan JSON is not read into the agent tape this turn.
+// planHint is a plan's progress for its card or row, cached by the file's
+// size and modification time.
+type planHint struct {
+	mod  time.Time
+	size int64
+	text string
+}
+
+// progressHint reads a plan for its card: "2/5 · ▸ card-highlight",
+// "no tasks yet", or "" when it doesn't parse.
+func (b *PlanBrowser) progressHint(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	if h, ok := b.hints[path]; ok && h.mod.Equal(info.ModTime()) && h.size == info.Size() {
+		return h.text
+	}
+	text := ""
+	if p, err := plan.Load(path); err == nil {
+		g := p.Graph()
+		done, total := g.Progress()
+		switch {
+		case total == 0:
+			text = "no tasks yet"
+		case done == total:
+			text = fmt.Sprintf("%d/%d · all done", done, total)
+		default:
+			text = fmt.Sprintf("%d/%d", done, total)
+			if pin := pinOf(p, g); pin != nil {
+				text += " · ▸ " + pin.ID
+			}
+		}
+	}
+	if b.hints == nil {
+		b.hints = map[string]planHint{}
+	}
+	b.hints[path] = planHint{mod: info.ModTime(), size: info.Size(), text: text}
+	return text
+}
+
+// addHints puts progress on the cards and recents, and marks the open plan.
+func (b *PlanBrowser) addHints() {
+	for i := range b.Rows {
+		row := &b.Rows[i]
+		switch row.Kind {
+		case PlanRowContinue, PlanRowLatest:
+			if hint := b.progressHint(row.Path); hint != "" {
+				row.Hint = strings.TrimSpace(row.Hint + " · " + hint)
+			}
+		case PlanRowRecent:
+			row.Hint = b.progressHint(row.Path)
+			if row.Path == b.Current {
+				row.Hint = strings.TrimSuffix(strings.TrimSpace("open · "+row.Hint), " ·")
+			}
+		case PlanRowPlan:
+			if row.Path == b.Current {
+				row.Hint = "open"
+			}
+		}
+	}
 }
 
 type planStat struct {
@@ -643,8 +710,10 @@ func walkPlans(root string) []planStat {
 		if !IsPlanFile(d.Name()) {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil {
+		// Only regular files (or symlinks to one) are plans: a FIFO or a
+		// device named *.rex.json would hang the reads that follow.
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, rerr := filepath.Rel(root, path)
@@ -678,9 +747,10 @@ const maxMatches = 30
 
 // buildHomeRows is the Library home. With a find query it is the matching
 // plans across rex/plans/**, best match first, then "+ Create '<query>'"
-// unless that exact plan exists; more counts the matches left out. On
-// first run only Create is offered.
-func buildHomeRows(plans []planStat, find string) (rows []PlanRow, more int) {
+// unless that exact plan exists; more counts the matches left out. Without
+// one it is the cards, Continue first when cont is a plan. On first run
+// only Create is offered.
+func buildHomeRows(plans []planStat, find, cont string) (rows []PlanRow, more int) {
 	if q := findKey(find); q != "" {
 		// An exact name or path ranks first, then a name or path that
 		// starts with the query, then any other match; newest first within
@@ -719,7 +789,12 @@ func buildHomeRows(plans []planStat, find string) (rows []PlanRow, more int) {
 		}
 		return rows, more
 	}
-	rows = []PlanRow{{Kind: PlanRowNew, Name: "Create a plan", Hint: "New .rex.json in rex/plans"}}
+	for _, p := range plans {
+		if p.path == cont {
+			rows = append(rows, PlanRow{Kind: PlanRowContinue, Name: "Continue " + strings.TrimSuffix(p.rel, ".rex.json"), Hint: p.rel, Path: p.path})
+		}
+	}
+	rows = append(rows, PlanRow{Kind: PlanRowNew, Name: "Create a plan", Hint: "New .rex.json in rex/plans"})
 	if len(plans) == 0 {
 		return rows, 0
 	}
@@ -831,8 +906,8 @@ func (row PlanRow) Color() string {
 }
 
 func composerPrefix(opt ComposeOptions) string {
-	if opt.Overlay != nil || opt.Pane != PanePlans || opt.Plans == nil {
-		return InputPrefix
+	if opt.Overlay != nil || opt.Pane != PanePlans || opt.Plans == nil || opt.PlanView != nil {
+		return InputPrefix // the open plan, like the tape, takes verbs
 	}
 	switch opt.Plans.Screen {
 	case ScreenCreate, ScreenFolder:
@@ -1006,11 +1081,15 @@ func planHead(head []LogLine, total, viewH int) []LogLine {
 		return head
 	}
 	keep := max(0, viewH-3)
-	rank := map[string]int{"error": 0, "idle": 1, "command": 2, "folder": 3}
+	rank := map[string]int{"error": 1, "idle": 2, "command": 3, "folder": 4}
 	picked := make([]bool, len(head))
-	for r, n := 0, 0; r <= 3 && n < keep; r++ {
+	for r, n := 0, 0; r <= 4 && n < keep; r++ {
 		for i, line := range head {
-			if got, ok := rank[line.Kind]; ok && got == r && n < keep {
+			got, ok := rank[line.Kind]
+			if line.Selected {
+				got, ok = 0, true // the selection never leaves the screen
+			}
+			if ok && got == r && n < keep {
 				picked[i] = true
 				n++
 			}
@@ -1028,8 +1107,14 @@ func planHead(head []LogLine, total, viewH int) []LogLine {
 // window picks the first body line to show so the selected row stays
 // visible with a two-line margin, scrolling no further than needed.
 func (b *PlanBrowser) window(body []LogLine, viewH int) int {
+	b.View = windowStart(body, viewH, b.View)
+	return b.View
+}
+
+// windowStart is window for any list with Selected lines: prev is the
+// first line shown last frame.
+func windowStart(body []LogLine, viewH, prev int) int {
 	if viewH <= 0 || len(body) <= viewH {
-		b.View = 0
 		return 0
 	}
 	first, last := -1, -1
@@ -1041,7 +1126,7 @@ func (b *PlanBrowser) window(body []LogLine, viewH int) int {
 			last = i
 		}
 	}
-	start := min(b.View, len(body)-viewH)
+	start := min(prev, len(body)-viewH)
 	if first >= 0 {
 		margin := min(2, max(0, (viewH-(last-first+1))/2))
 		if first-margin < start {
@@ -1051,9 +1136,7 @@ func (b *PlanBrowser) window(body []LogLine, viewH int) int {
 			start = last + margin - viewH + 1
 		}
 	}
-	start = max(0, min(start, len(body)-viewH))
-	b.View = start
-	return start
+	return max(0, min(start, len(body)-viewH))
 }
 
 func browseLine(row PlanRow, selected bool, inner int) LogLine {
@@ -1081,8 +1164,11 @@ func browseLabel(row PlanRow) string {
 		return "../"
 	case PlanRowDir:
 		return row.Name + "/"
-	case PlanRowRecent:
-		return row.Name
+	case PlanRowRecent, PlanRowPlan:
+		if row.Hint != "" {
+			return row.Label() + "  " + row.Hint
+		}
+		return row.Label()
 	case PlanRowCreateNamed:
 		return "[ + Create '" + row.Name + "' ]"
 	default:

@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -92,9 +94,38 @@ type Problem struct {
 
 func (p Problem) String() string { return p.Where + ": " + p.Msg }
 
+// MaxFile is the largest plan file Rex reads.
+const MaxFile = 4 << 20
+
+// ReadFile reads a plan file: a regular file (a symlink to one is fine) of
+// at most MaxFile bytes. A FIFO, a device or a folder named *.rex.json is
+// refused before it is opened, so it can never hang or flood Rex.
+func ReadFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", filepath.Base(path))
+	}
+	if info.Size() > MaxFile {
+		return nil, fmt.Errorf("%s is over %d MB; plans are small", filepath.Base(path), MaxFile>>20)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, MaxFile+1))
+	if err == nil && len(data) > MaxFile {
+		err = fmt.Errorf("%s is over %d MB; plans are small", filepath.Base(path), MaxFile>>20)
+	}
+	return data, err
+}
+
 // Load reads and parses the plan at path.
 func Load(path string) (*Plan, error) {
-	data, err := os.ReadFile(path)
+	data, err := ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

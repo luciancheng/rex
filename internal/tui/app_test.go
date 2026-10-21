@@ -166,7 +166,9 @@ func TestAppComposerNoteIsLoggedLocally(t *testing.T) {
 	}
 }
 
-func TestAppOpeningAPlanSwitchesToChat(t *testing.T) {
+// Opening or creating a plan lands on its outline (docs/ux.md §6); it
+// used to jump to the tape.
+func TestAppOpeningAPlanLandsOnItsOutline(t *testing.T) {
 	a := testApp(t)
 	press(a, "\r")
 	if a.plans.Screen != ScreenCreate {
@@ -174,8 +176,11 @@ func TestAppOpeningAPlanSwitchesToChat(t *testing.T) {
 	}
 	typeText(a, "alpha")
 	press(a, "\r")
-	if a.pane != PaneChat || !strings.HasSuffix(a.plans.Current, "alpha.rex.json") {
-		t.Fatalf("pane=%d current=%q", a.pane, a.plans.Current)
+	if a.pane != PanePlans || a.at != atOutline || !strings.HasSuffix(a.plans.Current, "alpha.rex.json") {
+		t.Fatalf("pane=%d at=%d current=%q", a.pane, a.at, a.plans.Current)
+	}
+	if !strings.Contains(a.frame(), "No tasks yet") {
+		t.Fatal("a new plan's outline says it has no tasks")
 	}
 	if !strings.Contains(a.frame(), "rex/plans/alpha.rex.json") {
 		t.Fatal("header shows the plan")

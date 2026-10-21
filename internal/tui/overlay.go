@@ -48,7 +48,7 @@ func helpLines(width int) []LogLine {
 		head("keys"),
 		row("tab", "switch plan ↔ tape"),
 		row("↑↓ pgup pgdn", "move, or scroll"),
-		row("← →", "plans: up a folder / into a folder"),
+		row("← →", "back / in: a folder, or a task's detail"),
 		row("home end", "first / last; tape: oldest / live"),
 		row("⏎", "open, or run what you typed"),
 		row("esc", "clear the line, then back one level"),
@@ -65,6 +65,10 @@ func helpLines(width int) []LogLine {
 		LogLine{Kind: "gap"},
 		head("rex never"),
 		"runs or approves tools, sends anything to your agent, or reads transcripts",
+		LogLine{Kind: "gap"},
+		head("outline"),
+		row("▸ ○ ·", "pinned / ready / waiting (after another task)"),
+		row("✓ – !", "done / skipped / blocked; 1/3 a parent's progress"),
 	}
 	for _, r := range rows {
 		switch v := r.(type) {

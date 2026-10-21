@@ -112,7 +112,7 @@ func PlansDir(repo string) string {
 
 // errRexFile means something that is not a folder sits where the plans
 // folder goes. Rex never deletes it; plans stay off until the human moves it.
-var errRexFile = errors.New("move the file named rex to create plans")
+var errRexFile = errors.New("move the rex file to create plans") // fits a 38-cell pane
 
 const (
 	rexFileNotice    = "rex/ is a file here · plans off"

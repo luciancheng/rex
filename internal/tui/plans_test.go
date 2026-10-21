@@ -59,7 +59,7 @@ func TestEnsurePlansDirKeepsAFileNamedRex(t *testing.T) {
 	if !strings.Contains(b.Notice, "rex/ is a file here") {
 		t.Fatalf("notice %q", b.Notice)
 	}
-	if act := b.CommitCreate("alpha"); act != PlanStay || !strings.Contains(b.Err, "move the file named rex") {
+	if act := b.CommitCreate("alpha"); act != PlanStay || !strings.Contains(b.Err, "move the rex file") {
 		t.Fatalf("create should refuse: act=%d err=%q", act, b.Err)
 	}
 	data, err := os.ReadFile(clash)
@@ -145,7 +145,7 @@ func TestNewFolderCreatesPlansDirAndRespectsARexFile(t *testing.T) {
 	os.WriteFile(filepath.Join(other, "rex"), []byte("bin"), 0o755)
 	c := NewPlanBrowser(other)
 	c.Screen = ScreenBrowse
-	if c.CommitFolder("grp") != PlanStay || !strings.Contains(c.Err, "move the file named rex") {
+	if c.CommitFolder("grp") != PlanStay || !strings.Contains(c.Err, "move the rex file") {
 		t.Fatalf("err %q", c.Err)
 	}
 	if strings.Count(viewText(BuildPlanView(c, 80)), "rex/ is a file here") != 1 {

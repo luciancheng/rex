@@ -299,3 +299,11 @@ func TestIngestReportsAnUnwritableFeed(t *testing.T) {
 		t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
 	}
 }
+
+func TestStartDumbTerminalPrintsCard(t *testing.T) {
+	t.Setenv("TERM", "dumb")
+	var stdout bytes.Buffer
+	if code := Main([]string{"start"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{}); code != 0 || !strings.Contains(stdout.String(), "REX") {
+		t.Fatalf("code=%d %q", code, stdout.String())
+	}
+}

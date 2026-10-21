@@ -173,3 +173,43 @@ func TestPalettesDefineEveryRole(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectDepth(t *testing.T) {
+	env := func(kv map[string]string) func(string) string { return func(k string) string { return kv[k] } }
+	cases := []struct {
+		kv   map[string]string
+		want Depth
+	}{
+		{map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, Color256},
+		{map[string]string{"TERM_PROGRAM": "Apple_Terminal", "COLORTERM": "truecolor"}, Truecolor},
+		{map[string]string{"TERM_PROGRAM": "iTerm.app"}, Truecolor},
+		{map[string]string{}, Truecolor},
+		{map[string]string{"TERM_PROGRAM": "vscode", "COLORTERM": ""}, Truecolor},
+	}
+	for _, c := range cases {
+		if got := DetectDepth(env(c.kv)); got != c.want {
+			t.Fatalf("%v: %d", c.kv, got)
+		}
+	}
+}
+
+func TestColor256QuantizesTheSamePalette(t *testing.T) {
+	defer func(d Depth) { ColorDepth = d }(ColorDepth)
+	ColorDepth = Color256
+	if got := FG(RGB{253, 207, 66}); got != "\033[38;5;221m" {
+		t.Fatalf("body yellow -> %q", got)
+	}
+	if got := Index256(RGB{0, 0, 0}); got != 16 {
+		t.Fatalf("black %d", got)
+	}
+	if got := Index256(RGB{128, 128, 128}); got != 244 {
+		t.Fatalf("gray %d", got)
+	}
+	if got := BG(RGB{18, 42, 58}); !strings.HasPrefix(got, "\033[48;5;") {
+		t.Fatalf("%q", got)
+	}
+	out, err := RenderSprite(MustSprite("idle"), "yellow", true)
+	if err != nil || strings.Contains(out, "38;2;") || !strings.Contains(out, "38;5;") {
+		t.Fatalf("256 mode leaked truecolor: %v", err)
+	}
+}

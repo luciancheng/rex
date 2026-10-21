@@ -116,7 +116,8 @@ func runStart(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if *noColor {
 		enabled = false
 	}
-	if *static || !interactive(stdin, stdout) {
+	mascot.ColorDepth = mascot.DetectDepth(os.Getenv)
+	if *static || !interactive(stdin, stdout) || os.Getenv("TERM") == "dumb" {
 		if err := tui.PrintCard("idle", mascot.DefaultPalette, enabled, stdout); err != nil {
 			fmt.Fprintf(stderr, "rex: %v\n", err)
 			return 1

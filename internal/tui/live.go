@@ -506,7 +506,10 @@ func textColumn(width, height int, meta string, opt ComposeOptions) []string {
 		scroll = planWindowStart(body, bodyH)
 		fromTop = true
 	} else {
-		body = BuildLogView(opt.Log, width)
+		body = opt.LogView
+		if body == nil {
+			body = BuildLogView(opt.Log, width)
+		}
 		scroll = ClampScroll(len(body), bodyH, scroll)
 	}
 	var visible []LogLine
@@ -618,9 +621,28 @@ type ComposeOptions struct {
 	Scroll        int
 	Pane          PaneKind
 	Plans         *PlanBrowser
+	LogView       []LogLine // laid-out tape, when the caller already has it
 }
 
+// Frame is one screen: full-width rows plus where the cursor goes.
+type Frame struct {
+	Rows      []string
+	CursorRow int // 1-based; 0 hides the cursor
+	CursorCol int
+}
+
+// ComposeFrame renders the whole screen as one string (home, clear, rows,
+// cursor). The live loop paints only changed rows instead; see renderer.
 func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
+	f := composeRows(spriteName, color, opt)
+	frame := Home + Clear + strings.Join(f.Rows, "\r\n")
+	if f.CursorRow > 0 {
+		return frame + fmt.Sprintf("\033[%d;%dH%s", f.CursorRow, f.CursorCol, ShowCursor)
+	}
+	return frame + HideCursor
+}
+
+func composeRows(spriteName, color string, opt ComposeOptions) Frame {
 	columns := max(1, opt.Columns)
 	lines := max(1, opt.Lines)
 	mascotCols := min(mascot.StageSize, columns)
@@ -629,22 +651,7 @@ func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
 		textWidth = 0
 		mascotCols = min(mascot.StageSize, columns)
 	}
-	sprite := mascot.MustSprite(spriteName)
-	staged := mascot.FitStageDefault(sprite.Rows)
-	if mascotCols < mascot.StageSize {
-		cropped := make([]string, len(staged))
-		for i, row := range staged {
-			r := []rune(row)
-			if mascotCols < len(r) {
-				cropped[i] = string(r[:mascotCols])
-			} else {
-				cropped[i] = row
-			}
-		}
-		staged = cropped
-	}
-	pal := mascot.MustPalette(color)
-	mascotRows := mascot.MustRenderRows(staged, pal, opt.Enabled)
+	mascotRows := stagedMascot(spriteName, color, mascotCols, opt.Enabled)
 	blankMascot := strings.Repeat(" ", mascotCols)
 	status := opt.Status
 	if status == "" {
@@ -663,17 +670,52 @@ func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
 		}
 		out = append(out, left+strings.Repeat(" ", Gutter)+text[index])
 	}
-	frame := Home + Clear + strings.Join(out, "\r\n")
+	f := Frame{Rows: out}
 	if textWidth >= 4 && lines >= InputRows+FooterRows+3 {
 		prefix := composerPrefix(opt)
 		visible := visibleDraft(opt.Draft, textWidth-2-cellLen(prefix))
-		cursorRow := lines - 2
-		cursorCol := mascotCols + Gutter + 1 + 1 + cellLen(prefix) + cellLen(visible)
-		frame += fmt.Sprintf("\033[%d;%dH%s", cursorRow, cursorCol, ShowCursor)
-	} else {
-		frame += HideCursor
+		f.CursorRow = lines - 2
+		f.CursorCol = mascotCols + Gutter + 1 + 1 + cellLen(prefix) + cellLen(visible)
 	}
-	return frame
+	return f
+}
+
+type mascotKey struct {
+	sprite, color string
+	cols          int
+	enabled       bool
+	depth         mascot.Depth
+}
+
+var mascotCache = map[mascotKey][]string{}
+
+// stagedMascot renders a sprite once per size and color mode; the typing
+// sheet would otherwise re-render ~800 cells on every frame.
+func stagedMascot(spriteName, color string, mascotCols int, enabled bool) []string {
+	key := mascotKey{spriteName, color, mascotCols, enabled, mascot.ColorDepth}
+	if rows, ok := mascotCache[key]; ok {
+		return rows
+	}
+	sprite := mascot.MustSprite(spriteName)
+	staged := mascot.FitStageDefault(sprite.Rows)
+	if mascotCols < mascot.StageSize {
+		cropped := make([]string, len(staged))
+		for i, row := range staged {
+			r := []rune(row)
+			if mascotCols < len(r) {
+				cropped[i] = string(r[:mascotCols])
+			} else {
+				cropped[i] = row
+			}
+		}
+		staged = cropped
+	}
+	rows := mascot.MustRenderRows(staged, mascot.MustPalette(color), enabled)
+	if len(mascotCache) > 64 {
+		mascotCache = map[mascotKey][]string{}
+	}
+	mascotCache[key] = rows
+	return rows
 }
 
 func PrintCard(spriteName, color string, enabled bool, stdout io.Writer) error {
@@ -826,9 +868,14 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 	}
 	tail := watch.NewEventTail(path, true)
 	keys := newKeyReader(stdin)
+	paint := &renderer{full: true}
 	err := LiveScreen(stdout, stdin, func(sig screenSignals) error {
 		draw := func() {
-			_, _ = io.WriteString(stdout, a.frame())
+			if a.repaint {
+				paint.invalidate()
+				a.repaint = false
+			}
+			_, _ = io.WriteString(stdout, paint.render(a.frameRows()))
 			_ = stdout.Sync()
 		}
 		draw()
@@ -841,6 +888,7 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 			case <-sig.resume:
 				reenterRaw(int(stdin.Fd()))
 				_, _ = io.WriteString(stdout, screenSetup) // bracketed paste etc. are off after a stop
+				paint.invalidate()
 				draw()
 			default:
 			}

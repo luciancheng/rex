@@ -1,7 +1,7 @@
 # Install REX: a Go binary on PATH, plus the Cursor hook when Cursor is here.
 # Other agents are opt-in; the script prints the command for each one it finds.
 # Usage (PowerShell):
-#   irm https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/luciancheng/rex/HEAD/scripts/install.ps1 | iex
 #   $env:REX_REF = "dev"; irm …/install.ps1 | iex         # a tag, branch or commit
 #   .\scripts\install.ps1                                 # from a clone: installs this tree
 $ErrorActionPreference = "Stop"

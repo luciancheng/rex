@@ -1,0 +1,61 @@
+name: Bug report
+description: Something in Rex doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Security issues go through SECURITY.md (a private report), not here.
+  - type: textarea
+    id: build
+    attributes:
+      label: Rex build
+      description: How you installed Rex (the install script, with REX_REF if you set it, or go install), and the output of `go version -m "$(command -v rex)"` (PowerShell `go version -m (Get-Command rex).Source`). `rex --version` doesn't say which commit you have.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15, Ubuntu 24.04, Windows 11, …
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal app and $TERM
+      placeholder: iTerm2, xterm-256color
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options: [Cursor, Claude Code, Codex, OpenCode, No agent / other]
+    validations:
+      required: true
+  - type: textarea
+    id: feed
+    attributes:
+      label: Feed health
+      description: Type ?⏎ in Rex and paste the feed block (it shows the feed path, the last event and which agents are wired).
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: A terminal capture helps (tmux capture-pane -p, or copy the text).
+    validations:
+      required: true

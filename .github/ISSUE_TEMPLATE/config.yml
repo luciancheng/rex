@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security issue
+    url: https://github.com/luciancheng/rex/security/policy
+    about: Please don't open a public issue. The security policy says how to report privately.

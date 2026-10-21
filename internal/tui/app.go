@@ -445,7 +445,7 @@ func (a *app) keys(pressed []string) bool {
 	return changed
 }
 
-// feedKinds are the kinds an adapter writes (agents.md, "Kinds").
+// feedKinds are the kinds an adapter writes (AGENTS.md, "Kinds").
 var feedKinds = map[string]bool{
 	"thought": true, "text": true, "user": true, "command": true,
 	"question": true, "result": true, "idle": true, "error": true,

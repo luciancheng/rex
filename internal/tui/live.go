@@ -29,6 +29,7 @@ const (
 var kindColor = map[string]string{
 	"before":   "muted",
 	"note":     "muted",
+	"plan":     "muted",
 	"thought":  "muted",
 	"command":  "accent",
 	"question": "error",
@@ -53,6 +54,7 @@ var kindStatus = map[string]string{
 var kindLabel = map[string]string{
 	"before":   "before rex started",
 	"note":     "note · local",
+	"plan":     "plan",
 	"thought":  "thinking",
 	"command":  "run",
 	"question": "ask",
@@ -447,6 +449,10 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		body = opt.Overlay.Lines
 		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
 		fromTop = true
+	} else if opt.Pane == PanePlans && opt.PlanView != nil {
+		body = opt.PlanView
+		scroll = min(opt.PlanScroll, max(0, len(body)-bodyH))
+		fromTop = true
 	} else if opt.Pane == PanePlans && opt.Plans != nil {
 		// The Library's title, folder, notice and error stay put; only the
 		// list under them scrolls.
@@ -531,8 +537,9 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 // StatusLine is row 1: the single most important thing to know right now
 // (docs/ux.md §4). Kind picks the color.
 type StatusLine struct {
-	Text string
-	Kind string
+	Text  string
+	Short string // used instead of Text when Text doesn't fit
+	Kind  string
 }
 
 func statusRow(s StatusLine, width int, enabled bool) string {
@@ -543,7 +550,11 @@ func statusRow(s StatusLine, width int, enabled bool) string {
 	if _, ok := mascot.UI[kind]; !ok {
 		kind = "muted"
 	}
-	return mascot.Paint(clip(s.Text, width), mascot.UI[kind], enabled)
+	text := s.Text
+	if s.Short != "" && cellLen(text) > width {
+		text = s.Short
+	}
+	return mascot.Paint(clip(text, width), mascot.UI[kind], enabled)
 }
 
 func paintLine(line LogLine, width int, enabled bool) string {
@@ -581,8 +592,11 @@ type ComposeOptions struct {
 	PlanRel       string    // open plan, repo-relative, for the header
 	Line          StatusLine
 	Overlay       *Overlay
-	Placeholder   string // dim hint in an empty composer
-	Preview       string // what ⏎ will do with the draft, shown in the footer
+	Placeholder   string    // dim hint in an empty composer
+	Preview       string    // what ⏎ will do with the draft, shown in the footer
+	PlanView      []LogLine // the open plan's screen, when PLAN shows it
+	PlanScroll    int       // its first visible line
+	PlanFooter    []string
 }
 
 // Frame is one screen: full-width rows plus where the cursor goes.

@@ -177,6 +177,9 @@ func placeFooter(opt ComposeOptions, scroll int) ([]string, string) {
 	if opt.QuitPending {
 		return []string{"ctrl+c again to quit"}, "error"
 	}
+	if opt.Pane == PanePlans && opt.PlanFooter != nil {
+		return opt.PlanFooter, "muted"
+	}
 	if opt.Pane == PanePlans && opt.Plans != nil && opt.Preview != "" {
 		word := map[PlanScreen]string{ScreenCreate: "new plan", ScreenFolder: "new folder", ScreenBrowse: "open"}[opt.Plans.Screen]
 		if word == "" {

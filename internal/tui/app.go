@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"os"
 	"strings"
 	"time"
 
 	"github.com/luciancheng/rex/internal/mascot"
+	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -47,6 +49,14 @@ type app struct {
 	scope  watch.Scope
 	hidden int // events from other repos' agents, not shown
 	health feedHealth
+
+	doc        *planDoc // the open plan, nil until one is opened
+	at         planAt   // which PLAN screen: library, outline or a detail
+	outline    outlineView
+	toast      StatusLine
+	toastUntil time.Time
+	now        func() time.Time
+	statePath  string
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -58,7 +68,18 @@ type logViewCache struct {
 }
 
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
-	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo)}
+	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
+		now: time.Now, statePath: plan.StatePath()}
+	if plans.Current == "" {
+		// The Continue card offers the plan last opened in this repo.
+		if last := plan.LoadState(a.statePath).Repos[plans.Repo].Plan; last != "" && IsPlanFile(last) {
+			if _, err := os.Stat(last); err == nil {
+				plans.Continue = last
+				plans.fresh = true
+				plans.Rebuild()
+			}
+		}
+	}
 	a.sequence = mascot.MustAnimation(animation)
 	a.frameIndex = 0
 	a.hold = a.sequence.Frames[0].Hold
@@ -121,6 +142,11 @@ func (a *app) composeOptions() ComposeOptions {
 			opt.LogView = a.health.lines(textW, a.hidden, time.Now(), true)
 		}
 	}
+	if a.pane == PanePlans && a.at != atLibrary && a.doc != nil {
+		l := layoutFor(a.columns, a.lines)
+		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
+		opt.PlanFooter = a.planFooter()
+	}
 	if a.overlay[a.pane] == overlayHelp {
 		other := "tab tape"
 		if a.pane == PaneChat {
@@ -136,6 +162,59 @@ func (a *app) composeOptions() ComposeOptions {
 	return opt
 }
 
+// planView lays out the open plan's screen and picks its first visible
+// line: the outline keeps the selection in view, details scroll.
+func (a *app) planView(width, viewH int) ([]LogLine, int) {
+	if width <= 0 {
+		return nil, 0
+	}
+	v := &a.outline
+	var body []LogLine
+	switch a.at {
+	case atPlanDetail:
+		body = planDetail(a.doc, width)
+	case atTaskDetail:
+		body = taskDetail(a.doc, v.sel, width)
+	default:
+		body = outlineBody(a.doc, v, width, viewH)
+		v.view = windowStart(body, viewH, v.view)
+		return body, v.view
+	}
+	v.scroll = max(0, min(v.scroll, len(body)-viewH))
+	return body, v.scroll
+}
+
+// planFooter is the footer for the open plan's screens (docs/ux.md §4).
+func (a *app) planFooter() []string {
+	if a.at == atPlanDetail || a.at == atTaskDetail {
+		return []string{"detail", "esc outline", "↑↓ scroll", "tab tape"}
+	}
+	if pv := a.preview(); pv != "" {
+		return []string{"outline", pv}
+	}
+	if p := a.doc.plan; p != nil && p.ReadOnly != "" {
+		return []string{"outline", "read-only", "esc plans", "tab tape"}
+	}
+	if p := a.doc.plan; p == nil || len(p.Tasks) == 0 {
+		return []string{"outline", "tab tape", "esc plans"}
+	}
+	return []string{"outline", "tab tape", "esc plans", "⏎ detail", "?⏎ help"}
+}
+
+// verbHints are the verbs worth typing on the open plan, as the outline's
+// placeholder: the ones this build offers.
+func (a *app) verbHints() string {
+	var hints []string
+	for _, h := range []struct{ verb, hint string }{
+		{"sendoff", "s⏎ sendoff"}, {"done", "d⏎ done"}, {"pin", "p⏎ pin"}, {"help", "?⏎ help"},
+	} {
+		if a.offers(h.verb) {
+			hints = append(hints, h.hint)
+		}
+	}
+	return strings.Join(hints, " · ")
+}
+
 // placeholder is the dim hint in an empty composer: what you can type here.
 func (a *app) placeholder() string {
 	if a.overlay[a.pane] != overlayNone {
@@ -143,6 +222,9 @@ func (a *app) placeholder() string {
 	}
 	if a.pane == PaneChat {
 		return "note (not sent) · ?⏎ help"
+	}
+	if a.at != atLibrary {
+		return a.verbHints()
 	}
 	switch a.plans.Screen {
 	case ScreenBrowse:
@@ -161,7 +243,7 @@ func (a *app) preview() string {
 	if text == "" {
 		return ""
 	}
-	if a.pane == PanePlans && a.overlay[a.pane] == overlayNone && !forcedVerb(text) {
+	if a.pane == PanePlans && a.at == atLibrary && a.overlay[a.pane] == overlayNone && !forcedVerb(text) {
 		return ""
 	}
 	if verb, arg, ok := parseVerb(text); ok && a.offers(verb) {
@@ -179,11 +261,28 @@ func (a *app) preview() string {
 	return ""
 }
 
-// statusLine picks row 1. It is empty until the plan slices add the pin,
-// drift and plan errors here (docs/ux.md §4).
+// statusLine picks row 1, the first of these that applies (docs/ux.md
+// §4): the plan file can't be read, a toast, the pin.
 func (a *app) statusLine() StatusLine {
-	return StatusLine{}
+	if s, ok := docStatus(a.doc); ok {
+		return s
+	}
+	if a.toast.Text != "" && a.now().Before(a.toastUntil) {
+		return a.toast
+	}
+	if a.doc == nil {
+		return StatusLine{}
+	}
+	return pinStatus(a.doc.plan)
 }
+
+// flash shows a toast on row 1 for a few seconds.
+func (a *app) flash(text, kind string) {
+	a.toast = StatusLine{Text: text, Kind: kind}
+	a.toastUntil = a.now().Add(toastFor)
+}
+
+const toastFor = 3 * time.Second
 
 // exitLine is printed once the screen is restored, so the terminal keeps a
 // trace of where you were.
@@ -518,6 +617,9 @@ func (a *app) tapeKey(key string) bool {
 }
 
 func (a *app) planKey(key string) bool {
+	if a.at != atLibrary && a.doc != nil {
+		return a.docKey(key)
+	}
 	b := a.plans
 	bodyH := PaneBodyHeight(a.lines)
 	dir := b.Dir
@@ -631,13 +733,143 @@ func (a *app) planEnter() bool {
 	return true
 }
 
-// openedPlan runs after a plan is opened or created. Until the outline
-// exists (docs/ux.md §6) Rex moves to the tape, as it always has.
+// openedPlan runs after a plan is opened or created: Rex reads it, lands
+// on its outline with the pin selected, and remembers it for this repo.
 func (a *app) openedPlan() {
-	// Keep the plan draft (a Browse filter) for Tab back, so the opened
-	// plan is still the selected row.
-	a.draft, a.parked = a.parked, a.draft
-	a.pane = PaneChat
+	path := a.plans.Current
+	now := a.now()
+	a.doc = openDoc(path, now)
+	a.at = atOutline
+	a.outline = outlineView{sel: defaultSel(a.doc.plan)}
+	a.draft = ""
+	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
+		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
+	})
+}
+
+// docKey handles keys on the open plan's outline and detail screens.
+func (a *app) docKey(key string) bool {
+	v := &a.outline
+	p := a.doc.plan
+	step := max(1, layoutFor(a.columns, a.lines).bodyH-2)
+	if a.at == atOutline {
+		switch key {
+		case "up", "down", "pageup", "pagedown":
+			if p == nil {
+				return false
+			}
+			delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
+			v.move(p, delta)
+			return true
+		case "home", "end":
+			if p == nil {
+				return false
+			}
+			v.edge(p, key == "end")
+			return true
+		case "right":
+			if a.draft != "" {
+				return false
+			}
+			return a.openDetail()
+		}
+	} else {
+		switch key {
+		case "up":
+			v.scroll = max(0, v.scroll-1)
+			return true
+		case "down":
+			v.scroll++
+			return true
+		case "pageup":
+			v.scroll = max(0, v.scroll-step)
+			return true
+		case "pagedown":
+			v.scroll += step
+			return true
+		case "home":
+			v.scroll = 0
+			return true
+		case "end":
+			v.scroll = 1 << 30 // clamped when drawn
+			return true
+		}
+	}
+	switch key {
+	case "esc", "left":
+		if a.draft != "" {
+			if key == "left" {
+				return false
+			}
+			a.draft = ""
+			return true
+		}
+		if a.at == atOutline {
+			return a.toLibrary()
+		}
+		a.at = atOutline
+		return true
+	case "\r", "\n":
+		text := strings.TrimSpace(a.draft)
+		if text == "" {
+			if a.at == atOutline {
+				return a.openDetail()
+			}
+			return false
+		}
+		if !a.submit(text) {
+			a.flash("'"+text+"' is not a verb · ?⏎ help", "error")
+		}
+		return true
+	}
+	return false
+}
+
+func (a *app) openDetail() bool {
+	if a.doc.plan == nil {
+		return false
+	}
+	a.at = atTaskDetail
+	if a.outline.sel == "" {
+		a.at = atPlanDetail
+	}
+	a.outline.scroll = 0
+	return true
+}
+
+// toLibrary leaves the open plan for Library Home, cursor on Continue. The
+// plan stays open: the header and the tape keep it.
+func (a *app) toLibrary() bool {
+	b := a.plans
+	a.at = atLibrary
+	a.draft = ""
+	b.Screen, b.Find, b.Filter = ScreenHome, "", ""
+	b.fresh = true
+	b.Rebuild()
+	return true
+}
+
+// pollDoc re-reads the open plan. An outside edit keeps the selection,
+// shows a toast, and leaves one "plan" line on the tape.
+func (a *app) pollDoc() bool {
+	if a.doc == nil {
+		return false
+	}
+	changed, summary := a.doc.poll(a.now())
+	if !changed {
+		return false
+	}
+	a.outline.keepSel(a.doc.plan)
+	if summary != "" {
+		a.flash("plan updated · "+summary, "accent")
+		before := a.logLines()
+		a.log = append(a.log, watch.NewEvent("rex", "plan", summary, nil))
+		a.logRev++
+		if a.scroll > 0 {
+			a.scroll += max(0, a.logLines()-before)
+		}
+	}
+	return true
 }
 
 // overlayKey handles keys while an overlay covers the current place.
@@ -683,6 +915,9 @@ func (a *app) helpBody(width int) []LogLine {
 // new query puts the cursor on its first match.
 func (a *app) syncPlanInput() bool {
 	b := a.plans
+	if a.at != atLibrary {
+		return false
+	}
 	text := a.draft
 	if forcedVerb(text) {
 		text = ""
@@ -721,7 +956,11 @@ func (a *app) syncPlanInput() bool {
 // tick runs on the frame clock: the quit window counts down and the
 // mascot advances a frame.
 func (a *app) tick() bool {
-	changed := false
+	changed := a.pollDoc()
+	if a.toast.Text != "" && !a.now().Before(a.toastUntil) {
+		a.toast = StatusLine{}
+		changed = true
+	}
 	if a.quitPending {
 		a.quitTicks--
 		if a.quitTicks <= 0 {

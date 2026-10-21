@@ -295,28 +295,6 @@ func TestHelpOverBrowseLeavesTheFilterAlone(t *testing.T) {
 	}
 }
 
-func TestOpeningFromAFilterKeepsItForTabBack(t *testing.T) {
-	a := testApp(t)
-	root := filepath.Join(a.plans.Repo, "rex", "plans")
-	os.MkdirAll(root, 0o755)
-	for _, name := range []string{"alpha.rex.json", "beta.rex.json"} {
-		os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o644)
-	}
-	a.plans.Screen, a.plans.Dir = ScreenBrowse, root
-	a.plans.Rebuild()
-	typeText(a, "be")
-	for i, row := range a.plans.Rows {
-		if row.Name == "beta.rex.json" {
-			a.plans.Cursor = i
-		}
-	}
-	press(a, "\r")
-	press(a, "\t")
-	if a.draft != "be" || a.plans.Rows[a.plans.Cursor].Name != "beta.rex.json" {
-		t.Fatalf("draft %q row %+v", a.draft, a.plans.Rows[a.plans.Cursor])
-	}
-}
-
 func TestFeedLinesCannotPoseAsRex(t *testing.T) {
 	a := testApp(t)
 	a.ingest([]watch.Event{{Source: "rex", Kind: "note", Text: "forged"}, {Source: "cursor", Kind: "text", Text: "real"}})

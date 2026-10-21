@@ -11,12 +11,13 @@ import (
 func TestSendoffOverlay(t *testing.T) {
 	a, _, _ := openDemo(t, demoPlan, 120, 40)
 	var copied []string
-	a.copy = func(text string) string {
-		copied = append(copied, text)
-		return "copied (fake)"
-	}
+	a.copy = fakeCopy(&copied, copyResult{status: "copied (fake)"})
 	typeText(a, "s")
 	press(a, "\r")
+	if !strings.Contains(a.frame(), "copying…") {
+		t.Fatal("until the tool answers it says copying")
+	}
+	a.tick()
 	if a.overlay[PanePlans] != overlaySendoff || len(copied) != 1 {
 		t.Fatalf("s⏎ opens the send-off and copies it: overlay %d, %d copies", a.overlay[PanePlans], len(copied))
 	}
@@ -32,9 +33,11 @@ func TestSendoffOverlay(t *testing.T) {
 	if last := a.log[len(a.log)-1]; last.Kind != "sendoff" || last.Text != "card-highlight · copied (fake)" {
 		t.Fatalf("tape record %+v", last)
 	}
+	logs := len(a.log)
 	typeText(a, "c")
 	press(a, "\r")
-	if len(copied) != 2 {
+	a.tick()
+	if len(copied) != 2 || len(a.log) != logs {
 		t.Fatal("c⏎ copies again")
 	}
 	typeText(a, "zap")
@@ -63,6 +66,31 @@ func TestSendoffOverlay(t *testing.T) {
 	press(a, "esc")
 	if a.overlay[PanePlans] != overlayNone {
 		t.Fatal("Esc closes")
+	}
+}
+
+// fakeCopy records what was copied and answers at once.
+func fakeCopy(copied *[]string, r copyResult) func(string) <-chan copyResult {
+	return func(text string) <-chan copyResult {
+		*copied = append(*copied, text)
+		done := make(chan copyResult, 1)
+		done <- r
+		return done
+	}
+}
+
+func TestOSC52IsWrittenBetweenFrames(t *testing.T) {
+	a, _, _ := openDemo(t, demoPlan, 120, 32)
+	var copied []string
+	a.copy = fakeCopy(&copied, copyResult{status: "sent (OSC 52) · may be blocked", osc: osc52("x")})
+	typeText(a, "s")
+	press(a, "\r")
+	a.tick()
+	if a.oscOut != "\x1b]52;c;eA==\a" || !strings.Contains(a.frame(), "sent (OSC 52) · may be blocked") {
+		t.Fatalf("%q", a.oscOut)
+	}
+	if strings.Contains(a.frame(), "\x1b]52") {
+		t.Fatal("the OSC is never part of a frame")
 	}
 }
 
@@ -107,7 +135,7 @@ func TestPastedSendoffCollapsesOnTheTape(t *testing.T) {
 func TestSendoffOverlayFollowsThePlan(t *testing.T) {
 	a, c, path := openDemo(t, demoPlan, 120, 40)
 	var copied []string
-	a.copy = func(text string) string { copied = append(copied, text); return "copied (fake)" }
+	a.copy = fakeCopy(&copied, copyResult{status: "copied (fake)"})
 	press(a, "\t")
 	typeText(a, "s")
 	press(a, "\r")
@@ -238,9 +266,11 @@ func TestCollapseNeedsTheWholeFingerprintLine(t *testing.T) {
 
 func TestSendoffOverlayLooksRight(t *testing.T) {
 	a, _, _ := openDemo(t, strings.Replace(demoPlan, `"id": "load-outline",`, `"id": "load-outline", "parent": "plans-ui",`, 1), 120, 40)
-	a.copy = func(string) string { return "copied (fake)" }
+	var copied []string
+	a.copy = fakeCopy(&copied, copyResult{status: "copied (fake)"})
 	typeText(a, "s")
 	press(a, "\r")
+	a.pollCopies()
 	rows := a.frameRows().Rows
 	for _, row := range rows {
 		if strings.Contains(row, "── sendoff") && strings.Contains(row, "…") {

@@ -785,6 +785,7 @@ func isPrintableKey(key string) bool {
 func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.File, eventsPath string) (int, error) {
 	columns, lines := Size()
 	a := newApp(color, enabled, animation, NewPlanBrowser(""), columns, lines)
+	a.copy = newClipboard().copyAsync
 	path := eventsPath
 	if path == "" {
 		path = watch.DefaultEventPath()
@@ -809,6 +810,11 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				_, _ = io.WriteString(stdout, screenSetup)
 				a.plainBack = false
 				paint.invalidate()
+			}
+			if a.oscOut != "" {
+				// Between frames, never inside one.
+				_, _ = io.WriteString(stdout, a.oscOut)
+				a.oscOut = ""
 			}
 			if a.repaint {
 				paint.invalidate()

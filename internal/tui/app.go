@@ -62,14 +62,15 @@ type app struct {
 	pinMoved   map[string]time.Time // when the pin last moved to each task this session
 	lastPin    map[string]string    // per plan file, the pin notePin last saw there
 	started    time.Time
-	form       [2]*doneForm        // per place, while the completion form is open
-	seen       []watch.Event       // raw events from this repo, for completion evidence
-	briefs     [2]*briefView       // per place, while the Send-off overlay is open
-	copy       func(string) string // copies a brief and says what happened; nil = no clipboard
-	plainOut   string              // a brief to print on the normal screen (o⏎)
-	plainText  string              // the brief on the normal screen, to print again after a stop
-	plainShown bool                // the brief is on the normal screen; ⏎ returns
-	plainBack  bool                // come back to the live screen
+	form       [2]*doneForm                   // per place, while the completion form is open
+	seen       []watch.Event                  // raw events from this repo, for completion evidence
+	briefs     [2]*briefView                  // per place, while the Send-off overlay is open
+	copy       func(string) <-chan copyResult // copies a brief off the UI goroutine; nil = no clipboard
+	oscOut     string                         // an OSC 52 copy for the loop to write between frames
+	plainOut   string                         // a brief to print on the normal screen (o⏎)
+	plainText  string                         // the brief on the normal screen, to print again after a stop
+	plainShown bool                           // the brief is on the normal screen; ⏎ returns
+	plainBack  bool                           // come back to the live screen
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -1243,6 +1244,9 @@ func (a *app) syncPlanInput() bool {
 // mascot advances a frame.
 func (a *app) tick() bool {
 	changed := a.pollDoc()
+	if a.pollCopies() {
+		changed = true
+	}
 	if a.toast.Text != "" && !a.now().Before(a.toastUntil) {
 		a.toast = StatusLine{}
 		changed = true

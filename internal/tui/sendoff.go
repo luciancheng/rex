@@ -16,15 +16,56 @@ type briefView struct {
 	text     string
 	status   string // what copying did: "copied (pbcopy)", "sent (OSC 52) · may be blocked", …
 	refused  bool   // status says why the plan can't be sent off right now
+	pending  <-chan copyResult
+	recorded bool // its line is on the tape
 }
 
-// copyText copies a brief and says honestly what happened. Without a
-// clipboard Rex says so, and o⏎ prints the brief plain.
-func (a *app) copyText(text string) string {
+// startCopy copies the brief off the UI goroutine. Until the tool answers
+// it says "copying…"; without a clipboard it says so, and o⏎ prints the
+// brief plain.
+func (a *app) startCopy(v *briefView) {
 	if a.copy == nil {
-		return "not copied · o⏎ prints it plain"
+		v.status, v.pending = "not copied · o⏎ prints it plain", nil
+		a.recordBrief(v)
+		return
 	}
-	return a.copy(text)
+	v.status, v.pending = "copying…", a.copy(v.text)
+}
+
+// pollCopies takes in finished copies: the status they earned, the OSC 52
+// sequence for the loop to write, and the brief's line on the tape.
+func (a *app) pollCopies() bool {
+	changed := false
+	for _, v := range a.briefs {
+		if v == nil || v.pending == nil {
+			continue
+		}
+		select {
+		case r := <-v.pending:
+			v.status, v.pending = r.status, nil
+			a.oscOut += r.osc
+			a.recordBrief(v)
+			changed = true
+		default:
+		}
+	}
+	return changed
+}
+
+// recordBrief leaves one line on the tape the first time a brief is
+// copied (or not).
+func (a *app) recordBrief(v *briefView) {
+	if v.recorded {
+		return
+	}
+	v.recorded = true
+	// The tape keeps the outcome; the o⏎ hint belongs in the overlay.
+	outcome := strings.TrimSuffix(v.status, " · o⏎ prints it plain")
+	if v.planning {
+		a.tapeLine("brief", outcome)
+	} else {
+		a.tapeLine("sendoff", v.task+" · "+outcome)
+	}
 }
 
 // sendoffVerb is s⏎ / sendoff⏎ / handoff⏎.
@@ -120,17 +161,10 @@ func (a *app) briefVerb() {
 }
 
 func (a *app) openBrief(v *briefView) {
-	v.status = a.copyText(v.text)
 	a.briefs[a.pane] = v
 	a.overlay[a.pane] = overlaySendoff
 	a.overlayScroll[a.pane] = 0
-	// The tape keeps the outcome; the o⏎ hint belongs in the overlay.
-	outcome := strings.TrimSuffix(v.status, " · o⏎ prints it plain")
-	if v.planning {
-		a.tapeLine("brief", outcome)
-	} else {
-		a.tapeLine("sendoff", v.task+" · "+outcome)
-	}
+	a.startCopy(v)
 }
 
 // briefKey is ⏎ in the Send-off overlay: c⏎ copies again, o⏎ prints the
@@ -149,7 +183,7 @@ func (a *app) briefKey() bool {
 	}
 	switch text {
 	case "c", "copy":
-		v.status = a.copyText(v.text)
+		a.startCopy(v)
 	case "o", "open", "print":
 		a.plainOut = v.text
 	}
@@ -165,7 +199,7 @@ func (a *app) briefLines(width int) []LogLine {
 		head = "brief"
 		note = "Paste into your agent chat to fill this plan. Rex never sends it."
 	}
-	lines := []LogLine{{Kind: "command", Text: rule(head, max(8, width-cellLen(v.status)-1)) + " " + v.status}}
+	lines := []LogLine{{Kind: "command", Text: rule(head, width-cellLen(v.status)-1) + " " + v.status}}
 	if cellLen(head)+cellLen(v.status)+8 > width {
 		lines = []LogLine{{Kind: "command", Text: rule(head, width)}, {Kind: "muted", Text: "  " + clip(v.status, inner)}}
 	}

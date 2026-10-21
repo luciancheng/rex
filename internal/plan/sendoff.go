@@ -194,6 +194,9 @@ func sendoff(p *Plan, rel string, done, open int) string {
 	if pin != nil && p.Stacked() {
 		stackLines(line, p, g, pin)
 	}
+	if pin != nil {
+		line("Before opening the PR, review it read-only, one reviewer per job (design, the UI if it changed, breaking it, lint and checks); fix or explain each finding, then a final readiness check. Repo review rules win.")
+	}
 	line("When you finish, end your final reply with these lines:")
 	line("accomplished: <what you actually did>")
 	line("verified: <how you checked it>")
@@ -265,7 +268,7 @@ func Brief(p *Plan, rel string) string {
 	line("- ids are short, stable slugs; never renumber or reuse them")
 	line("- file order is do order and stack order; keep the tasks array flat")
 	line("- parent groups tasks under a heading (a heading is not a PR); depends_on lists hard prerequisites only, all earlier in the file")
-	line("- one task should fit one PR a human can review in one sitting")
+	line("- one task should fit one PR a human can review in one sitting; before it opens, it gets a read-only review: one reviewer per job (design, the UI if it changed, breaking it, lint), each finding fixed or explained, then a final readiness check")
 	line("- the leaf tasks stack in file order: the first PR targets base, each next one the branch of the task before it, so each task builds and passes its tests on the tasks before it alone")
 	line("- base = the branch the stack lands on (the repo's trunk, e.g. main or dev); branch = a leaf task's PR branch, named the way this repo names branches (letters, digits, . _ - /); leave both out if the work won't be PRs")
 	line("- work that should merge on its own, apart from this stack, goes in its own plan")

@@ -100,6 +100,19 @@ verified: <how you checked it, one line>
 rex-sendoff: <the same line as at the end of the brief>
 ```
 
+### Review before the PR
+
+Before you open the task's PR (or mark it ready), review it read-only. If the repo has its own review rules, follow those instead.
+
+- **Reviewers change nothing.** Each one reads the diff and the code, runs what it needs in a scratch copy outside the repo, and reports findings with file:line, evidence and a suggested fix. If you can start subagents, give each job its own read-only subagent, side by side; otherwise do the passes yourself, one at a time, without editing in between.
+- **One job each:**
+  - **Design:** how the change fits the system: effects across modules, failure modes, the repo's rules and the task's scope.
+  - **UI**, only when the UI or CLI output changed: drive it like a user, in an isolated session, at narrow and wide sizes.
+  - **Break it:** hostile inputs, edge cases, concurrency, and regressions against the base branch, with tests that fail before a fix.
+  - **Lint:** the repo's formatter, linters, type checks and pre-PR gate, and docs the change made stale.
+- **Then fix** each finding, with a test where it can have one, or say in the PR body why you skipped it.
+- **Then a final readiness check:** one more read-only pass over the fixed branch: the diff, the tests and their output, the PR body (problem, what changed, why, how, tests run, captures for UI changes) and the issue it closes. Repeat while it still finds blockers or majors, then open the PR.
+
 ### Its PR, when the send-off has a Stack part
 
 Do these steps when the repo's own rules for a PR are met (its checks, review and PR body):

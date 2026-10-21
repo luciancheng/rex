@@ -212,7 +212,9 @@ func TestSendoffKeepsTheStackWhenTrimmed(t *testing.T) {
 	if len(got) > sendoffCap || !strings.HasSuffix(got, "rex-sendoff: big.rex.json#"+strings.Repeat("p", 70)+"\n") || !strings.Contains(got, "\nStack: ") || !strings.Contains(got, "--update-refs") || !strings.Contains(got, "(see plan file)") {
 		t.Fatalf("%d bytes:\n%s", len(got), got[max(0, len(got)-2500):])
 	}
-	if i := strings.Index(got, "\nFor the next chat\n"); len(got)-i > 2600 {
+	// measured 2727 with the review line; the hard limit is keepTail's room
+	// (TestTheStackFitsWithEveryFieldAtItsCap keeps the fingerprint there)
+	if i := strings.Index(got, "\nFor the next chat\n"); len(got)-i > 2900 {
 		t.Fatalf("footer %d bytes", len(got)-i)
 	}
 }

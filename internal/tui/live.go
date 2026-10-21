@@ -120,6 +120,7 @@ func asLogEntry(event watch.Event) (string, string) {
 }
 
 func rule(label string, width int) string {
+	label = strings.ReplaceAll(watch.CleanText(label), "\n", " ")
 	prefix := "── " + label + " "
 	if cellLen(prefix) >= width {
 		return clip(label, width)
@@ -398,8 +399,9 @@ func header(width int, meta string, enabled bool) string {
 }
 
 func chatHeaderMeta(state, planRel string, width int) string {
-	state = strings.TrimSpace(state)
-	planRel = strings.TrimSpace(planRel)
+	// Clean first, so what is measured is what is drawn.
+	state = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(state), "\n", " "))
+	planRel = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(planRel), "\n", " "))
 	if state == "" {
 		state = "idle"
 	}
@@ -443,11 +445,22 @@ func clipPathLeft(path string, width int) string {
 
 // visibleDraft is the end of the draft that fits room cells, so the
 // cursor always sits after what was just typed.
+// visibleDraft is the end of the draft that fits in room cells, with "…"
+// on the left when it was cut. It leaves the last cell free for the
+// cursor.
 func visibleDraft(draft string, room int) string {
+	room--
 	if room <= 0 {
 		return ""
 	}
-	return tailCells(watch.CleanText(draft), room)
+	clean := strings.ReplaceAll(watch.CleanText(draft), "\n", " ")
+	if cellLen(clean) <= room {
+		return clean
+	}
+	if room == 1 {
+		return "…"
+	}
+	return "…" + tailCells(clean, room-1)
 }
 
 func inputBox(draft string, width int, enabled bool, prefix string) []string {

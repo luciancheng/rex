@@ -12,6 +12,13 @@ import (
 // wide and fullwidth CJK, Hangul and emoji count 2, combining marks and
 // zero-width characters count 0, and everything else, including the
 // ambiguous-width glyphs Rex draws (· … ─ │ ▌ ○ ↑ ↓), counts 1.
+//
+// Strings are measured by sequence, the way terminals draw them: U+FE0F
+// (emoji presentation) or a keycap makes the symbol before it 2 cells
+// (⚠️ ✔️ 1️⃣), and a skin tone or anything after a ZWJ joins the glyph
+// before it (👍🏽 👨‍💻 are 2). Pictographs some terminals draw narrow
+// (🖥 🛠 without U+FE0F) still count 2; the renderer erases each row it
+// repaints, so a narrower glyph never leaves stale cells.
 
 var wideRanges = [][2]rune{
 	{0x1100, 0x115f}, {0x231a, 0x231b}, {0x2329, 0x232a}, {0x23e9, 0x23ec}, {0x23f0, 0x23f0},
@@ -23,7 +30,7 @@ var wideRanges = [][2]rune{
 	{0x27b0, 0x27b0}, {0x27bf, 0x27bf}, {0x2b1b, 0x2b1c}, {0x2b50, 0x2b50}, {0x2b55, 0x2b55},
 	{0x2e80, 0x303e}, {0x3041, 0x33ff}, {0x3400, 0x4dbf}, {0x4e00, 0x9fff}, {0xa000, 0xa4cf},
 	{0xa960, 0xa97f}, {0xac00, 0xd7a3}, {0xf900, 0xfaff}, {0xfe10, 0xfe19}, {0xfe30, 0xfe6f},
-	{0xff00, 0xff60}, {0xffe0, 0xffe6}, {0x16fe0, 0x16fe4}, {0x17000, 0x18cff}, {0x1b000, 0x1b2ff},
+	{0xff00, 0xff60}, {0xffe0, 0xffe6}, {0x16fe0, 0x16fe4}, {0x17000, 0x18d08}, {0x1b000, 0x1b2ff},
 	{0x1f004, 0x1f004}, {0x1f0cf, 0x1f0cf}, {0x1f18e, 0x1f18e}, {0x1f191, 0x1f19a}, {0x1f200, 0x1f2ff},
 	{0x1f300, 0x1f64f}, {0x1f680, 0x1f6ff}, {0x1f7e0, 0x1f7eb}, {0x1f90c, 0x1f9ff}, {0x1fa70, 0x1faff},
 	{0x20000, 0x2fffd}, {0x30000, 0x3fffd},
@@ -31,10 +38,14 @@ var wideRanges = [][2]rune{
 
 func cellWidth(r rune) int {
 	switch {
+	case r >= 0x20 && r < 0x7f:
+		return 1 // ASCII: the common case, no table lookup
 	case r == 0:
 		return 0
 	case r < 0x20 || (r >= 0x7f && r < 0xa0):
 		return 0
+	case r < 0x300:
+		return 1 // no combining marks below U+0300
 	case r < 0x1100:
 		if unicode.In(r, unicode.Mn, unicode.Me) {
 			return 0
@@ -60,11 +71,29 @@ func cellWidth(r rune) int {
 	return 1
 }
 
+// stepWidth is the cells r adds after prev (0 at the start of the text).
+func stepWidth(prev, r rune) int {
+	switch {
+	case r == 0xfe0f || r == 0x20e3:
+		if prev != 0 && cellWidth(prev) == 1 {
+			return 1 // emoji presentation or keycap: the symbol is 2 cells
+		}
+		return 0
+	case r >= 0x1f3fb && r <= 0x1f3ff && prev != 0 && cellWidth(prev) == 2:
+		return 0 // skin tone on the emoji before it
+	case prev == 0x200d:
+		return 0 // joined to the glyph before the ZWJ
+	}
+	return cellWidth(r)
+}
+
 // cellLen is the width of s in terminal cells.
 func cellLen(s string) int {
 	n := 0
+	var prev rune
 	for _, r := range s {
-		n += cellWidth(r)
+		n += stepWidth(prev, r)
+		prev = r
 	}
 	return n
 }
@@ -72,28 +101,40 @@ func cellLen(s string) int {
 // cutCells returns the longest prefix of s that fits in width cells.
 func cutCells(s string, width int) string {
 	n := 0
+	var prev rune
 	for i, r := range s {
-		w := cellWidth(r)
+		w := stepWidth(prev, r)
 		if n+w > width {
 			return s[:i]
 		}
 		n += w
+		prev = r
 	}
 	return s
 }
 
-// tailCells returns the longest suffix of s that fits in width cells.
+// tailCells returns the longest suffix of s that fits in width cells. It
+// never starts inside a sequence (on a joiner or a modifier).
 func tailCells(s string, width int) string {
 	r := []rune(s)
-	n := 0
-	for i := len(r) - 1; i >= 0; i-- {
-		w := cellWidth(r[i])
-		if n+w > width {
-			return string(r[i+1:])
-		}
-		n += w
+	w := make([]int, len(r))
+	var prev rune
+	for i, c := range r {
+		w[i] = stepWidth(prev, c)
+		prev = c
 	}
-	return s
+	n, start := 0, 0
+	for i := len(r) - 1; i >= 0; i-- {
+		if n+w[i] > width {
+			start = i + 1
+			break
+		}
+		n += w[i]
+	}
+	for start > 0 && start < len(r) && w[start] == 0 {
+		start++
+	}
+	return string(r[start:])
 }
 
 // clip is the one place text is fitted to a width before it is painted:

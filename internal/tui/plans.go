@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/luciancheng/rex/internal/watch"
+
 	"github.com/luciancheng/rex/internal/mascot"
 )
 
@@ -685,19 +687,19 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 	return lines
 }
 
-// fitNotice fits a Library notice into width runes without losing what
+// fitNotice fits a Library notice into width cells without losing what
 // it is for: each notice has shorter wordings, and the outside-git notice
 // keeps the end of its path ("…/rex/plans"), which says where plans go.
 func fitNotice(notice string, width int) string {
-	fits := func(s string) bool { return len([]rune(s)) <= width }
+	fits := func(s string) bool { return cellLen(s) <= width }
 	var variants []string
 	switch {
 	case strings.HasPrefix(notice, outsideGitPrefix):
-		path := []rune(strings.TrimPrefix(notice, outsideGitPrefix))
+		path := strings.TrimPrefix(notice, outsideGitPrefix)
 		for _, head := range []string{outsideGitPrefix, "not in git · plans go to ", "no git · plans in ", "no git · "} {
-			variants = append(variants, head+string(path))
-			if room := width - len([]rune(head)) - 1; room >= len([]rune("…/rex/plans")) && room < len(path) {
-				variants = append(variants, head+"…"+string(path[len(path)-room:]))
+			variants = append(variants, head+path)
+			if room := width - cellLen(head) - 1; room >= cellLen("…/rex/plans") && room < cellLen(path) {
+				variants = append(variants, head+"…"+tailCells(path, room))
 			}
 		}
 	case notice == rexFileNotice:
@@ -750,7 +752,7 @@ func browseLabel(row PlanRow) string {
 
 func planCard(row PlanRow, selected bool, width int) []LogLine {
 	inner := max(8, width-2)
-	title := row.Name
+	title := strings.ReplaceAll(watch.CleanText(row.Name), "\n", " ")
 	sub := row.Hint
 	if sub == "" {
 		sub = row.Label()

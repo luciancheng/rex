@@ -11,7 +11,8 @@ const tabWidth = 4
 // control characters are dropped (only "\n" survives), escape and OSC
 // sequences are removed so text can never recolor the screen, retitle the
 // window or write the clipboard, bidi overrides are removed so a line can't
-// visually reorder itself, "\r" is dropped, and tabs become spaces.
+// visually reorder itself, "\r" is dropped, and tabs become spaces (tab
+// stops are counted in runes, so they are approximate after wide text).
 func CleanText(s string) string {
 	if isPlain(s) {
 		return s
@@ -59,21 +60,27 @@ func isBidiControl(r rune) bool {
 }
 
 // escapeLen is the length of the escape sequence at the start of s (which
-// begins with ESC): CSI up to its final byte, OSC/DCS/APC/PM up to BEL or
-// ST, or ESC plus one byte.
+// begins with ESC): CSI up to its final byte (or up to the first byte that
+// can't be in one), OSC/DCS/APC/PM up to BEL or ST, nF intermediates plus
+// a final byte, or ESC plus one printable byte. An ESC before a control,
+// another ESC or a non-ASCII character is dropped alone, so the text after
+// it survives.
 func escapeLen(s string) int {
 	if len(s) < 2 {
 		return len(s)
 	}
-	switch s[1] {
-	case '[':
+	switch c := s[1]; {
+	case c == '[':
 		for j := 2; j < len(s); j++ {
-			if s[j] >= 0x40 && s[j] <= 0x7e {
+			switch b := s[j]; {
+			case b >= 0x40 && b <= 0x7e:
 				return j + 1
+			case b < 0x20 || b > 0x7e:
+				return j
 			}
 		}
 		return len(s)
-	case ']', 'P', '_', '^', 'X':
+	case c == ']' || c == 'P' || c == '_' || c == '^' || c == 'X':
 		for j := 2; j < len(s); j++ {
 			if s[j] == 0x07 {
 				return j + 1
@@ -81,8 +88,22 @@ func escapeLen(s string) int {
 			if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
 				return j + 2
 			}
+			if s[j] == 0xc2 && j+1 < len(s) && s[j+1] == 0x9c { // U+009C ST
+				return j + 2
+			}
 		}
 		return len(s)
+	case c >= 0x20 && c <= 0x2f:
+		j := 2
+		for j < len(s) && s[j] >= 0x20 && s[j] <= 0x2f {
+			j++
+		}
+		if j < len(s) && s[j] >= 0x30 && s[j] <= 0x7e {
+			return j + 1
+		}
+		return j
+	case c >= 0x30 && c <= 0x7e:
+		return 2
 	}
-	return 2
+	return 1
 }

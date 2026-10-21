@@ -45,3 +45,17 @@ func TestCleanTextLeavesNoControlBytes(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestCleanTextKeepsTextAfterABrokenEscape(t *testing.T) {
+	for in, want := range map[string]string{
+		"a\x1b中b":          "a中b",
+		"a\x1b\x1b[2Jb":    "ab",
+		"a\x1b[12\x07b":    "ab",
+		"a\x1b(Bb":         "ab",
+		"a\x1b]0;t\u009cb": "ab",
+	} {
+		if got := CleanText(in); got != want {
+			t.Errorf("CleanText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

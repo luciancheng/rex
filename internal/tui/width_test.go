@@ -56,16 +56,28 @@ func TestWrapByCells(t *testing.T) {
 	}
 }
 
-// rexSequences are the escapes Rex itself writes in a NO_COLOR frame.
-var rexSequences = regexp.MustCompile(`\x1b\[(\?(25|7|1049|2004)[hl]|2J|H|\d+;\d+H)`)
+// frameRows strips only the framing Rex writes around a NO_COLOR frame,
+// where Rex writes it: Home+Clear before the rows, the cursor move and
+// show/hide after them. What is left are the rows, which in a NO_COLOR
+// frame carry no escapes at all.
+var frameTail = regexp.MustCompile(`(\x1b\[\d+;\d+H)?\x1b\[\?25[hl]$`)
+
+func frameRows(t *testing.T, frame string) []string {
+	t.Helper()
+	if !strings.HasPrefix(frame, Home+Clear) || !frameTail.MatchString(frame) {
+		t.Fatalf("not a frame: %q", frame)
+	}
+	body := frameTail.ReplaceAllString(strings.TrimPrefix(frame, Home+Clear), "")
+	return strings.Split(body, "\r\n")
+}
 
 func assertNoForeignControl(t *testing.T, frame string) {
 	t.Helper()
-	rest := rexSequences.ReplaceAllString(frame, "")
-	rest = strings.ReplaceAll(rest, "\r\n", "")
-	for _, r := range rest {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
-			t.Fatalf("control %U reached the terminal:\n%q", r, rest)
+	for _, row := range frameRows(t, frame) {
+		for _, r := range row {
+			if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+				t.Fatalf("control %U reached the terminal:\n%q", r, row)
+			}
 		}
 	}
 }
@@ -85,8 +97,8 @@ func TestHostileAgentTextNeverReachesTheTerminal(t *testing.T) {
 			Draft: "draft \x1b[2J",
 		})
 		assertNoForeignControl(t, frame)
-		for _, row := range strings.Split(frame, "\r\n") {
-			if cellLen(rexSequences.ReplaceAllString(row, "")) > width {
+		for _, row := range frameRows(t, frame) {
+			if cellLen(row) > width {
 				t.Fatalf("row wider than %d: %q", width, row)
 			}
 		}
@@ -108,5 +120,27 @@ func TestHostilePlanFileNamesAreCleaned(t *testing.T) {
 	assertNoForeignControl(t, frame)
 	if !strings.Contains(frame, "evilname.rex.json") {
 		t.Fatal("cleaned name should still show")
+	}
+}
+
+func TestEmojiSequencesMeasureAsDrawn(t *testing.T) {
+	for _, c := range []struct {
+		s string
+		n int
+	}{
+		{"⚠️", 2}, {"✔️", 2}, {"1️⃣", 2}, {"👍🏽", 2}, {"👨‍💻", 2}, {"a⚠️b", 4}, {"⚠", 1},
+	} {
+		if got := cellLen(c.s); got != c.n {
+			t.Errorf("cellLen(%q) = %d, want %d", c.s, got, c.n)
+		}
+	}
+	if got := clip("a⚠️b", 3); got != "a⚠…" {
+		t.Fatalf("%q", got)
+	}
+	if got := tailCells("x👨‍💻", 1); got != "" {
+		t.Fatalf("a tail never starts inside a sequence: %q", got)
+	}
+	if got := tailCells("x👨‍💻", 2); got != "👨‍💻" {
+		t.Fatalf("%q", got)
 	}
 }

@@ -301,6 +301,11 @@ func (a *app) preview() string {
 		return ""
 	}
 	if verb, arg, ok := parseVerb(text); ok && a.offers(verb) {
+		if verb == "sendoff" && arg == "" && a.overlay[a.pane] == overlayNone && a.doc != nil && a.doc.plan != nil {
+			if pin := a.doc.plan.Graph().Pin(); pin != nil {
+				arg = pin.ID // which task the brief is for, before ⏎
+			}
+		}
 		if verb == "pin" && arg == "" && a.overlay[a.pane] == overlayNone {
 			if t := a.pinCandidate(); t != nil {
 				arg = t.ID

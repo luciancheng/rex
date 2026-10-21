@@ -163,6 +163,19 @@ func TestBriefsNeverCarryEscapes(t *testing.T) {
 	}
 }
 
+func TestSendoffAlwaysEndsWithItsFingerprint(t *testing.T) {
+	big := strings.Repeat("every field of this reopened pin is near its cap ", 8)
+	fields := ""
+	for _, f := range []string{"does", "needs", "verify", "files", "accomplished", "modified", "verified_how"} {
+		fields += fmt.Sprintf(`, %q: [%q, %q]`, f, big, big)
+	}
+	pin := `{"id": "pin", "title": "` + big + `", "description": "` + big + `", "status": "active", "completed_notes": "` + big + `", "scope": {"in": ["` + big + `"], "out": ["` + big + `"]}` + fields + `}`
+	got, _ := Sendoff(mustParse(t, `{"title": "`+big+`", "goal": "`+big+big+`", "scope": {"in": ["`+big+`"], "out": ["`+big+`"]}, "tasks": [`+pin+`]}`), "p.rex.json")
+	if len(got) > sendoffCap || !strings.Contains(got, "For the next chat\n") || !strings.Contains(got, "accomplished: <what you actually did>") || !strings.HasSuffix(got, "rex-sendoff: p.rex.json#pin\n") {
+		t.Fatalf("%d bytes, ends:\n%s", len(got), got[max(0, len(got)-600):])
+	}
+}
+
 func TestSendoffClipsAHugeTitle(t *testing.T) {
 	got, _ := Sendoff(mustParse(t, `{"title": "`+strings.Repeat("x", 9000)+`", "tasks": [{"id": "pin", "does": ["work"]}]}`), "p.rex.json")
 	if len(got) > sendoffCap || !strings.Contains(got, "### pin") || !strings.HasSuffix(got, "rex-sendoff: p.rex.json#pin\n") {

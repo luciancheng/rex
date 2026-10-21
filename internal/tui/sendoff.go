@@ -77,7 +77,11 @@ func (a *app) build(v *briefView) error {
 // so c⏎ and o⏎ never hand off an old pin.
 func (a *app) refreshBriefs() {
 	for _, v := range a.briefs {
-		if v == nil || a.doc == nil || v.path != a.doc.path || a.briefBlocked() != "" {
+		if v == nil || a.doc == nil || v.path != a.doc.path {
+			continue
+		}
+		if why := a.stale(v); why != "" {
+			v.status = why
 			continue
 		}
 		before := v.text
@@ -85,6 +89,22 @@ func (a *app) refreshBriefs() {
 			v.status = "plan changed · c⏎ copies this one"
 		}
 	}
+}
+
+// stale says why v can't be copied or printed from the plan as it is now:
+// the file is gone, doesn't parse, or has no tasks left. A planning brief
+// is always fine; it asks for the plan to be filled.
+func (a *app) stale(v *briefView) string {
+	if v.planning {
+		return ""
+	}
+	if why := a.briefBlocked(); why != "" {
+		return why
+	}
+	if _, err := plan.Sendoff(a.doc.plan, a.plans.CurrentRel()); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // briefVerb is b⏎ / brief⏎: ask an agent to fill or refine the plan.
@@ -118,7 +138,12 @@ func (a *app) briefKey() bool {
 	v := a.briefs[a.pane]
 	text := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(a.draft), "/")))
 	a.draft = ""
-	if a.doc != nil && v.path == a.doc.path && a.briefBlocked() == "" {
+	if a.doc != nil && v.path == a.doc.path && (text == "c" || text == "copy" || text == "o" || text == "open" || text == "print") {
+		if why := a.stale(v); why != "" {
+			v.status = why // never the last good copy
+			a.flash(why, "error")
+			return true
+		}
 		_ = a.build(v) // c⏎ and o⏎ use the plan as it is now
 	}
 	switch text {

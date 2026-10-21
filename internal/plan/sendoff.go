@@ -43,19 +43,24 @@ func Sendoff(p *Plan, rel string) (string, error) {
 	return keepTail(s, sendoffCap), nil
 }
 
-// keepTail cuts s to n bytes but keeps the pin's Next section, the closing
-// instructions and the fingerprint, which the tape and the next chat rely
-// on: the task list is what gives way.
+// keepTail cuts s to n bytes. The closing instructions and the
+// fingerprint always stay, since the tape and the completion form rely on
+// them; the pin's Next section stays when it fits in most of what is left,
+// and the task list is what gives way.
 func keepTail(s string, n int) string {
-	i := strings.LastIndex(s, "\nNext\n")
-	if i < 0 {
-		i = strings.LastIndex(s, "\nFor the next chat\n")
+	const cut = "\n… (see plan file)"
+	var foot string
+	if j := strings.LastIndex(s, "\nFor the next chat\n"); j >= 0 {
+		s, foot = s[:j], s[j:]
 	}
-	if i < 0 || len(s)-i > n*3/4 {
-		return capBytes(s, n)
+	n -= len(foot)
+	if len(s) <= n {
+		return s + foot
 	}
-	tail := s[i:]
-	return capBytes(s[:i], n-len(tail)-len("\n… (see plan file)")) + "\n… (see plan file)" + tail
+	if i := strings.LastIndex(s, "\nNext\n"); i >= 0 && len(s)-i <= n*3/4 {
+		return capBytes(s[:i], n-(len(s)-i)-len(cut)) + cut + s[i:] + foot
+	}
+	return capBytes(s, n-len(cut)) + cut + foot
 }
 
 // sendoff writes the brief. done limits the Done section (-1 = all).

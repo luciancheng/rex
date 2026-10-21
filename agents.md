@@ -67,7 +67,7 @@ Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`; Claude
 
 New harness = adapter + a `Harness` registered in `internal/watch/harness.go` (Present / Wired / Install / Uninstall). Installing happens only on an explicit `rex ingest --install <name|auto>`; `--uninstall <name>` takes Rex's entries back out and leaves everything else. Do not special-case vendors in `live.go`. Tests run with HOME pointed at a temp dir (a `TestMain` in each package that touches HOME: `cli`, `tui`, `watch`), with `REX_EVENTS` unset. Installers edit the harness's config through `watch.UpdateJSONFile` + `internal/jsonedit`: splice only what Rex owns, keep every other byte, refuse a file that does not parse, keep a `.bak`, write atomically. Never round-trip a user's config through a `map`.
 
-Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`. Rex's own local kinds, `note`, `plan` and `done` (source `rex`), never come from the feed.
+Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`. Rex's own local kinds, `note`, `plan`, `done`, `sendoff` and `brief` (source `rex`), never come from the feed.
 
 ## Plan files
 

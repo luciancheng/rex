@@ -378,7 +378,7 @@ sendoff · esc close · c⏎ copy · o⏎ print plain
   - a short Done section (intended vs actual, modified, verified, and the task's `completed_notes`);
   - a request that the agent end its final reply with `accomplished:` / `verified:` lines and then the fingerprint line, so the completion form knows which task the reply is about;
   - the fingerprint `rex-sendoff: <path>#<task>`.
-- **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`. To fit, finished tasks leave the list first, then Done entries, then open tasks beyond the pin and what it waits on (`… N more in the plan file`); the pin's Next section always stays.
+- **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`. To fit, finished tasks leave the list first, then open tasks beyond the pin and what it waits on (`… N more in the plan file`), then old Done entries. The pin's Next section stays, and the closing instructions and the fingerprint are never cut.
 - **Always from the file as it is now.** An open overlay is rebuilt when the plan changes, and `c⏎` / `o⏎` use the plan as it is at that moment. A missing or unparsable file refuses (`can't send off: …`) rather than send the last good copy.
 - **Copying is honest.**
   - Rex uses the native tool (`pbcopy`, `wl-copy`, `xclip`, `clip.exe`) and says `copied (<tool>)` only if it exited 0.

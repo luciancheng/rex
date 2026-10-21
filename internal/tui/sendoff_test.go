@@ -152,6 +152,42 @@ func TestSendoffRefusesAMissingOrBrokenFile(t *testing.T) {
 	}
 }
 
+func TestSendoffPreviewNamesThePin(t *testing.T) {
+	a, _, _ := openDemo(t, demoPlan, 120, 32)
+	press(a, "\t")
+	typeText(a, "s")
+	if got := a.preview(); got != "⏎ sendoff card-highlight" {
+		t.Fatalf("the footer says which task the brief is for: %q", got)
+	}
+}
+
+func TestOpenSendoffRefusesOnceThePlanBreaks(t *testing.T) {
+	for name, change := range map[string]func(path string){
+		"broken":  func(path string) { os.WriteFile(path, []byte(`{"tasks": [`), 0o644) },
+		"missing": func(path string) { os.Remove(path) },
+		"emptied": func(path string) { os.WriteFile(path, []byte(`{"tasks": []}`), 0o644) },
+	} {
+		a, c, path := openDemo(t, demoPlan, 120, 40)
+		var copied []string
+		a.copy = func(text string) string { copied = append(copied, text); return "copied (fake)" }
+		typeText(a, "s")
+		press(a, "\r")
+		change(path)
+		later(a, c)
+		later(a, c)
+		if v := a.briefs[PanePlans]; v == nil || strings.Contains(v.status, "copied") {
+			t.Fatalf("%s: the overlay stops claiming a current brief: %+v", name, v)
+		}
+		typeText(a, "c")
+		press(a, "\r")
+		typeText(a, "o")
+		press(a, "\r")
+		if len(copied) != 1 || a.plainOut != "" {
+			t.Fatalf("%s: c⏎ and o⏎ never hand off the last good copy (%d copies, plain %q)", name, len(copied), a.plainOut)
+		}
+	}
+}
+
 func TestPlainScreenKeys(t *testing.T) {
 	a, _, _ := openDemo(t, demoPlan, 120, 40)
 	typeText(a, "s")

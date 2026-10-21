@@ -351,21 +351,11 @@ func statusForTurn(turn Turn, lastKind string) string {
 }
 
 func PaneBodyHeight(termLines int) int {
-	showBox := termLines >= InputRows+FooterRows+3
-	height := termLines - 2 - FooterRows
-	if showBox {
-		height -= InputRows
-	}
-	return max(0, height)
+	return layoutFor(TextOnlyBelow, termLines).bodyH
 }
 
 func PaneTextWidth(columns int) int {
-	mascotCols := min(mascot.StageSize, max(1, columns))
-	textWidth := max(1, columns) - mascotCols - Gutter
-	if textWidth < MinTextCols {
-		return 0
-	}
-	return textWidth
+	return layoutFor(columns, 24).textW
 }
 
 func ClampScroll(total, viewH, scroll int) int {
@@ -379,71 +369,8 @@ func ClampScroll(total, viewH, scroll int) int {
 	return scroll
 }
 
-func header(width int, meta string, enabled bool) string {
-	left := "REX"
-	meta = strings.ReplaceAll(watch.CleanText(meta), "\n", " ")
-	if width < cellLen(left) {
-		return mascot.Paint(clip(left, width), mascot.UI["title"], enabled)
-	}
-	room := width - cellLen(left) - 1
-	if room < 1 {
-		return mascot.Paint(clip(left, width), mascot.UI["title"], enabled)
-	}
-	if cellLen(meta) > room {
-		meta = clipPathLeft(meta, room)
-	}
-	gap := width - cellLen(left) - cellLen(meta)
-	if gap < 1 {
-		gap = 1
-	}
-	return mascot.Paint(left, mascot.UI["title"], enabled) + strings.Repeat(" ", gap) + mascot.Paint(meta, mascot.UI["muted"], enabled)
-}
-
-func chatHeaderMeta(state, planRel string, width int) string {
-	// Clean first, so what is measured is what is drawn.
-	state = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(state), "\n", " "))
-	planRel = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(planRel), "\n", " "))
-	if state == "" {
-		state = "idle"
-	}
-	if planRel == "" {
-		return state
-	}
-	meta := state + " · " + planRel
-	if width <= 0 {
-		return meta
-	}
-	room := max(8, width-5)
-	if cellLen(meta) <= room {
-		return meta
-	}
-	keep := room - cellLen(state) - 3
-	if keep < 8 {
-		return cutCells(meta, room)
-	}
-	return state + " · " + clipPathLeft(planRel, keep)
-}
-
-func clipPathLeft(path string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if cellLen(path) <= width {
-		return path
-	}
-	if width <= 1 {
-		return "…"
-	}
-	base := path
-	if i := strings.LastIndexAny(path, `/\`); i >= 0 {
-		base = path[i+1:]
-	}
-	if 2+cellLen(base) <= width {
-		return "…/" + base
-	}
-	return "…" + tailCells(path, width-1)
-}
-
+// visibleDraft is the end of the draft that fits room cells, so the
+// cursor always sits after what was just typed.
 // visibleDraft is the end of the draft that fits in room cells, with "…"
 // on the left when it was cut. It leaves the last cell free for the
 // cursor.
@@ -484,7 +411,8 @@ func inputBox(draft string, width int, enabled bool, prefix string) []string {
 	}
 }
 
-func textColumn(width, height int, meta string, opt ComposeOptions) []string {
+func textColumn(l layout, height int, opt ComposeOptions) []string {
+	width := l.textW
 	if width <= 0 || height <= 0 {
 		out := make([]string, max(0, height))
 		for i := range out {
@@ -492,12 +420,8 @@ func textColumn(width, height int, meta string, opt ComposeOptions) []string {
 		}
 		return out
 	}
-	showBox := height >= InputRows+FooterRows+3
 	bodyTop := 2
-	bodyBottom := height - FooterRows
-	if showBox {
-		bodyBottom -= InputRows
-	}
+	bodyBottom := height - FooterRows - l.composer
 	bodyH := max(0, bodyBottom-bodyTop)
 	var body []LogLine
 	scroll := opt.Scroll
@@ -531,60 +455,68 @@ func textColumn(width, height int, meta string, opt ComposeOptions) []string {
 		}
 		visible = body[start:end]
 	}
-	var footerText string
-	var footerColor mascot.RGB
-	if opt.Pane == PanePlans {
-		footerText, footerColor = planFooter(opt.Plans, opt.QuitPending)
-	} else if opt.QuitPending {
-		footerText = "press ctrl+c again to exit"
-		footerColor = mascot.UI["error"]
-	} else if scroll > 0 {
-		footerText = fmt.Sprintf("↑↓ %d above live · ctrl+e bottom · ctrl+c twice", scroll)
-		footerColor = mascot.UI["muted"]
-	} else {
-		footerText = "↑↓ scroll · tab plans · ctrl+c twice"
-		footerColor = mascot.UI["muted"]
-	}
 	enabled := opt.Enabled
 	rows := make([]string, height)
-	rows[0] = header(width, meta, enabled)
+	rows[0] = headerRow(width, placeWord(opt.Pane), opt.Status, opt.PlanRel, enabled)
 	if height > 1 {
-		rows[1] = strings.Repeat(" ", width)
+		rows[1] = statusRow(opt.Line, width, enabled)
 	}
 	for offset, line := range visible {
-		if line.Kind == "gap" {
-			rows[bodyTop+offset] = strings.Repeat(" ", width)
-			continue
+		if bodyTop+offset >= bodyBottom {
+			break
 		}
-		rgb, ok := mascot.UI[line.Kind]
-		if !ok {
-			colorName := kindColor[line.Kind]
-			if colorName == "" {
-				colorName = "text"
-			}
-			rgb = mascot.UI[colorName]
-		}
-		text := clip(line.Text, width)
-		if fill, ok := mascot.UI[line.Fill]; ok {
-			rows[bodyTop+offset] = mascot.PaintFill(text, rgb, fill, enabled)
-			continue
-		}
-		rows[bodyTop+offset] = mascot.Paint(text, rgb, enabled)
+		rows[bodyTop+offset] = paintLine(line, width, enabled)
 	}
 	for index := bodyTop; index < bodyBottom; index++ {
 		if rows[index] == "" {
 			rows[index] = strings.Repeat(" ", width)
 		}
 	}
-	if showBox {
-		box := inputBox(opt.Draft, width, enabled, composerPrefix(opt))
-		boxStart := height - FooterRows - InputRows
-		for offset, line := range box {
-			rows[boxStart+offset] = line
-		}
+	for offset, line := range composerRows(l, opt.Draft, composerPrefix(opt), enabled) {
+		rows[height-FooterRows-l.composer+offset] = line
 	}
-	rows[len(rows)-1] = mascot.Paint(clip(footerText, width), footerColor, enabled)
+	if height > 2 {
+		segs, kind := footerSegments(opt, scroll)
+		rows[len(rows)-1] = mascot.Paint(clip(fitFooter(segs, width), width), mascot.UI[kind], enabled)
+	}
 	return rows
+}
+
+// StatusLine is row 1: the single most important thing to know right now
+// (docs/ux.md §4). Kind picks the color.
+type StatusLine struct {
+	Text string
+	Kind string
+}
+
+func statusRow(s StatusLine, width int, enabled bool) string {
+	if strings.TrimSpace(s.Text) == "" {
+		return strings.Repeat(" ", width)
+	}
+	kind := s.Kind
+	if _, ok := mascot.UI[kind]; !ok {
+		kind = "muted"
+	}
+	return mascot.Paint(clip(s.Text, width), mascot.UI[kind], enabled)
+}
+
+func paintLine(line LogLine, width int, enabled bool) string {
+	if line.Kind == "gap" {
+		return strings.Repeat(" ", width)
+	}
+	rgb, ok := mascot.UI[line.Kind]
+	if !ok {
+		colorName := kindColor[line.Kind]
+		if colorName == "" {
+			colorName = "text"
+		}
+		rgb = mascot.UI[colorName]
+	}
+	text := clip(line.Text, width)
+	if fill, ok := mascot.UI[line.Fill]; ok {
+		return mascot.PaintFill(text, rgb, fill, enabled)
+	}
+	return mascot.Paint(text, rgb, enabled)
 }
 
 func planWindowStart(body []LogLine, viewH int) int {
@@ -623,6 +555,8 @@ type ComposeOptions struct {
 	Pane          PaneKind
 	Plans         *PlanBrowser
 	LogView       []LogLine // laid-out tape, when the caller already has it
+	PlanRel       string    // open plan, repo-relative, for the header
+	Line          StatusLine
 }
 
 // Frame is one screen: full-width rows plus where the cursor goes.
@@ -646,38 +580,38 @@ func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
 func composeRows(spriteName, color string, opt ComposeOptions) Frame {
 	columns := max(1, opt.Columns)
 	lines := max(1, opt.Lines)
-	mascotCols := min(mascot.StageSize, columns)
-	textWidth := columns - mascotCols - Gutter
-	if textWidth < MinTextCols {
-		textWidth = 0
-		mascotCols = min(mascot.StageSize, columns)
+	l := layoutFor(columns, lines)
+	if l.locked {
+		rows := make([]string, lines)
+		rows[0] = mascot.Paint(clip(fitFooter([]string{fmt.Sprintf("widen to %d cols", MinTextCols)}, columns), columns), mascot.UI["title"], opt.Enabled)
+		if msg := fmt.Sprintf("REX · widen to %d cols", MinTextCols); cellLen(msg) <= columns {
+			rows[0] = mascot.Paint(clip(msg, columns), mascot.UI["title"], opt.Enabled)
+		}
+		for i := 1; i < lines; i++ {
+			rows[i] = strings.Repeat(" ", columns)
+		}
+		return Frame{Rows: rows}
 	}
-	mascotRows := stagedMascot(spriteName, color, mascotCols, opt.Enabled)
-	blankMascot := strings.Repeat(" ", mascotCols)
-	status := opt.Status
-	if status == "" {
-		status = opt.AnimationName
+	if opt.Status == "" {
+		opt.Status = "idle"
 	}
-	text := textColumn(textWidth, lines, status, opt)
+	var mascotRows []string
+	if l.mascotCols > 0 {
+		mascotRows = stagedMascot(spriteName, color, l.mascotCols, opt.Enabled)
+	}
+	blankMascot := strings.Repeat(" ", l.mascotCols)
+	gutter := strings.Repeat(" ", l.gutter)
+	text := textColumn(l, lines, opt)
 	out := make([]string, 0, lines)
 	for index := 0; index < lines; index++ {
 		left := blankMascot
 		if index < len(mascotRows) {
 			left = mascotRows[index]
 		}
-		if textWidth <= 0 {
-			out = append(out, left)
-			continue
-		}
-		out = append(out, left+strings.Repeat(" ", Gutter)+text[index])
+		out = append(out, left+gutter+text[index])
 	}
 	f := Frame{Rows: out}
-	if textWidth >= 4 && lines >= InputRows+FooterRows+3 {
-		prefix := composerPrefix(opt)
-		visible := visibleDraft(opt.Draft, textWidth-2-cellLen(prefix))
-		f.CursorRow = lines - 2
-		f.CursorCol = mascotCols + Gutter + 1 + 1 + cellLen(prefix) + cellLen(visible)
-	}
+	f.CursorRow, f.CursorCol = cursorFor(l, lines, opt.Draft, composerPrefix(opt))
 	return f
 }
 
@@ -922,5 +856,8 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 			}
 		}
 	})
+	if err == nil {
+		_, _ = io.WriteString(stdout, a.exitLine()+"\n")
+	}
 	return 0, err
 }

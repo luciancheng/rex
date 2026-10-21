@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/luciancheng/rex/internal/mascot"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -777,22 +776,5 @@ func planCard(row PlanRow, selected bool, width int) []LogLine {
 		{Kind: edge, Text: mark + clip(top, inner), Fill: fill},
 		{Kind: head, Text: mark + clip(mid, inner), Fill: fill},
 		{Kind: body, Text: mark + clip(bot, inner), Fill: fill},
-	}
-}
-
-func planFooter(b *PlanBrowser, quitPending bool) (string, mascot.RGB) {
-	if quitPending {
-		return "press ctrl+c again to exit", mascot.UI["error"]
-	}
-	if b == nil {
-		return "tab chat · ctrl+c twice", mascot.UI["muted"]
-	}
-	switch b.Screen {
-	case ScreenCreate, ScreenFolder:
-		return "enter save · esc back · tab chat", mascot.UI["muted"]
-	case ScreenBrowse:
-		return "↑↓ move · enter open · esc back · tab chat", mascot.UI["muted"]
-	default:
-		return "↑↓ choose · enter · tab chat", mascot.UI["muted"]
 	}
 }

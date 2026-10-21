@@ -198,17 +198,6 @@ func TestBuildLogViewKeepsRunReplyHidesDone(t *testing.T) {
 	}
 }
 
-func TestChatHeaderShowsStateAndPlan(t *testing.T) {
-	got := chatHeaderMeta("thinking", "rex/plans/archive/sprint.rex.json", 80)
-	if !strings.Contains(got, "thinking") || !strings.Contains(got, "rex/plans/archive/sprint.rex.json") {
-		t.Fatalf("%q", got)
-	}
-	short := chatHeaderMeta("idle", "rex/plans/deep/nested/sprint.rex.json", 24)
-	if !strings.HasPrefix(short, "idle") || !strings.Contains(short, "rex.json") {
-		t.Fatalf("clipped %q", short)
-	}
-}
-
 func TestExtendLogGrowsStreamingReply(t *testing.T) {
 	var log []watch.Event
 	ExtendLog(&log, []watch.Event{watch.NewEvent("cursor", "text", "Typing now means", nil)})

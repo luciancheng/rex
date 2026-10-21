@@ -72,8 +72,8 @@ Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `erro
 
 The target loop, key map and screen states are in `docs/ux.md`. TUI changes cite the section they implement.
 
-- Left ~40 columns: mascot. Right: labeled log blocks (`thinking`, `run`, `ask`, `reply`). Commands yellow, replies bright, thoughts muted. Skip file-look commands and `done`/result echoes. Each assistant `text` event is its own reply block.
-- Chat header always shows turn state **and** the open plan as a repo-relative path (`thinking · rex/plans/foo.rex.json`).
+- Left ~40 columns: mascot (at 66+ columns; narrower terminals are text-only, under 24 text columns Rex shows "widen" and ignores keys; see `layoutFor`). Right: labeled log blocks (`thinking`, `run`, `ask`, `reply`). Commands yellow, replies bright, thoughts muted. Skip file-look commands and `done`/result echoes. Each assistant `text` event is its own reply block.
+- The header (row 0) on **every** screen shows `REX plan|tape`, the turn state **and** the open plan as a repo-relative path (`thinking · rex/plans/foo.rex.json`), shortened to `foo` only when it doesn't fit. Row 1 is the status line. The footer is ranked segments that drop whole, never mid-word.
 - User prompts: no `YOU` rule. Invisible column, at most half the pane, **right-aligned as a box**, **left-aligned text inside**. Color `UI["you"]`.
 - Markdown → headings, lists, stripped emphasis, fenced code as `│ ` lines.
 - Start opens the **plans** home: Create, Open, Open latest (cards), then recents. Open browses `rex/plans/` like a file picker: cyan `▌` selection, orange folders, green `[ + New folder ]` / `[ + New plan ]`, white plans. Duplicate names warn and do not overwrite. Starting Rex never deletes or creates files: `rex/plans/` (with `.gitkeep`) is made on the first Create or New folder; a file (or dangling link) named `rex` at the root turns plans off with a notice instead of being removed; outside git, Home says where plans would go; an old `rex-plans/` folder is only reported, never moved. Tab switches to chat. Opening a plan is a no-op load.

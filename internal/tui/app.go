@@ -87,19 +87,6 @@ func (a *app) frameRows() Frame {
 }
 
 func (a *app) composeOptions() ComposeOptions {
-	meta := chatHeaderMeta(statusForTurn(a.turn, a.lastKind), a.plans.CurrentRel(), PaneTextWidth(a.columns))
-	if a.pane == PanePlans {
-		switch a.plans.Screen {
-		case ScreenCreate:
-			meta = "new plan"
-		case ScreenFolder:
-			meta = "new folder"
-		case ScreenBrowse:
-			meta = "open"
-		default:
-			meta = "plans"
-		}
-	}
 	opt := ComposeOptions{
 		Enabled:       a.enabled,
 		Columns:       a.columns,
@@ -108,15 +95,32 @@ func (a *app) composeOptions() ComposeOptions {
 		Draft:         a.draft,
 		Log:           a.log,
 		QuitPending:   a.quitPending,
-		Status:        meta,
+		Status:        statusForTurn(a.turn, a.lastKind),
 		Scroll:        a.scroll,
 		Pane:          a.pane,
 		Plans:         a.plans,
+		PlanRel:       a.plans.CurrentRel(),
+		Line:          a.statusLine(),
 	}
 	if textW := PaneTextWidth(a.columns); textW > 0 {
 		opt.LogView = a.logView(textW)
 	}
 	return opt
+}
+
+// statusLine picks row 1. It is empty until the plan slices add the pin,
+// drift and plan errors here (docs/ux.md §4).
+func (a *app) statusLine() StatusLine {
+	return StatusLine{}
+}
+
+// exitLine is printed once the screen is restored, so the terminal keeps a
+// trace of where you were.
+func (a *app) exitLine() string {
+	if rel := a.plans.CurrentRel(); rel != "" {
+		return "rex: " + rel
+	}
+	return "rex: no plan open"
 }
 
 func (a *app) logView(width int) []LogLine {
@@ -184,6 +188,14 @@ func (a *app) keys(pressed []string) bool {
 
 // handleKey applies one key. It sets a.quit on the second Ctrl+C.
 func (a *app) handleKey(key string) bool {
+	if l := layoutFor(a.columns, a.lines); !l.typing && key != CtrlC && key != "\x0c" {
+		if l.locked {
+			return false // the UI isn't visible; nothing may act on it
+		}
+		if _, paste := IsPaste(key); paste || isPrintableKey(key) {
+			return false // no composer on screen to type into
+		}
+	}
 	if text, ok := IsPaste(key); ok {
 		// A paste is typed into the draft as one line; it never submits.
 		armed := a.quitPending

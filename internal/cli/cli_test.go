@@ -84,8 +84,11 @@ func TestComposeFramePutsTextRightOfMascot(t *testing.T) {
 	if strings.Index(line, "REX") < mascot.StageSize {
 		t.Fatalf("REX not right of mascot: %q", line)
 	}
-	if !strings.Contains(frame, "ctrl+c") {
-		t.Fatal("missing ctrl+c")
+	wide := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
+		Enabled: false, Columns: 120, Lines: 24, AnimationName: "idle",
+	})
+	if !strings.Contains(wide, "ctrl+c×2 quit") {
+		t.Fatal("missing quit hint when the footer has room")
 	}
 	if strings.Contains(frame, "q quit") {
 		t.Fatal("unexpected q quit")
@@ -174,7 +177,7 @@ func TestComposeFrameScrollsOlderEvents(t *testing.T) {
 	if !strings.Contains(older, "block-00") {
 		t.Fatal("older missing oldest")
 	}
-	if !strings.Contains(older, "↑↓") || !strings.Contains(older, "ctrl+e bottom") {
+	if !strings.Contains(older, "↑ · end live") {
 		t.Fatal("missing scroll footer")
 	}
 }
@@ -216,10 +219,10 @@ func TestComposeFrameDoubleCtrlCHint(t *testing.T) {
 	armed := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
 		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle", QuitPending: true,
 	})
-	if !strings.Contains(armed, "press ctrl+c again to exit") {
+	if !strings.Contains(armed, "ctrl+c again to quit") {
 		t.Fatal("missing quit hint")
 	}
-	if strings.Contains(idle, "press ctrl+c again to exit") {
+	if strings.Contains(idle, "ctrl+c again to quit") {
 		t.Fatal("idle should not hint quit")
 	}
 }

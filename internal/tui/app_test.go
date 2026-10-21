@@ -79,7 +79,7 @@ func TestAppCtrlCWindow(t *testing.T) {
 	if !a.quitPending || a.quit {
 		t.Fatal("first ctrl+c arms")
 	}
-	if !strings.Contains(a.frame(), "press ctrl+c again to exit") {
+	if !strings.Contains(a.frame(), "ctrl+c again to quit") {
 		t.Fatal("footer should warn")
 	}
 	press(a, "x")

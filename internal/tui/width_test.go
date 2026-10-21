@@ -93,7 +93,7 @@ func TestHostileAgentTextNeverReachesTheTerminal(t *testing.T) {
 	for _, width := range []int{80, 120} {
 		frame := ComposeFrame("idle", "yellow", ComposeOptions{
 			Enabled: false, Columns: width, Lines: 30, AnimationName: "idle",
-			Log: hostile, Pane: PaneChat, Status: "idle · rex/plans/\x1b]52;c;eA==\x07x.rex.json",
+			Log: hostile, Pane: PaneChat, Status: "idle\x1b[2J", PlanRel: "rex/plans/\x1b]52;c;eA==\x07x.rex.json",
 			Draft: "draft \x1b[2J",
 		})
 		assertNoForeignControl(t, frame)

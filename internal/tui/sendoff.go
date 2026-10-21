@@ -56,11 +56,14 @@ func (a *app) pollCopies() bool {
 		select {
 		case r := <-c.done:
 			changed = true
+			status := r.status
 			if c.seq == a.copySeq {
 				a.oscOut += r.osc
+			} else if r.osc != "" {
+				status = "not sent · a newer copy replaced it" // its OSC 52 is dropped
 			}
 			if c.seq == c.v.copySeq {
-				c.v.status = r.status
+				c.v.status = status
 				if c.v.text != c.text {
 					c.v.status = "plan changed · c⏎ copies this one"
 				}
@@ -70,7 +73,7 @@ func (a *app) pollCopies() bool {
 					}
 				}
 			}
-			a.recordBrief(c.v, c.task, r.status)
+			a.recordBrief(c.v, c.task, status)
 		default:
 			left = append(left, c)
 		}

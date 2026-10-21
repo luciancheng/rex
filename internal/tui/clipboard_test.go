@@ -218,6 +218,12 @@ func TestRepeatedCopiesSettleAndOnlyTheNewestWritesOSC(t *testing.T) {
 	press(a, "\r") // again, before the first copy lands
 	slow.done[0] <- copyResult{status: "sent (OSC 52) · may be blocked", osc: "OLD-OSC"}
 	later(a, c)
+	if got := a.briefs[PanePlans].status; got != "copying…" {
+		t.Fatalf("only the brief's latest copy decides what it says: %q", got)
+	}
+	if tape := viewText(BuildLogView(a.log, 78)); strings.Contains(tape, "sent (OSC 52)") {
+		t.Fatalf("a dropped OSC 52 is never reported as sent:\n%s", tape)
+	}
 	slow.done[1] <- copyResult{status: "copied (pbcopy)"}
 	later(a, c)
 	if len(a.copying) != 0 || strings.Contains(a.oscOut, "OLD-OSC") || a.briefs[PanePlans].status != "copied (pbcopy)" {

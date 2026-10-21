@@ -33,13 +33,13 @@ func stampOrigin(ev *Event, payload map[string]any) {
 		}
 	}
 	for _, key := range []string{"session_id", "conversation_id", "sessionID", "thread_id"} {
-		if v := strField(payload, key); v != "" {
+		if v, _ := payload[key].(string); v != "" {
 			ev.Meta["session"] = v
 			break
 		}
 	}
 	for _, key := range []string{"tool_use_id", "callID", "call_id"} {
-		if v := strField(payload, key); v != "" {
+		if v, _ := payload[key].(string); v != "" {
 			ev.Meta["tool_use_id"] = v
 			break
 		}
@@ -164,7 +164,7 @@ func (s Scope) Owns(ev Event) (in, known bool) {
 // is never read for paths.
 func (s Scope) eventFile(ev Event) string {
 	p, _ := ev.Meta["path"].(string)
-	if p = strings.TrimSpace(p); p == "" && !isProse(ev.Kind) {
+	if p = strings.TrimSpace(p); p == "" && !ProseKinds[ev.Kind] {
 		p = pathFromText(ev.Text)
 	}
 	if len(p) > 4096 || !filepath.IsAbs(p) {
@@ -173,13 +173,11 @@ func (s Scope) eventFile(ev Event) string {
 	return p
 }
 
-func isProse(kind string) bool { return kind == "text" || kind == "thought" || kind == "user" }
-
 // Display rewrites absolute paths for the tape: inside the repo to
 // repo-relative, under home to ~. Only tool lines are touched, and only at
 // their real paths; a reply, thought or prompt is shown as written.
 func (s Scope) Display(ev Event) Event {
-	if isProse(ev.Kind) {
+	if ProseKinds[ev.Kind] {
 		return ev
 	}
 	if p := s.eventFile(ev); p != "" {
@@ -195,11 +193,37 @@ func (s Scope) Display(ev Event) Event {
 		}
 		ev.Text = strings.ReplaceAll(ev.Text, p, short)
 	}
-	// Any other mention of the repo in a command line drops the repo prefix.
-	for _, root := range []string{s.given, s.root} {
+	// Any other mention of the repo in a command line drops the repo
+	// prefix: the longer spelling first (the resolved /private/tmp/x before
+	// the given /tmp/x, which it ends with), and only where a path starts.
+	roots := []string{s.root, s.given}
+	if len(s.given) > len(s.root) {
+		roots[0], roots[1] = s.given, s.root
+	}
+	for _, root := range roots {
 		if root != "" && root != string(filepath.Separator) {
-			ev.Text = strings.ReplaceAll(ev.Text, root+string(filepath.Separator), "")
+			ev.Text = stripPrefixAt(ev.Text, root+string(filepath.Separator))
 		}
 	}
 	return ev
+}
+
+// stripPrefixAt removes prefix wherever it starts a path in text: at the
+// start, or after a space, a quote, '=', '(' or ':'. A match inside a
+// longer path ("/backup/tmp/x/") is left alone.
+func stripPrefixAt(text, prefix string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(text, prefix)
+		if i < 0 {
+			b.WriteString(text)
+			return b.String()
+		}
+		if i == 0 || strings.ContainsRune(" \t\"'=(:", rune(text[i-1])) {
+			b.WriteString(text[:i])
+		} else {
+			b.WriteString(text[:i+len(prefix)])
+		}
+		text = text[i+len(prefix):]
+	}
 }

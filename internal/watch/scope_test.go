@@ -157,3 +157,48 @@ func TestDedupeKeepsTheSameLineFromTwoRepos(t *testing.T) {
 		t.Fatal("the same repo within the window is a duplicate")
 	}
 }
+
+func TestScopeDisplayStripsTheRepoOnlyWhereAPathStarts(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "app")
+	if os.Symlink(real, link) != nil {
+		t.Skip("no symlinks")
+	}
+	resolved, _ := filepath.EvalSymlinks(real)
+	s := NewScope(link) // Rex started in the symlinked folder; the agent reports the real one
+	sep := string(filepath.Separator)
+	cases := map[string]string{
+		"go test " + resolved + sep + "internal" + sep + "...": "go test internal" + sep + "...",
+		"go test " + link + sep + "x":                          "go test x",
+		"ls /backup" + link + sep + "x":                        "ls /backup" + link + sep + "x",
+		`grep -r "` + resolved + sep + `a" .`:                  `grep -r "a" .`,
+	}
+	for in, want := range cases {
+		if got := s.Display(Event{Kind: "command", Text: in, Meta: map[string]any{"command": in}}).Text; got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestScopeDisplayUsesHomeOutsideTheRepo(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	s := NewScope(t.TempDir())
+	p := filepath.Join(home, "notes", "todo.md")
+	if got := s.Display(Event{Kind: "command", Text: "Read " + p, Meta: map[string]any{"path": p}}).Text; got != "Read ~/notes/todo.md" {
+		t.Fatalf("%q", got)
+	}
+	if got := s.Display(Event{Kind: "command", Text: "cd " + home, Meta: map[string]any{"path": home}}).Text; got != "cd ~" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestStampOriginSessionIsTextOnly(t *testing.T) {
+	ev := Event{}
+	stampOrigin(&ev, map[string]any{"session_id": map[string]any{"x": 1}, "tool_use_id": 7})
+	if _, ok := ev.Meta["session"]; ok {
+		t.Fatal("an object is no session id")
+	}
+	if _, ok := ev.Meta["tool_use_id"]; ok {
+		t.Fatal("a number is no tool call id")
+	}
+}

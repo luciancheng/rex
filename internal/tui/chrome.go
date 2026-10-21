@@ -193,10 +193,16 @@ func placeFooter(opt ComposeOptions, scroll int) ([]string, string) {
 		case ScreenBrowse:
 			return []string{"open", "⏎ open", "esc back", "tab tape", "type to filter"}, "muted"
 		}
-		if homeCreates(opt.Plans) {
-			return []string{"plans", "⏎ create", "tab tape", "ctrl+c×2 quit"}, "muted"
+		if b := opt.Plans; b.Find != "" {
+			if b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowCreateNamed {
+				return []string{"find", "⏎ create", "esc clear", "tab tape"}, "muted"
+			}
+			return []string{"find", "⏎ open", "esc clear", "tab tape"}, "muted"
 		}
-		return []string{"plans", "⏎ open", "tab tape", "ctrl+c×2 quit"}, "muted"
+		if homeCreates(opt.Plans) {
+			return []string{"plans", "⏎ create", "tab tape", "type to find", "ctrl+c×2 quit"}, "muted"
+		}
+		return []string{"plans", "⏎ open", "tab tape", "type to find", "ctrl+c×2 quit"}, "muted"
 	}
 	if strings.TrimSpace(opt.Draft) != "" && opt.Preview != "" {
 		return []string{"tape", opt.Preview}, "muted"

@@ -109,7 +109,9 @@ func TestShortTerminalComposer(t *testing.T) {
 }
 
 func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
-	b := NewPlanBrowser(t.TempDir())
+	repo := t.TempDir()
+	seedPlans(t, repo, "alpha.rex.json")
+	b := NewPlanBrowser(repo)
 	for i, row := range b.Rows {
 		if row.Kind == PlanRowNew {
 			b.Cursor = i
@@ -118,10 +120,14 @@ func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
 	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[1] != "⏎ create" {
 		t.Fatalf("on Create: %q", segs)
 	}
+	open := false
 	for i, row := range b.Rows {
 		if row.Kind == PlanRowOpen {
-			b.Cursor = i
+			b.Cursor, open = i, true
 		}
+	}
+	if !open {
+		t.Fatal("with a plan, Home has an Open card")
 	}
 	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[1] == "⏎ create" {
 		t.Fatalf("on Open a plan: %q", segs)
@@ -189,6 +195,12 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 			withPlans.Cursor = i
 		}
 	}
+	finding := NewPlanBrowser(repo)
+	finding.Find = "zz-new"
+	finding.Rebuild()
+	findOpen := NewPlanBrowser(repo)
+	findOpen.Find = "a"
+	findOpen.Rebuild()
 	browse := *b
 	browse.Screen = ScreenBrowse
 	create := *b
@@ -196,6 +208,8 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 	screens := []screen{
 		{"home (no plans)", ComposeOptions{Pane: PanePlans, Plans: b}, []string{"plans", "⏎ create", "tab tape"}},
 		{"home", ComposeOptions{Pane: PanePlans, Plans: withPlans}, []string{"plans", "⏎ open", "tab tape"}},
+		{"find (create)", ComposeOptions{Pane: PanePlans, Plans: finding, Draft: "zz-new"}, []string{"find", "⏎ create", "esc clear", "tab tape"}},
+		{"find (open)", ComposeOptions{Pane: PanePlans, Plans: findOpen, Draft: "a"}, []string{"find", "⏎ open", "esc clear", "tab tape"}},
 		{"browse", ComposeOptions{Pane: PanePlans, Plans: &browse}, []string{"open", "⏎ open", "esc back", "tab tape"}},
 		{"create", ComposeOptions{Pane: PanePlans, Plans: &create}, []string{"new plan", "⏎ create", "esc cancel"}},
 		{"tape", ComposeOptions{Pane: PaneChat}, []string{"tape", "tab plan", "↑↓ scroll"}},

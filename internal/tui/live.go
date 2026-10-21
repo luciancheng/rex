@@ -219,9 +219,10 @@ func bodyRows(kind, text string, width, inner int) []string {
 }
 
 type LogLine struct {
-	Kind string
-	Text string
-	Fill string
+	Kind     string
+	Text     string
+	Fill     string
+	Selected bool // part of the selected row; the plan pane keeps it in view
 }
 
 func BuildLogView(log []watch.Event, width int) []LogLine {
@@ -434,7 +435,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	bodyTop := 2
 	bodyBottom := height - FooterRows - l.composer
 	bodyH := max(0, bodyBottom-bodyTop)
-	var body []LogLine
+	var body, pinned []LogLine
 	scroll := opt.Scroll
 	fromTop := false
 	if opt.Overlay != nil {
@@ -442,8 +443,15 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
 		fromTop = true
 	} else if opt.Pane == PanePlans && opt.Plans != nil {
-		body = BuildPlanView(opt.Plans, width)
-		scroll = planWindowStart(body, bodyH)
+		// The Library's title, folder, notice and error stay put; only the
+		// list under them scrolls.
+		all := BuildPlanView(opt.Plans, width)
+		head := min(len(all), opt.Plans.headLen())
+		pinned = planHead(all[:head], len(all), bodyH)
+		body = all[head:]
+		bodyTop += len(pinned)
+		bodyH -= len(pinned)
+		scroll = opt.Plans.window(body, bodyH)
 		fromTop = true
 	} else {
 		body = opt.LogView
@@ -468,13 +476,25 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		if start > end {
 			start = end
 		}
-		visible = body[start:end]
+		visible = append([]LogLine(nil), body[start:end]...)
+		if fromTop && len(visible) > 2 {
+			// Say when the list goes on past the window, without covering the selection.
+			if start > 0 && !visible[0].Selected {
+				visible[0] = LogLine{Kind: "idle", Text: "  ↑ more"}
+			}
+			if end < len(body) && !visible[len(visible)-1].Selected {
+				visible[len(visible)-1] = LogLine{Kind: "idle", Text: "  ↓ more"}
+			}
+		}
 	}
 	enabled := opt.Enabled
 	rows := make([]string, height)
 	rows[0] = headerRow(width, placeWord(opt.Pane), opt.Status, opt.PlanRel, enabled)
 	if height > 1 {
 		rows[1] = statusRow(opt.Line, width, enabled)
+	}
+	for offset, line := range pinned {
+		rows[bodyTop-len(pinned)+offset] = paintLine(line, width, enabled)
 	}
 	for offset, line := range visible {
 		if bodyTop+offset >= bodyBottom {
@@ -538,29 +558,6 @@ func paintLine(line LogLine, width int, enabled bool) string {
 		return mascot.PaintFill(text, rgb, fill, enabled)
 	}
 	return mascot.Paint(text, rgb, enabled)
-}
-
-func planWindowStart(body []LogLine, viewH int) int {
-	if viewH <= 0 || len(body) <= viewH {
-		return 0
-	}
-	sel := 0
-	for i, line := range body {
-		trimmed := strings.TrimLeft(line.Text, " ")
-		if strings.HasPrefix(line.Text, "▌") || strings.HasPrefix(trimmed, "▌") || strings.HasPrefix(line.Text, "> ") {
-			sel = i
-			break
-		}
-	}
-	start := sel - viewH + 1
-	if start < 0 {
-		start = 0
-	}
-	maxStart := len(body) - viewH
-	if start > maxStart {
-		start = maxStart
-	}
-	return start
 }
 
 type ComposeOptions struct {

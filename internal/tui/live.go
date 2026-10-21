@@ -330,7 +330,13 @@ func ApplyTurn(turn Turn, ev watch.Event) Turn {
 		return TurnRunning
 	case "result":
 		return turn
-	case "text", "error", "idle":
+	case "error":
+		// A failed tool call doesn't end the turn; the agent carries on.
+		if watch.MetaTool(ev) != "" {
+			return TurnRunning
+		}
+		return TurnIdle
+	case "text", "idle":
 		return TurnIdle
 	default:
 		return turn
@@ -351,12 +357,15 @@ func statusForTurn(turn Turn, lastKind string) string {
 	case TurnThinking:
 		return "thinking"
 	case TurnRunning:
-		if s, ok := kindStatus[lastKind]; ok && lastKind != "user" {
+		// A tool that failed mid-turn doesn't stop the turn: still running.
+		if s, ok := kindStatus[lastKind]; ok && lastKind != "user" && lastKind != "error" {
 			return s
 		}
 		return "running"
 	default:
-		if s, ok := kindStatus[lastKind]; ok {
+		// Idle never claims work in flight: after a turn ends with no reply
+		// (Cursor stop), the last kind may still be a command or thought.
+		if s, ok := kindStatus[lastKind]; ok && s != "running" && s != "thinking" {
 			return s
 		}
 		return mascot.DefaultAnimation
@@ -923,7 +932,7 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				prevTurn := turn
 				for _, ev := range fresh {
 					turn = ApplyTurn(turn, ev)
-					if watch.KeepInPane(ev) {
+					if watch.KeepInPane(ev) || ev.Kind == "idle" { // a turn end clears an old error
 						lastKind = ev.Kind
 					}
 				}

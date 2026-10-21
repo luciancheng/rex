@@ -50,7 +50,7 @@ That writes the idle `Pixels(...)` grid and the yellow palette 1:1. **Leave blin
 
 Blink drops the top eye pixel (the face `k` at column 25, rows 13–14 on the current sprite). Squat is `ShiftBody(..., dy=1, keepBottom=7)` so the shadow stays planted.
 
-Breakdance is the 40×40 sheet `assets/breakdance.png` (left-to-right, top-to-bottom). Type `breakdance` in the composer to play it **once**, then resume the turn pose. Typing is `assets/typing.png`. Hook `user` / `thought` → thinking; shell / tools → running; `text` / `error` → idle. Thinking and running play **typing**; idle is only when nothing is in flight. Local composer does not start or end a turn. Map sheet pixels onto the yellow palette — do not blit the PNG. Do not dump Write bodies.
+Breakdance is the 40×40 sheet `assets/breakdance.png` (left-to-right, top-to-bottom). Type `breakdance` in the composer to play it **once**, then resume the turn pose. Typing is `assets/typing.png`. Hook `user` / `thought` → thinking; shell / tools → running; `text` / `idle` (turn end) → idle; `error` → idle, except a failed tool call (meta `tool`), which keeps the turn running. Thinking and running play **typing**; idle is only when nothing is in flight. Local composer does not start or end a turn. Map sheet pixels onto the yellow palette — do not blit the PNG. Do not dump Write bodies.
 
 If the README hero should match, rebuild `assets/rex.png` from `idle.png` with nearest-neighbor scale.
 
@@ -64,7 +64,7 @@ Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`. Adapte
 
 `rex ingest` runs inside agent hooks: run from a hook it **always exits 0 and never writes stdout** (harnesses read exit 2 as "block" and some feed stdout to the agent); only `-h`, `--version` and the interactive `--install*` flags print. An unknown top-level command exits 1, never 2. Stdin reads and the feed lock are time-bounded. The feed is private (file 0600, `~/.rex` 0700, tightened on old installs). Keep it that way. Visible assistant replies come from `afterAgentResponse`, which Cursor currently fires with the **final** message of the turn. In-between chat lines are not on any hook — do not scrape transcripts to invent them. Thoughts still arrive via `afterAgentThought`. Do not map `stop` as text.
 
-New harness = adapter (+ installer). Do not special-case vendors in `live.go`.
+New harness = adapter (+ installer). Do not special-case vendors in `live.go`. Installers edit the harness's config through `watch.UpdateJSONFile` + `internal/jsonedit`: splice only what Rex owns, keep every other byte, refuse a file that does not parse, keep a `.bak`, write atomically. Never round-trip a user's config through a `map`.
 
 Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`.
 

@@ -177,6 +177,8 @@ func IsQuietResult(ev Event) bool {
 	return ev.Kind == "result"
 }
 
+// KeepInPane says whether an event is drawn on the tape. Idle events only
+// end the turn; they have nothing to show.
 func KeepInPane(ev Event) bool {
-	return !IsFileLookEvent(ev) && !IsQuietResult(ev)
+	return ev.Kind != "idle" && !IsFileLookEvent(ev) && !IsQuietResult(ev)
 }

@@ -214,3 +214,26 @@ func TestAppScrolledViewStaysPut(t *testing.T) {
 		t.Fatalf("the view moved: %q -> %q", before, top())
 	}
 }
+
+// Keys from one read are applied one at a time: a filter letter and ⏎ in
+// the same read open the row the filter selected.
+func TestAppKeysFromOneReadSettleInOrder(t *testing.T) {
+	a := testApp(t)
+	root := filepath.Join(a.plans.Repo, "rex", "plans")
+	os.MkdirAll(root, 0o755)
+	for _, name := range []string{"alpha.rex.json", "beta.rex.json"} {
+		os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o644)
+	}
+	a.plans.Screen = ScreenBrowse
+	a.plans.Dir = root
+	a.plans.Rebuild()
+	for i, row := range a.plans.Rows {
+		if row.Name == "alpha.rex.json" {
+			a.plans.Cursor = i // the unfiltered row under the cursor
+		}
+	}
+	a.keys([]string{"b", "e", "\r"})
+	if !strings.HasSuffix(a.plans.Current, "beta.rex.json") {
+		t.Fatalf("opened %q", a.plans.Current)
+	}
+}

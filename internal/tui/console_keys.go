@@ -7,13 +7,17 @@ import (
 
 // Windows console input, kept free of syscalls so it is tested on every OS.
 
-const consoleProcessedInput = 0x0001 // ENABLE_PROCESSED_INPUT
+const (
+	consoleProcessedInput = 0x0001 // ENABLE_PROCESSED_INPUT
+	consoleVTInput        = 0x0200 // ENABLE_VIRTUAL_TERMINAL_INPUT
+)
 
 // rawInputMode turns off processed input so Ctrl+C reaches Rex as a key
 // (and "ctrl+c twice" works) instead of killing the process before the
-// screen is restored. Everything else in the mode is kept.
+// screen is restored, and VT input, which would hand Rex escape sequences
+// as characters. Everything else in the mode is kept.
 func rawInputMode(orig uint32) uint32 {
-	return orig &^ consoleProcessedInput
+	return orig &^ (consoleProcessedInput | consoleVTInput)
 }
 
 type consoleKey struct {
@@ -32,7 +36,7 @@ func (d *consoleKeys) token(k consoleKey) string {
 	if !k.Down {
 		return ""
 	}
-	if k.VK == 0x1B {
+	if k.VK == 0x1B || k.Char == 0x1B {
 		return "esc"
 	}
 	if name := virtualKeyName(k.VK); name != "" && k.Char == 0 {
@@ -86,26 +90,39 @@ func virtualKeyName(vk uint16) string {
 	}
 }
 
-// coalescePaste treats a burst of typed characters that contains a newline
-// as a paste. The Windows console delivers a paste as individual key
-// events, and an embedded Enter must not submit the draft.
+// coalescePaste treats a burst of characters with a newline inside it as a
+// paste: the Windows console delivers a paste as single key events, and
+// an embedded Enter must not submit. A short burst that only ends in Enter
+// is typing that the console queued up (a letter and ⏎ read together), so
+// it stays keys. Best effort: a pasted single short line ending in a
+// newline still reads as typed.
 func coalescePaste(tokens []string) []string {
 	if len(tokens) < 2 {
 		return tokens
 	}
+	inside := false // text after a newline
 	newline := false
 	for _, t := range tokens {
 		switch {
 		case t == "\r" || t == "\n":
 			newline = true
-		case t == "\t":
-		case len([]rune(t)) == 1 && t >= " ":
+		case t == "\t" || (len([]rune(t)) == 1 && t >= " "):
+			if newline {
+				inside = true
+			}
 		default:
 			return tokens
 		}
 	}
-	if !newline {
+	if !newline || (!inside && len(tokens) < minPasteBurst) {
 		return tokens
 	}
-	return []string{PastePrefix + oneLine(strings.Join(tokens, ""))}
+	text := strings.Join(tokens, "")
+	if len(text) > pasteCap {
+		text = text[:pasteCap]
+	}
+	return []string{PastePrefix + oneLine(strings.ToValidUTF8(text, ""))}
 }
+
+// minPasteBurst is how many characters at once can't be typing.
+const minPasteBurst = 16

@@ -861,27 +861,33 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 			_ = stdout.Sync()
 		}
 		draw()
+		frame := time.Duration(FrameTick) * time.Millisecond
+		nextTick := time.Now().Add(frame)
 		for {
 			select {
 			case <-sig.quit:
 				return nil
 			case <-sig.resume:
 				reenterRaw(int(stdin.Fd()))
+				_, _ = io.WriteString(stdout, screenSetup) // bracketed paste etc. are off after a stop
 				draw()
 			default:
 			}
-			pressed := keys.Read(time.Duration(FrameTick) * time.Millisecond)
+			pressed := keys.Read(max(time.Millisecond, time.Until(nextTick)))
 			changed := a.ingest(tail.Poll())
-			for _, key := range pressed {
-				if a.handleKey(key) {
+			if a.keys(pressed) {
+				changed = true
+			}
+			if a.quit {
+				return nil
+			}
+			// The mascot advances on the clock, not on reads: key-ups and
+			// dropped sequences produce reads with no keys in them.
+			if now := time.Now(); !now.Before(nextTick) {
+				nextTick = now.Add(frame)
+				if a.tick() {
 					changed = true
 				}
-				if a.quit {
-					return nil
-				}
-			}
-			if len(pressed) == 0 && a.tick() {
-				changed = true
 			}
 			if a.settle(Size()) {
 				changed = true

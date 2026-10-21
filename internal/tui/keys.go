@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	escWait   = 50 * time.Millisecond  // a lone ESC is Esc only after this long
-	pasteWait = 200 * time.Millisecond // a paste with no end marker is flushed after this
-	pasteCap  = 64 << 10
+	escWait     = 50 * time.Millisecond  // a lone ESC is Esc only after this long
+	pasteWait   = 200 * time.Millisecond // a stalled paste is flushed after this
+	pasteGiveUp = 2 * time.Second        // and given up on after this
+	pasteCap    = 64 << 10
 
 	// PastePrefix tags a bracketed paste. The rest of the token is the
 	// pasted text on one line. A paste is inserted, never submitted.
@@ -35,6 +36,7 @@ type keyDecoder struct {
 	last    time.Time // when the last bytes arrived
 	paste   []byte
 	pasting bool
+	stalled bool // the paste went quiet once; what came so far was flushed
 }
 
 var csiFinal = map[byte]string{
@@ -59,13 +61,18 @@ func (d *keyDecoder) feed(data []byte, now time.Time) []string {
 // before flush gives up on them.
 func (d *keyDecoder) waiting() (bool, time.Duration) {
 	if d.pasting {
+		if d.stalled {
+			return true, pasteGiveUp
+		}
 		return true, pasteWait
 	}
 	return len(d.pending) > 0, escWait
 }
 
 // flush resolves whatever is still pending after its wait: a lone ESC is
-// Esc, an unfinished paste is delivered as is, and broken bytes are dropped.
+// Esc, broken bytes are dropped, and a paste that went quiet is delivered
+// so far but stays a paste (its newlines never submit) until its end
+// marker comes or pasteGiveUp passes.
 func (d *keyDecoder) flush(now time.Time) []string {
 	ok, wait := d.waiting()
 	if !ok || now.Sub(d.last) < wait {
@@ -77,6 +84,9 @@ func (d *keyDecoder) flush(now time.Time) []string {
 func (d *keyDecoder) decode(final bool) []string {
 	var out []string
 	buf := d.pending
+	if final && d.pasting && len(buf) == 0 {
+		out = append(out, d.stallPaste()...)
+	}
 	i := 0
 	for i < len(buf) {
 		if d.pasting {
@@ -84,7 +94,7 @@ func (d *keyDecoder) decode(final bool) []string {
 			if end < 0 {
 				if final {
 					d.paste = append(d.paste, buf[i:]...)
-					out = append(out, d.endPaste())
+					out = append(out, d.stallPaste()...)
 					break
 				}
 				// Keep a possible partial end marker for the next read.
@@ -166,6 +176,9 @@ func (d *keyDecoder) escape(b []byte, final bool) (tok string, n int, ok bool) {
 			return "", 0, false
 		}
 		fb := b[j]
+		if fb < 0x40 || fb > 0x7e {
+			return "", j, true // not a sequence: drop ESC [ and its parameters
+		}
 		params := string(b[2:j])
 		n = j + 1
 		if fb == '~' {
@@ -183,18 +196,39 @@ func (d *keyDecoder) escape(b []byte, final bool) (tok string, n int, ok bool) {
 	case 'O':
 		if len(b) < 3 {
 			if final {
-				return "esc", 1, true
+				return "", 2, true // Alt+O
 			}
 			return "", 0, false
 		}
 		return csiFinal[b[2]], 3, true
 	case 0x1b:
+		// ESC ESC [ … is Alt plus a key sequence; drop it whole. Two lone
+		// ESCs are two Escs.
+		if len(b) == 2 && !final {
+			return "", 0, false
+		}
+		if len(b) >= 3 && (b[2] == '[' || b[2] == 'O') {
+			_, m, ok := d.escape(b[1:], final)
+			if !ok {
+				return "", 0, false
+			}
+			return "", 1 + m, true
+		}
 		return "esc", 1, true
 	}
-	if b[1] >= 0x20 && b[1] < 0x7f {
-		return "", 2, true // Alt+key: not a Rex key
+	// Alt+key: ESC then any other byte or one whole rune (Alt+Backspace,
+	// Alt+Enter, Alt+é). Not a Rex key, and never Esc plus that key.
+	if b[1] < 0x80 {
+		return "", 2, true
 	}
-	return "esc", 1, true
+	if !utf8.FullRune(b[1:]) {
+		if final {
+			return "", len(b), true
+		}
+		return "", 0, false
+	}
+	_, size := utf8.DecodeRune(b[1:])
+	return "", 1 + size, true
 }
 
 func firstParam(params string) string {
@@ -205,10 +239,30 @@ func firstParam(params string) string {
 }
 
 // endPaste turns the collected paste into one line: newlines and tabs
-// become spaces and other control characters are dropped, so a paste can
-// never submit, switch place, or inject a sequence.
+// become spaces and anything typing would refuse (controls, format
+// characters) is dropped, so a paste can never submit, switch place, or
+// inject a sequence.
+// stallPaste runs when a paste goes quiet: the first time it hands over
+// what came so far and keeps waiting for the rest as paste; the second
+// time it gives up on the end marker.
+func (d *keyDecoder) stallPaste() []string {
+	if d.stalled {
+		if tok := d.endPaste(); tok != PastePrefix {
+			return []string{tok}
+		}
+		return nil
+	}
+	d.stalled = true
+	if len(d.paste) == 0 {
+		return nil
+	}
+	tok := PastePrefix + oneLine(strings.ToValidUTF8(string(d.paste), ""))
+	d.paste = d.paste[:0]
+	return []string{tok}
+}
+
 func (d *keyDecoder) endPaste() string {
-	d.pasting = false
+	d.pasting, d.stalled = false, false
 	if len(d.paste) > pasteCap {
 		d.paste = d.paste[:pasteCap]
 	}
@@ -223,7 +277,7 @@ func oneLine(text string) string {
 		switch {
 		case r == '\r' || r == '\n' || r == '\t':
 			b.WriteByte(' ')
-		case unicode.IsControl(r):
+		case !unicode.IsPrint(r):
 		default:
 			b.WriteRune(r)
 		}

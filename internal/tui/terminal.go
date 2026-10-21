@@ -24,6 +24,10 @@ const (
 	CtrlC      = "\x03"
 )
 
+// screenSetup puts the terminal in Rex's live mode: alternate screen, no
+// autowrap, hidden cursor, bracketed paste, cleared.
+const screenSetup = AltEnter + WrapOff + HideCursor + PasteOn + Clear + Home
+
 func Size() (int, int) {
 	w, h, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || w <= 0 || h <= 0 {
@@ -44,7 +48,7 @@ type screenSignals struct {
 // which make fn return through the same path.
 func LiveScreen(stdout *os.File, stdin *os.File, fn func(screenSignals) error) error {
 	restoreOut := enableWindowsVT(stdout)
-	_, _ = stdout.WriteString(AltEnter + WrapOff + HideCursor + PasteOn + Clear + Home)
+	_, _ = stdout.WriteString(screenSetup)
 	_ = stdout.Sync()
 	restore, err := enterRaw(int(stdin.Fd()))
 	defer func() {

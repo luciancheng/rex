@@ -129,14 +129,33 @@ func (a *app) ingest(fresh []watch.Event) bool {
 	return false
 }
 
+// keys applies one read's keys in order, settling after each one, so a
+// filter letter and ⏎ read together act like two separate presses.
+func (a *app) keys(pressed []string) bool {
+	changed := false
+	for _, key := range pressed {
+		if a.handleKey(key) {
+			changed = true
+		}
+		if a.quit {
+			return changed
+		}
+		if a.settle(a.columns, a.lines) {
+			changed = true
+		}
+	}
+	return changed
+}
+
 // handleKey applies one key. It sets a.quit on the second Ctrl+C.
 func (a *app) handleKey(key string) bool {
 	if text, ok := IsPaste(key); ok {
 		// A paste is typed into the draft as one line; it never submits.
+		armed := a.quitPending
 		a.quitPending = false
 		next := capDraft(a.draft + text)
 		if next == a.draft {
-			return false
+			return armed // a disarmed quit still redraws the footer
 		}
 		a.draft = next
 		return true

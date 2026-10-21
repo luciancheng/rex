@@ -63,6 +63,30 @@ func TestDecoderAltChordIsIgnored(t *testing.T) {
 	if got := decodeAll(t, "\x1bpz"); !reflect.DeepEqual(got, []string{"z"}) {
 		t.Fatalf("%q", got)
 	}
+	// Alt+Backspace, Alt+Enter, Alt+Tab, Alt+é, Alt+O, Alt+Up: never Esc.
+	for _, in := range []string{"\x1b\x7f", "\x1b\r", "\x1b\t", "\x1bé", "\x1b\x1b[A", "\x1b\x1bOA"} {
+		if got := decodeAll(t, in, "z"); !reflect.DeepEqual(got, []string{"z"}) {
+			t.Errorf("%q: %q", in, got)
+		}
+	}
+	if got := decodeAll(t, "\x1b\xc3", "\xa9z"); !reflect.DeepEqual(got, []string{"z"}) {
+		t.Fatalf("Alt+é split across reads: %q", got)
+	}
+	if got := decodeAll(t, "\x1b\x1b"); !reflect.DeepEqual(got, []string{"esc", "esc"}) {
+		t.Fatalf("two lone ESCs: %q", got)
+	}
+	var d keyDecoder
+	now := time.Unix(0, 0)
+	d.feed([]byte("\x1bO"), now)
+	if got := append(d.flush(now.Add(escWait)), d.feed([]byte("z"), now.Add(time.Second))...); !reflect.DeepEqual(got, []string{"z"}) {
+		t.Fatalf("Alt+O: %q", got)
+	}
+}
+
+func TestDecoderBrokenCSIKeepsTheRest(t *testing.T) {
+	if got := decodeAll(t, "\x1b[12\rx"); !reflect.DeepEqual(got, []string{"\r", "x"}) {
+		t.Fatalf("%q", got)
+	}
 }
 
 func TestDecoderUTF8SplitAcrossReads(t *testing.T) {
@@ -113,6 +137,47 @@ func TestDecoderPasteWithoutEndMarkerIsFlushed(t *testing.T) {
 	}
 }
 
+// A paste that stalls is flushed so far, but the rest still arrives as
+// paste: its newline must not submit.
+func TestDecoderStalledPasteStaysAPaste(t *testing.T) {
+	var d keyDecoder
+	now := time.Unix(0, 0)
+	d.feed([]byte("\x1b[200~first"), now)
+	got := d.flush(now.Add(pasteWait))
+	if len(got) != 1 {
+		t.Fatalf("%q", got)
+	}
+	got = d.feed([]byte(" half\r\nsecond\x1b[201~z"), now.Add(time.Second))
+	if len(got) != 2 || got[1] != "z" {
+		t.Fatalf("%q", got)
+	}
+	if text, ok := IsPaste(got[0]); !ok || text != " half  second" {
+		t.Fatalf("%q", got[0])
+	}
+}
+
+func TestDecoderEmptyPasteStartIsGivenUp(t *testing.T) {
+	var d keyDecoder
+	now := time.Unix(0, 0)
+	d.feed([]byte("\x1b[200~"), now)
+	if got := d.flush(now.Add(pasteWait)); len(got) != 0 {
+		t.Fatalf("%q", got)
+	}
+	if got := d.flush(now.Add(pasteGiveUp)); len(got) != 0 || d.pasting {
+		t.Fatalf("%q pasting=%v", got, d.pasting)
+	}
+	if got := d.feed([]byte("a"), now.Add(3*time.Second)); !reflect.DeepEqual(got, []string{"a"}) {
+		t.Fatalf("typing works again: %q", got)
+	}
+}
+
+func TestDecoderPasteDropsFormatCharacters(t *testing.T) {
+	got := decodeAll(t, "\x1b[200~a\u202eb\u200bc\x1b[201~")
+	if text, _ := IsPaste(got[0]); text != "abc" {
+		t.Fatalf("%q", text)
+	}
+}
+
 func TestDecoderPasteIsCapped(t *testing.T) {
 	big := strings.Repeat("x", pasteCap*2)
 	got := decodeAll(t, "\x1b[200~"+big[:pasteCap], big[pasteCap:]+"\x1b[201~")
@@ -154,10 +219,14 @@ func TestConsoleKeys(t *testing.T) {
 	}
 }
 
-func TestRawInputModeOnlyClearsProcessedInput(t *testing.T) {
-	const orig = 0x01 | 0x02 | 0x04 | 0x40 | 0x80
-	if got := rawInputMode(orig); got != orig&^0x01 {
+func TestRawInputModeClearsProcessedAndVTInput(t *testing.T) {
+	const orig = 0x01 | 0x02 | 0x04 | 0x40 | 0x80 | 0x200
+	if got := rawInputMode(orig); got != orig&^(0x01|0x200) {
 		t.Fatalf("%#x", got)
+	}
+	var k consoleKeys
+	if k.token(consoleKey{Down: true, VK: 0xDB, Char: 0x1B}) != "esc" {
+		t.Fatal("an ESC char is Esc whatever the virtual key")
 	}
 }
 
@@ -172,6 +241,13 @@ func TestCoalescePaste(t *testing.T) {
 	}
 	if got := coalescePaste([]string{"a", "up", "\r"}); len(got) != 3 {
 		t.Fatal("named keys are not a paste")
+	}
+	if got := coalescePaste([]string{"l", "s", "\r"}); len(got) != 3 {
+		t.Fatal("a letter and ⏎ read together are typing: ⏎ must still submit")
+	}
+	long := strings.Split(strings.Repeat("x", minPasteBurst)+"\r", "")
+	if got := coalescePaste(long); len(got) != 1 {
+		t.Fatal("a long burst ending in a newline is a paste")
 	}
 }
 

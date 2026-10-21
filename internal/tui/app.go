@@ -117,13 +117,21 @@ func (a *app) composeOptions() ComposeOptions {
 		if a.pane == PaneChat {
 			other = "tab plan"
 		}
-		opt.Overlay = &Overlay{Lines: helpLines(textW, a.feed), Footer: []string{"help", "esc close", other}, Scroll: a.overlayScroll[a.pane]}
+		body := a.helpBody(textW)
+		footer := []string{"help", "esc close", other}
+		if len(body) > PaneBodyHeight(a.lines) {
+			footer = []string{"help", "esc close", "↑↓ scroll", other}
+		}
+		opt.Overlay = &Overlay{Lines: body, Footer: footer, Scroll: a.overlayScroll[a.pane]}
 	}
 	return opt
 }
 
 // placeholder is the dim hint in an empty composer: what you can type here.
 func (a *app) placeholder() string {
+	if a.overlay[a.pane] != overlayNone {
+		return "esc to close"
+	}
 	if a.pane == PaneChat {
 		return "note (not sent) · ?⏎ help"
 	}
@@ -195,6 +203,15 @@ func (a *app) logLines() int {
 // ones worth drawing. A scrolled-up view keeps showing the same lines while
 // new ones arrive below (until MaxLog trims the oldest).
 func (a *app) ingest(fresh []watch.Event) bool {
+	// Rex's own blocks (notes, plan lines) are made here, never read from
+	// the feed: a feed line claiming to be one is dropped.
+	kept := fresh[:0:0]
+	for _, ev := range fresh {
+		if ev.Source != "rex" {
+			kept = append(kept, ev)
+		}
+	}
+	fresh = kept
 	if len(fresh) == 0 {
 		return false
 	}
@@ -454,7 +471,17 @@ func (a *app) planKey(key string) bool {
 		}
 		return false
 	case "\r", "\n":
-		if forcedVerb(a.draft) && a.submit(a.draft) {
+		if forcedVerb(a.draft) {
+			// A /word is only ever a verb: it never names or opens anything.
+			if !a.submit(a.draft) {
+				b.Err = "'" + strings.TrimSpace(a.draft) + "' is not a verb · ?⏎ for help"
+			}
+			return true
+		}
+		if b.Screen == ScreenHome && strings.TrimSpace(a.draft) != "" {
+			// Home has no find yet: typed text must not fire the card under
+			// the cursor.
+			b.Err = "verbs here start with / · try /breakdance or ?⏎"
 			return true
 		}
 		return a.planEnter()
@@ -511,7 +538,9 @@ func (a *app) planEnter() bool {
 // openedPlan runs after a plan is opened or created. Until the outline
 // exists (docs/ux.md §6) Rex moves to the tape, as it always has.
 func (a *app) openedPlan() {
-	a.draft, a.parked = a.parked, ""
+	// Keep the plan draft (a Browse filter) for Tab back, so the opened
+	// plan is still the selected row.
+	a.draft, a.parked = a.parked, a.draft
 	a.pane = PaneChat
 }
 
@@ -525,24 +554,28 @@ func (a *app) overlayKey(key string) bool {
 		}
 		a.overlay[a.pane] = overlayNone
 		return true
-	case "up":
-		a.overlayScroll[a.pane] = max(0, a.overlayScroll[a.pane]-1)
-		return true
-	case "down":
-		a.overlayScroll[a.pane]++
-		return true
-	case "pageup":
-		a.overlayScroll[a.pane] = max(0, a.overlayScroll[a.pane]-PaneBodyHeight(a.lines))
-		return true
-	case "pagedown":
-		a.overlayScroll[a.pane] += PaneBodyHeight(a.lines)
-		return true
+	case "up", "down", "pageup", "pagedown":
+		page := PaneBodyHeight(a.lines)
+		delta := map[string]int{"up": -1, "down": 1, "pageup": -page, "pagedown": page}[key]
+		limit := max(0, len(a.helpBody(PaneTextWidth(a.columns)))-page)
+		next := max(0, min(limit, a.overlayScroll[a.pane]+delta))
+		changed := next != a.overlayScroll[a.pane]
+		a.overlayScroll[a.pane] = next
+		return changed
 	case "\r", "\n":
+		// Only the overlay's own inputs work in it; Help has none, so a
+		// typed word is dropped, never run underneath.
 		if strings.TrimSpace(a.draft) != "" {
-			return a.submit(a.draft)
+			a.draft = ""
+			return true
 		}
 	}
 	return false
+}
+
+// helpBody is the Help overlay's lines at width.
+func (a *app) helpBody(width int) []LogLine {
+	return helpLines(width, a.feed)
 }
 
 // tick runs on the frame clock: the quit window counts down and the
@@ -576,8 +609,14 @@ func (a *app) tick() bool {
 // up a resize, and keeps the tape scroll in range.
 func (a *app) settle(columns, lines int) bool {
 	changed := false
-	if a.pane == PanePlans && a.plans.Browsing() && a.plans.Filter != a.draft {
-		a.plans.Filter = a.draft
+	// An open overlay owns the composer: nothing typed in it filters the
+	// list underneath.
+	filter := a.draft
+	if forcedVerb(filter) {
+		filter = "" // "?" or "/verb" is a verb on its way, not a filter
+	}
+	if a.pane == PanePlans && a.overlay[PanePlans] == overlayNone && a.plans.Browsing() && a.plans.Filter != filter {
+		a.plans.Filter = filter
 		a.plans.Rebuild()
 		changed = true
 	}

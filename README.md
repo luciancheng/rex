@@ -68,7 +68,7 @@ rex ingest --install-cursor-hook  # reinstall the Cursor watcher
 rex --help
 ```
 
-Tab switches the plan ↔ the tape. In the navigator: create, open, open latest, recents; browse folders and `.rex.json` files. Nothing happens until you press Enter: type `?` for keys and verbs, or `breakdance` to play the dance sheet once. Anything else you type on the tape is a local note; it is never sent to your agent. `NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
+Tab switches the plan ↔ the tape. In the navigator: create, open, open latest, recents; browse folders and `.rex.json` files. Nothing happens until you press Enter: type `?` for keys and verbs, or `breakdance` on the tape (`/breakdance` in the navigator, where typing finds or names plans) to play the dance sheet once. Anything else you type on the tape is a local note; it is never sent to your agent. `NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
 
 ## Hack on it
 

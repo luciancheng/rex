@@ -17,33 +17,69 @@ type Overlay struct {
 	Scroll int
 }
 
+// helpLines wraps every row to width: at 50+ cells the key sits left of
+// its description, narrower it sits above it.
 func helpLines(width int, feed string) []LogLine {
-	row := func(key, what string) LogLine {
-		return LogLine{Kind: "text", Text: "  " + padRight(key, 14) + what}
+	var lines []LogLine
+	text := func(indent, s string) {
+		for _, w := range wrap(s, max(8, width-cellLen(indent))) {
+			lines = append(lines, LogLine{Kind: "text", Text: indent + w})
+		}
+	}
+	row := func(key, what string) []LogLine {
+		start := len(lines)
+		if width >= 50 {
+			for i, w := range wrap(what, width-16) {
+				lead := "                "
+				if i == 0 {
+					lead = "  " + padRight(key, 14)
+				}
+				lines = append(lines, LogLine{Kind: "text", Text: lead + w})
+			}
+		} else {
+			lines = append(lines, LogLine{Kind: "text", Text: "  " + key})
+			text("    ", what)
+		}
+		out := append([]LogLine(nil), lines[start:]...)
+		lines = lines[:start]
+		return out
 	}
 	head := func(s string) LogLine { return LogLine{Kind: "idle", Text: "  " + s} }
-	lines := []LogLine{
-		{Kind: "command", Text: rule("help", width)},
+	rows := []any{
+		LogLine{Kind: "command", Text: rule("help", width)},
 		head("keys"),
 		row("tab", "switch plan ↔ tape"),
 		row("↑↓ pgup pgdn", "move, or scroll"),
+		row("← →", "plans: up a folder / into a folder"),
+		row("home end", "first / last; tape: oldest / live"),
 		row("⏎", "open, or run what you typed"),
 		row("esc", "clear the line, then back one level"),
 		row("ctrl+u ctrl+w", "clear the line / delete a word"),
 		row("ctrl+a ctrl+e", "tape: oldest / live"),
 		row("ctrl+l", "repaint"),
 		row("ctrl+c ×2", "quit"),
-		{Kind: "gap"},
+		LogLine{Kind: "gap"},
 		head("type a word, then ⏎"),
 		row("? help", "this screen"),
 		row("breakdance", "one dance"),
-		row("anything else", "a note on the tape, local, never sent"),
-		{Kind: "gap"},
+		row("/word", "in plans, where typing finds or names, a verb starts with /"),
+		row("anything else", "on the tape, a note: local, never sent"),
+		LogLine{Kind: "gap"},
 		head("rex never"),
-		{Kind: "text", Text: "  runs or approves tools, sends anything to your agent, or reads transcripts"},
-		{Kind: "gap"},
+		"runs or approves tools, sends anything to your agent, or reads transcripts",
+		LogLine{Kind: "gap"},
 		head("feed"),
-		{Kind: "text", Text: "  " + watch.ShortPath(feed)},
+		watch.ShortPath(feed),
+	}
+	for _, r := range rows {
+		switch v := r.(type) {
+		case LogLine:
+			lines = append(lines, v)
+		case []LogLine:
+			lines = append(lines, v...)
+		case string:
+			text("  ", v)
+		}
 	}
 	return lines
 }

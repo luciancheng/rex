@@ -156,8 +156,33 @@ func withoutEnter(segs []string) []string {
 // footerSegments is the footer for the current screen, highest rank first
 // (docs/ux.md §4): where you can go, not what you can type.
 func footerSegments(opt ComposeOptions, scroll int) ([]string, string) {
+	segs, kind := placeFooter(opt, scroll)
+	if n := runeLen(opt.Draft); n >= draftCap-16 && kind != "error" && len(segs) > 0 {
+		// The cap is not silent: near it, the count is a must-have.
+		segs = append([]string{segs[0], fmt.Sprintf("%d/%d", n, draftCap)}, segs[1:]...)
+	}
+	return segs, kind
+}
+
+// hintText is how a placeholder reads: dim when there is color, in
+// parentheses when there isn't, so it never looks like typed text.
+func hintText(placeholder string, enabled bool) string {
+	if enabled || placeholder == "" {
+		return placeholder
+	}
+	return "(" + placeholder + ")"
+}
+
+func placeFooter(opt ComposeOptions, scroll int) ([]string, string) {
 	if opt.QuitPending {
 		return []string{"ctrl+c again to quit"}, "error"
+	}
+	if opt.Pane == PanePlans && opt.Plans != nil && opt.Preview != "" {
+		word := map[PlanScreen]string{ScreenCreate: "new plan", ScreenFolder: "new folder", ScreenBrowse: "open"}[opt.Plans.Screen]
+		if word == "" {
+			word = "plans"
+		}
+		return []string{word, opt.Preview}, "muted"
 	}
 	if opt.Pane == PanePlans && opt.Plans != nil {
 		switch opt.Plans.Screen {
@@ -167,9 +192,6 @@ func footerSegments(opt ComposeOptions, scroll int) ([]string, string) {
 			return []string{"new folder", "⏎ create", "esc cancel", "tab tape"}, "muted"
 		case ScreenBrowse:
 			return []string{"open", "⏎ open", "esc back", "tab tape", "type to filter"}, "muted"
-		}
-		if opt.Preview != "" {
-			return []string{"plans", opt.Preview}, "muted"
 		}
 		if homeCreates(opt.Plans) {
 			return []string{"plans", "⏎ create", "tab tape", "ctrl+c×2 quit"}, "muted"
@@ -193,7 +215,7 @@ func composerRows(l layout, draft, prefix, placeholder string, enabled bool) []s
 		return inputBox(draft, l.textW, enabled, prefix, placeholder)
 	case 1:
 		if draft == "" && placeholder != "" {
-			return []string{mascot.Paint(prefix, mascot.UI["text"], enabled) + mascot.Paint(clip(placeholder, max(0, l.textW-cellLen(prefix))), mascot.UI["border"], enabled)}
+			return []string{mascot.Paint(prefix, mascot.UI["text"], enabled) + mascot.Paint(clip(hintText(placeholder, enabled), max(0, l.textW-cellLen(prefix))), mascot.UI["border"], enabled)}
 		}
 		line := clip(prefix+visibleDraft(draft, l.textW-cellLen(prefix)), l.textW)
 		return []string{mascot.Paint(line, mascot.UI["text"], enabled)}

@@ -157,7 +157,7 @@ func userRows(text string, width int) []string {
 	}
 	if len(wrapped) > maxPromptRows {
 		more := len(wrapped) - maxPromptRows
-		wrapped = append(wrapped[:maxPromptRows], fmt.Sprintf("(+%d lines)", more))
+		wrapped = append(wrapped[:maxPromptRows], fmt.Sprintf("(+%d more rows)", more))
 	}
 	contentW := 0
 	for _, line := range wrapped {
@@ -413,7 +413,7 @@ func inputBox(draft string, width int, enabled bool, prefix, placeholder string)
 	middle := mascot.Paint(clip(prefix+visibleDraft(draft, inner-cellLen(prefix)), inner), mascot.UI["text"], enabled)
 	if draft == "" && placeholder != "" {
 		room := max(0, inner-cellLen(prefix))
-		middle = mascot.Paint(prefix, mascot.UI["text"], enabled) + mascot.Paint(clip(placeholder, room), mascot.UI["border"], enabled)
+		middle = mascot.Paint(prefix, mascot.UI["text"], enabled) + mascot.Paint(clip(hintText(placeholder, enabled), room), mascot.UI["border"], enabled)
 	}
 	return []string{
 		mascot.Paint(top, mascot.UI["border"], enabled),

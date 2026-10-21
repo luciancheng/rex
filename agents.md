@@ -50,7 +50,7 @@ That writes the idle `Pixels(...)` grid and the yellow palette 1:1. **Leave blin
 
 Blink drops the top eye pixel (the face `k` at column 25, rows 13–14 on the current sprite). Squat is `ShiftBody(..., dy=1, keepBottom=7)` so the shadow stays planted.
 
-Breakdance is the 40×40 sheet `assets/breakdance.png` (left-to-right, top-to-bottom). Type `breakdance` in the composer to play it **once**, then resume the turn pose. Typing is `assets/typing.png`. Hook `user` / `thought` → thinking; shell / tools → running; `text` / `idle` (turn end) → idle; `error` → idle, except a failed tool call (meta `tool`), which keeps the turn running. Thinking and running play **typing**; idle is only when nothing is in flight. Local composer does not start or end a turn. Map sheet pixels onto the yellow palette — do not blit the PNG. Do not dump Write bodies.
+Breakdance is the 40×40 sheet `assets/breakdance.png` (left-to-right, top-to-bottom). Type `breakdance` on the tape (`/breakdance` in the Library) to play it **once**, then resume the turn pose. Typing is `assets/typing.png`. Hook `user` / `thought` → thinking; shell / tools → running; `text` / `idle` (turn end) → idle; `error` → idle, except a failed tool call (meta `tool`), which keeps the turn running. Thinking and running play **typing**; idle is only when nothing is in flight. Local composer does not start or end a turn. Map sheet pixels onto the yellow palette — do not blit the PNG. Do not dump Write bodies.
 
 If the README hero should match, rebuild `assets/rex.png` from `idle.png` with nearest-neighbor scale.
 
@@ -72,7 +72,7 @@ Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `erro
 
 The target loop, key map and screen states are in `docs/ux.md`. TUI changes cite the section they implement.
 
-- Left ~40 columns: mascot (at 66+ columns; narrower terminals are text-only, under 24 text columns Rex shows "widen" and ignores every key but Ctrl+C and Ctrl+L; under 7 rows nothing edits or submits the hidden draft; see `layoutFor`). Right: labeled log blocks (`thinking`, `run`, `ask`, `reply`). Commands yellow, replies bright, thoughts muted. Skip file-look commands and `done`/result echoes. Each assistant `text` event is its own reply block.
+- Left ~40 columns: mascot (at 66+ columns; narrower terminals are text-only, under 24 text columns Rex shows "widen" and ignores every key but Ctrl+C and Ctrl+L; under 7 rows nothing edits or submits the hidden draft; see `layoutFor`). Right: labeled log blocks (`thinking`, `run`, `ask`, `reply`, plus Rex's own `note · local`, which never comes from or goes to the feed). Commands yellow, replies bright, thoughts muted. Skip file-look commands and `done`/result echoes. Each assistant `text` event is its own reply block.
 - The header (row 0) on **every** screen shows `REX plan|tape`, the turn state **and** the open plan as a repo-relative path (`thinking · rex/plans/foo.rex.json`), shortened only when it doesn't fit: drop `rex/plans/`, then `.rex.json`, then clip with `…` from the left (docs/ux.md §4). Row 1 is the status line. The footer is ranked segments that drop whole, never mid-word.
 - User prompts: no `YOU` rule. Invisible column, at most half the pane, **right-aligned as a box**, **left-aligned text inside**. Color `UI["you"]`.
 - Markdown → headings, lists, stripped emphasis, fenced code as `│ ` lines.

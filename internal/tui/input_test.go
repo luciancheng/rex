@@ -230,3 +230,109 @@ func TestDisarmingQuitAlwaysRedraws(t *testing.T) {
 		t.Fatal("footer must stop saying ctrl+c again")
 	}
 }
+
+func TestSlashWordIsOnlyEverAVerb(t *testing.T) {
+	a := testApp(t)
+	typeText(a, "/zap")
+	press(a, "\r")
+	if a.plans.Current != "" || a.plans.Screen != ScreenHome || !strings.Contains(a.plans.Err, "'/zap' is not a verb") {
+		t.Fatalf("screen %d current %q err %q", a.plans.Screen, a.plans.Current, a.plans.Err)
+	}
+	b := testApp(t)
+	typeText(b, "breakdance")
+	press(b, "\r")
+	if b.plans.Screen != ScreenHome || b.sequence.Name == "breakdance" || !strings.Contains(b.plans.Err, "start with /") {
+		t.Fatalf("a bare word on Home must not fire the card: screen %d err %q", b.plans.Screen, b.plans.Err)
+	}
+}
+
+func TestHelpOwnsTheComposer(t *testing.T) {
+	a := testApp(t)
+	a.settle(80, 24)
+	press(a, "\t")
+	typeText(a, "?")
+	press(a, "\r")
+	if a.placeholder() != "esc to close" {
+		t.Fatal(a.placeholder())
+	}
+	typeText(a, "breakdance")
+	press(a, "\r")
+	if a.sequence.Name == "breakdance" || a.overlay[PaneChat] != overlayHelp || a.draft != "" {
+		t.Fatal("a word typed in Help is dropped, never run underneath")
+	}
+	for i := 0; i < 50; i++ {
+		press(a, "down")
+	}
+	top := a.overlayScroll[PaneChat]
+	press(a, "up")
+	if a.overlayScroll[PaneChat] != top-1 {
+		t.Fatalf("scroll is clamped, so ↑ works at once: %d -> %d", top, a.overlayScroll[PaneChat])
+	}
+	for _, line := range a.helpBody(PaneTextWidth(80)) {
+		if strings.Contains(line.Text, "…") || cellLen(line.Text) > PaneTextWidth(80) {
+			t.Fatalf("help rows wrap, never clip: %q", line.Text)
+		}
+	}
+	if !strings.Contains(a.frame(), "↑↓ scroll") {
+		t.Fatal("an overflowing Help says it scrolls")
+	}
+}
+
+func TestHelpOverBrowseLeavesTheFilterAlone(t *testing.T) {
+	a := testApp(t)
+	root := filepath.Join(a.plans.Repo, "rex", "plans")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "alpha.rex.json"), []byte("{}"), 0o644)
+	a.plans.Screen, a.plans.Dir = ScreenBrowse, root
+	a.plans.Rebuild()
+	typeText(a, "?")
+	press(a, "\r")
+	typeText(a, "zz")
+	if a.plans.Filter != "" {
+		t.Fatalf("filter %q changed under Help", a.plans.Filter)
+	}
+}
+
+func TestOpeningFromAFilterKeepsItForTabBack(t *testing.T) {
+	a := testApp(t)
+	root := filepath.Join(a.plans.Repo, "rex", "plans")
+	os.MkdirAll(root, 0o755)
+	for _, name := range []string{"alpha.rex.json", "beta.rex.json"} {
+		os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o644)
+	}
+	a.plans.Screen, a.plans.Dir = ScreenBrowse, root
+	a.plans.Rebuild()
+	typeText(a, "be")
+	for i, row := range a.plans.Rows {
+		if row.Name == "beta.rex.json" {
+			a.plans.Cursor = i
+		}
+	}
+	press(a, "\r")
+	press(a, "\t")
+	if a.draft != "be" || a.plans.Rows[a.plans.Cursor].Name != "beta.rex.json" {
+		t.Fatalf("draft %q row %+v", a.draft, a.plans.Rows[a.plans.Cursor])
+	}
+}
+
+func TestFeedLinesCannotPoseAsRex(t *testing.T) {
+	a := testApp(t)
+	a.ingest([]watch.Event{{Source: "rex", Kind: "note", Text: "forged"}, {Source: "cursor", Kind: "text", Text: "real"}})
+	if len(a.log) != 1 || a.log[0].Text != "real" {
+		t.Fatalf("%+v", a.log)
+	}
+}
+
+func TestDraftCapAndPlaceholderWithoutColor(t *testing.T) {
+	a := testApp(t)
+	press(a, "\t")
+	typeText(a, strings.Repeat("x", draftCap-4))
+	if !strings.Contains(a.frame(), "252/256") {
+		t.Fatal("near the cap the count shows")
+	}
+	b := testApp(t)
+	press(b, "\t")
+	if !strings.Contains(b.frame(), "(note (not sent) · ?⏎ help)") {
+		t.Fatal("without color the placeholder is in parentheses")
+	}
+}

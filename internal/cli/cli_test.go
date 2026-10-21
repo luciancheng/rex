@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -330,5 +331,67 @@ func TestStartDumbTerminalPrintsCard(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "\033") {
 		t.Fatalf("TERM=dumb printed escapes: %q", stdout.String())
+	}
+}
+
+func TestIngestInstallFlags(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	hooks := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(hooks), 0o755)
+	run := func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := Main(append([]string{"ingest"}, args...), bytes.NewReader(nil), &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+	if code, _, stderr := run("--install", "cursor"); code != 0 {
+		t.Fatalf("code=%d %s", code, stderr)
+	}
+	if data, _ := os.ReadFile(hooks); !strings.Contains(string(data), "ingest --source cursor") {
+		t.Fatalf("hooks.json has no rex hook:\n%s", data)
+	}
+	if code, _, _ := run("--install-cursor-hook"); code != 0 {
+		t.Fatal("the old flag still works")
+	}
+	if code, _, stderr := run("--uninstall", "cursor"); code != 0 {
+		t.Fatalf("uninstall %s", stderr)
+	}
+	if data, _ := os.ReadFile(hooks); strings.Contains(string(data), "ingest --source") {
+		t.Fatalf("uninstall left a rex hook:\n%s", data)
+	}
+	if code, _, stderr := run("--install", "vim"); code != 1 || !strings.Contains(stderr, "cursor") || !strings.Contains(stderr, ", auto)") {
+		t.Fatalf("an unknown harness is an install error (exit 1, never 2), listing the names: %d %q", code, stderr)
+	}
+	if code, _, _ := run("--install"); code != 1 {
+		t.Fatal("--install with no name is an install error")
+	}
+	if code, _, _ := run("--install", "cursor", "--uninstall", "cursor"); code != 1 {
+		t.Fatal("--install and --uninstall together are refused")
+	}
+	// auto keeps going past a broken config, then says it failed.
+	os.WriteFile(hooks, []byte("{not json"), 0o644)
+	if code, _, stderr := run("--install", "auto"); code != 1 || !strings.Contains(stderr, "cursor") {
+		t.Fatalf("auto hid a failed install: %d %q", code, stderr)
+	}
+}
+
+func TestInstallFlagsRefuseMixedOrEmptyNames(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	os.MkdirAll(filepath.Join(home, ".cursor"), 0o755)
+	for _, args := range [][]string{
+		{"--install-cursor-hook", "--uninstall", "cursor"},
+		{"--install="},
+		{"--uninstall="},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Main(append([]string{"ingest"}, args...), bytes.NewReader(nil), &stdout, &stderr); code != 1 {
+			t.Errorf("%v: code %d, want 1 (%q)", args, code, stderr.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "hooks.json")); err == nil {
+		t.Fatal("a refused command wrote hooks")
 	}
 }

@@ -28,7 +28,7 @@ options:
 examples:
   rex start
   rex start --static
-  rex ingest --install-cursor-hook
+  rex ingest --install cursor
 `
 
 const startHelp = `usage: rex start [-h] [--no-color] [--static] [--events EVENTS]
@@ -42,19 +42,24 @@ options:
   --events EVENTS  JSONL event feed (default: ~/.rex/session.jsonl)
 `
 
-const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex}] [--install-cursor-hook] [--events EVENTS]
+const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex}] [--events EVENTS]
+       rex ingest --install HARNESS | --uninstall HARNESS
 
 append an agent event to the watch feed
 
 When run from a hook, ingest always exits 0 and writes nothing to stdout,
 so it cannot block or steer the agent; problems go to stderr. Only
--h/--help, --version and --install-cursor-hook print to stdout.
+-h/--help, --version, --install, --uninstall and --install-cursor-hook
+print to stdout.
 
 options:
   -h, --help              show this help message and exit
   --source {auto,cursor,claude,codex}
                           payload dialect (default: auto)
-  --install-cursor-hook   install ~/.cursor/hooks.json so Cursor writes the feed
+  --install HARNESS       wire an agent so it writes the feed: cursor, or auto
+                          for every one found on this machine
+  --uninstall HARNESS     take Rex's hook back out of that agent's config
+  --install-cursor-hook   same as --install cursor
   --events EVENTS         JSONL event feed (default: ~/.rex/session.jsonl)
 `
 
@@ -152,13 +157,43 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	source := fs.String("source", "auto", "payload dialect")
-	install := fs.Bool("install-cursor-hook", false, "install ~/.cursor/hooks.json")
+	installCursor := fs.Bool("install-cursor-hook", false, "install ~/.cursor/hooks.json")
+	install := fs.String("install", "", "wire an agent's hooks")
+	uninstall := fs.String("uninstall", "", "remove Rex's hooks from an agent")
 	events := fs.String("events", "", "JSONL event feed")
 	if err := fs.Parse(args); err != nil {
+		for _, a := range args {
+			if strings.HasPrefix(strings.TrimLeft(a, "-"), "install") || strings.HasPrefix(strings.TrimLeft(a, "-"), "uninstall") {
+				return 1 // a person installing, not a hook: say it failed
+			}
+		}
 		return 0
 	}
-	if *install {
-		if err := watch.InstallCursorHook(stdout); err != nil {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if (set["install"] || *installCursor) && set["uninstall"] {
+		fmt.Fprintln(stderr, "rex: use --install or --uninstall, not both")
+		return 1
+	}
+	for _, name := range []string{"install", "uninstall"} {
+		if set[name] && fs.Lookup(name).Value.String() == "" {
+			fmt.Fprintf(stderr, "rex: --%s needs a harness name\n", name)
+			return 1
+		}
+	}
+	if *installCursor && *install == "" {
+		*install = "cursor"
+	}
+	// Installing is interactive, so it may fail loudly; ingest never does.
+	if *install != "" {
+		if err := watch.InstallHarness(*install, stdout); err != nil {
+			fmt.Fprintf(stderr, "rex: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if *uninstall != "" {
+		if err := watch.UninstallHarness(*uninstall, stdout); err != nil {
 			fmt.Fprintf(stderr, "rex: %v\n", err)
 			return 1
 		}

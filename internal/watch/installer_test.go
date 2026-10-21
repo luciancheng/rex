@@ -340,3 +340,100 @@ func TestInterruptedToolEndsTheTurn(t *testing.T) {
 		t.Fatalf("%#v", ev)
 	}
 }
+
+func TestHarnessRegistryCursor(t *testing.T) {
+	home := cursorHome(t)
+	var out bytes.Buffer
+	if err := InstallHarness("auto", &out); err != nil || !strings.Contains(out.String(), "no supported agent") {
+		t.Fatalf("auto with nothing present: %v %q", err, out.String())
+	}
+	os.MkdirAll(filepath.Join(home, ".cursor"), 0o755)
+	statuses := HarnessStatuses()
+	if len(statuses) == 0 || statuses[0].Name != "cursor" || !statuses[0].Present || statuses[0].Wired {
+		t.Fatalf("%#v", statuses)
+	}
+	out.Reset()
+	if err := InstallHarness("auto", &out); err != nil || !strings.Contains(out.String(), "installed cursor hooks") {
+		t.Fatalf("%v %q", err, out.String())
+	}
+	if !HarnessStatuses()[0].Wired {
+		t.Fatal("wired after install")
+	}
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	data, _ := os.ReadFile(path)
+	os.WriteFile(path, bytes.Replace(data, []byte(`"stop": [`), []byte(`"stop": [{"command": "say done"}, `), 1), 0o644)
+	out.Reset()
+	if err := UninstallHarness("cursor", &out); err != nil {
+		t.Fatal(err)
+	}
+	if HarnessStatuses()[0].Wired {
+		t.Fatal("still wired after uninstall")
+	}
+	got := readHooks(t, path)
+	hooks := got["hooks"].(map[string]any)
+	if stop := hooks["stop"].([]any); len(stop) != 1 || stop[0].(map[string]any)["command"] != "say done" {
+		t.Fatalf("foreign hook lost: %#v", hooks["stop"])
+	}
+	if _, ok := hooks["preToolUse"]; ok {
+		t.Fatal("lists Rex emptied are removed")
+	}
+	if err := InstallHarness("nope", &out); err == nil {
+		t.Fatal("unknown harness")
+	}
+}
+
+func TestCursorUninstallLeavesAnEmptyFileAlone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte("  \n"), 0o644)
+	var out bytes.Buffer
+	if err := UninstallHarness("cursor", &out); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "  \n" {
+		t.Fatalf("an empty hooks.json was rewritten: %q", data)
+	}
+	if _, err := os.Stat(path + ".bak"); err == nil {
+		t.Fatal("nothing changed, so no .bak")
+	}
+	if !strings.Contains(out.String(), "no hooks") {
+		t.Fatalf("said %q", out.String())
+	}
+}
+
+func TestWiredCountsOnlyEntriesHarnessesRun(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	cmd := ingestCommand("cursor", rexExecutable(), runtimeGOOS)
+	single, _ := json.Marshal(map[string]any{"version": 1, "hooks": map[string]any{"stop": map[string]any{"command": cmd}}})
+	os.WriteFile(path, single, 0o644)
+	if harnesses["cursor"].Wired(home) {
+		t.Fatal("an object where a list belongs is never run, so it isn't wired")
+	}
+	list, _ := json.Marshal(map[string]any{"version": 1, "hooks": map[string]any{"stop": []any{map[string]any{"command": cmd}}}})
+	os.WriteFile(path, list, 0o644)
+	if !harnesses["cursor"].Wired(home) {
+		t.Fatal("a list entry is wired")
+	}
+}
+
+func TestInstallAutoReturnsEachFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte("{broken"), 0o644)
+	var out bytes.Buffer
+	err := InstallHarness("auto", &out)
+	if err == nil || !strings.Contains(err.Error(), "cursor:") {
+		t.Fatalf("auto returned %v", err)
+	}
+	if strings.Contains(out.String(), "broken") {
+		t.Fatal("the error goes back to the caller (stderr), not to stdout")
+	}
+}

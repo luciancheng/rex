@@ -262,11 +262,18 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 			continue
 		}
 		kind, text := asLogEntry(entry)
-		if m := fingerprint.FindStringSubmatch(entry.Text); kind == "user" && m != nil {
+		if m := fingerprintLine.FindStringSubmatch(entry.Text); kind == "user" && m != nil {
 			// A send-off pasted back as a prompt: the new chat started
-			// from the pin. One line, not the whole brief again.
+			// from the pin. One line, not the whole brief again, plus any
+			// words of the user's own before it.
 			kind = "sendoff"
-			text = fmt.Sprintf("%s pasted (%d lines)", m[2], strings.Count(strings.TrimRight(entry.Text, "\n"), "\n")+1)
+			n := strings.Count(strings.TrimRight(entry.Text, "\n"), "\n") + 1
+			text = fmt.Sprintf("%s pasted (%d %s)", m[2], n, map[bool]string{true: "line", false: "lines"}[n == 1])
+			if i := strings.Index(entry.Text, "Send-off: "); i > 0 {
+				if own := strings.TrimSpace(entry.Text[:i]); own != "" {
+					text += " · " + strings.SplitN(own, "\n", 2)[0]
+				}
+			}
 		}
 		if n := len(groups); n > 0 && groups[n-1].kind == kind && kind != "text" && kind != "user" {
 			groups[n-1].texts = append(groups[n-1].texts, text)
@@ -795,7 +802,7 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 			}
 			if a.plainOut != "" {
 				_, _ = io.WriteString(stdout, plainScreen(a.plainOut))
-				a.plainOut, a.plainShown = "", true
+				a.plainText, a.plainOut, a.plainShown = a.plainOut, "", true
 				return
 			}
 			if a.plainBack {
@@ -819,6 +826,12 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				return nil
 			case <-sig.resume:
 				reenterRaw(int(stdin.Fd()))
+				if a.plainShown {
+					// Back from a stop while the brief is printed: print it again
+					// rather than a blank live screen.
+					_, _ = io.WriteString(stdout, plainScreen(a.plainText))
+					break
+				}
 				_, _ = io.WriteString(stdout, screenSetup) // bracketed paste etc. are off after a stop
 				paint.invalidate()
 				draw()

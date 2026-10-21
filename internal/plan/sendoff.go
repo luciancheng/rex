@@ -14,6 +14,7 @@ var ErrEmpty = errors.New("nothing to send · this plan has no tasks · b⏎ cop
 const (
 	sendoffCap = 4096 // a brief never exceeds this; a typical plan's is ~2 KB
 	fieldCap   = 240  // one field, before "(see plan file)"
+	idCap      = 80   // a task id or name in a list
 )
 
 // Fingerprint is the last line of a send-off. When the brief comes back
@@ -29,11 +30,12 @@ func Sendoff(p *Plan, rel string) (string, error) {
 		return "", ErrEmpty
 	}
 	// Fullest first. Finished tasks leave the task list before their Done
-	// entries go: what the last agent actually did matters more.
+	// entries go (what the last agent actually did matters more), then the
+	// list of open tasks is shortened; the pin's Next section always stays.
 	var s string
 	for _, limit := range []int{-1, 6, 3, 0} {
-		for _, short := range []bool{false, true} {
-			if s = sendoff(p, rel, limit, short); len(s) <= sendoffCap {
+		for _, open := range []int{-1, -2, 12, 4} {
+			if s = sendoff(p, rel, limit, open); len(s) <= sendoffCap {
 				return s, nil
 			}
 		}
@@ -41,20 +43,26 @@ func Sendoff(p *Plan, rel string) (string, error) {
 	return keepTail(s, sendoffCap), nil
 }
 
-// keepTail cuts s to n bytes but keeps the closing instructions and the
-// fingerprint, which the tape and the next chat rely on.
+// keepTail cuts s to n bytes but keeps the pin's Next section, the closing
+// instructions and the fingerprint, which the tape and the next chat rely
+// on: the task list is what gives way.
 func keepTail(s string, n int) string {
-	i := strings.LastIndex(s, "\nFor the next chat\n")
-	if i < 0 || len(s)-i > n/2 {
+	i := strings.LastIndex(s, "\nNext\n")
+	if i < 0 {
+		i = strings.LastIndex(s, "\nFor the next chat\n")
+	}
+	if i < 0 || len(s)-i > n*3/4 {
 		return capBytes(s, n)
 	}
 	tail := s[i:]
 	return capBytes(s[:i], n-len(tail)-len("\n… (see plan file)")) + "\n… (see plan file)" + tail
 }
 
-// sendoff writes the brief. done limits the Done section (-1 = all), and
-// short lists only the tasks near the pin.
-func sendoff(p *Plan, rel string, done int, short bool) string {
+// sendoff writes the brief. done limits the Done section (-1 = all).
+// open picks the task list: -1 every task, -2 the tasks near the pin
+// (it, what it waits on, every unfinished task), n ≥ 0 the pin and what
+// it waits on, plus the first n other open tasks.
+func sendoff(p *Plan, rel string, done, open int) string {
 	g := p.Graph()
 	pin := g.Pin()
 	pinID := "none"
@@ -63,13 +71,13 @@ func sendoff(p *Plan, rel string, done int, short bool) string {
 	}
 	var b strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
-	title := clean(p.Title)
+	title := clip(clean(p.Title), fieldCap)
 	if title == "" {
-		title = clean(p.ID)
+		title = clip(clean(p.ID), fieldCap)
 	}
 	line("Send-off: %s", title)
 	line("File: %s", clean(rel))
-	line("Status: %s · pinned task: %s", p.Status, clean(pinID))
+	line("Status: %s · pinned task: %s", p.Status, clip(clean(pinID), idCap))
 	if goal := clean(p.Goal); goal != "" {
 		line("")
 		line("Goal")
@@ -87,11 +95,17 @@ func sendoff(p *Plan, rel string, done int, short bool) string {
 	}
 	line("")
 	line("Tasks")
-	shown := 0
+	shown, others := 0, 0
 	for i := range p.Tasks {
 		t := &p.Tasks[i]
-		if short && !near(g, t, pin) {
+		switch {
+		case open == -2 && !near(t, pin):
 			continue
+		case open >= 0 && !core(t, pin):
+			if Finished(t.Status) || others >= open {
+				continue
+			}
+			others++
 		}
 		shown++
 		deps := ""
@@ -99,7 +113,7 @@ func sendoff(p *Plan, rel string, done int, short bool) string {
 			deps = " (depends on: " + list(t.DependsOn, ", ") + ")"
 		}
 		indent := strings.Repeat("  ", min(g.Depth(t), 2))
-		name := clean(taskName(t))
+		name := clip(clean(taskName(t)), idCap)
 		line("%s- [%s] %s%s", indent, t.Status, name, deps)
 	}
 	if hidden := len(p.Tasks) - shown; hidden > 0 {
@@ -109,7 +123,7 @@ func sendoff(p *Plan, rel string, done int, short bool) string {
 	line("Next")
 	switch {
 	case pin != nil:
-		line("### %s", clean(pin.ID))
+		line("### %s", clip(clean(pin.ID), idCap))
 		if t := clean(pin.Title); t != "" && t != clean(pin.ID) {
 			line("%s", clip(t, fieldCap))
 		}
@@ -127,6 +141,11 @@ func sendoff(p *Plan, rel string, done int, short bool) string {
 		if d := clean(pin.Description); d != "" {
 			line("Notes: %s", clip(d, fieldCap))
 		}
+		if len(pin.Accomplished)+len(pin.Modified)+len(pin.VerifiedHow) > 0 || clean(pin.CompletedNotes) != "" {
+			// A reopened task: what the last attempt did.
+			line("Last time:")
+			retro(line, pin)
+		}
 	default:
 		if finished, total := g.Progress(); finished == total {
 			line("All tasks are done.")
@@ -136,7 +155,7 @@ func sendoff(p *Plan, rel string, done int, short bool) string {
 	}
 	var finished []*Task
 	for i := range p.Tasks {
-		if t := &p.Tasks[i]; t.Status == Done && len(t.Accomplished)+len(t.Modified)+len(t.VerifiedHow) > 0 {
+		if t := &p.Tasks[i]; t.Status == Done && (len(t.Accomplished)+len(t.Modified)+len(t.VerifiedHow) > 0 || clean(t.CompletedNotes) != "") {
 			finished = append(finished, t)
 		}
 	}
@@ -147,28 +166,25 @@ func sendoff(p *Plan, rel string, done int, short bool) string {
 		line("")
 		line("Done")
 		for _, t := range finished {
-			line("- %s", clean(t.ID))
+			line("- %s", clip(clean(t.ID), idCap))
 			if len(t.Does) > 0 {
 				line("  intended: %s", list(t.Does, "; "))
 			}
-			if len(t.Accomplished) > 0 {
-				line("  actual: %s", list(t.Accomplished, "; "))
-			}
-			if len(t.Modified) > 0 {
-				line("  modified: %s", list(t.Modified, ", "))
-			}
-			if len(t.VerifiedHow) > 0 {
-				line("  verified: %s", list(t.VerifiedHow, "; "))
-			}
+			retro(line, t)
 		}
 	}
 	line("")
 	line("For the next chat")
-	line("Work only on the pinned task. Stay in scope. Open the plan file in Rex.")
+	if pin == nil {
+		line("No task is pinned. Pin one in Rex before starting work. Open the plan file in Rex.")
+	} else {
+		line("Work only on the pinned task. Stay in scope. Open the plan file in Rex.")
+	}
 	line("Do not inject tools or expand into scope.out. If the plan is wrong, edit the JSON.")
-	line("When you finish, end your final reply with two lines:")
+	line("When you finish, end your final reply with these lines:")
 	line("accomplished: <what you actually did>")
 	line("verified: <how you checked it>")
+	line("and, last, the rex-sendoff line below as it is.")
 	line("")
 	b.WriteString(Fingerprint(clean(rel), clean(pinID)))
 	b.WriteString("\n")
@@ -176,9 +192,14 @@ func sendoff(p *Plan, rel string, done int, short bool) string {
 }
 
 // near is a task worth listing in a short brief: the pin, what it waits
-// on, what waits on it, and every unfinished leaf.
-func near(g *Graph, t, pin *Task) bool {
-	if pin == nil || t == pin || !Finished(t.Status) {
+// on, and every unfinished task.
+func near(t, pin *Task) bool {
+	return pin == nil || !Finished(t.Status) || core(t, pin)
+}
+
+// core is the pin itself or what it waits on: always listed.
+func core(t, pin *Task) bool {
+	if pin == nil || t == pin {
 		return true
 	}
 	for _, d := range pin.DependsOn {
@@ -187,6 +208,23 @@ func near(g *Graph, t, pin *Task) bool {
 		}
 	}
 	return false
+}
+
+// retro is a task's retrospective: what was done, changed and checked,
+// and the notes left for the next send-off.
+func retro(line func(string, ...any), t *Task) {
+	if len(t.Accomplished) > 0 {
+		line("  actual: %s", list(t.Accomplished, "; "))
+	}
+	if len(t.Modified) > 0 {
+		line("  modified: %s", list(t.Modified, ", "))
+	}
+	if len(t.VerifiedHow) > 0 {
+		line("  verified: %s", list(t.VerifiedHow, "; "))
+	}
+	if n := clean(t.CompletedNotes); n != "" {
+		line("  notes: %s", clip(n, fieldCap))
+	}
 }
 
 func taskName(t *Task) string {
@@ -229,7 +267,7 @@ func Brief(p *Plan, rel string) string {
 		line("Goal now: %s", clip(goal, 2*fieldCap))
 		ids := make([]string, 0, len(p.Tasks))
 		for i := range p.Tasks {
-			ids = append(ids, taskName(&p.Tasks[i]))
+			ids = append(ids, clip(clean(taskName(&p.Tasks[i])), idCap))
 		}
 		if len(ids) == 0 {
 			line("Tasks now: none")

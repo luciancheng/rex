@@ -67,6 +67,7 @@ type app struct {
 	briefs     [2]*briefView       // per place, while the Send-off overlay is open
 	copy       func(string) string // copies a brief and says what happened; nil = no clipboard
 	plainOut   string              // a brief to print on the normal screen (o⏎)
+	plainText  string              // the brief on the normal screen, to print again after a stop
 	plainShown bool                // the brief is on the normal screen; ⏎ returns
 	plainBack  bool                // come back to the live screen
 }
@@ -520,10 +521,16 @@ func (a *app) handleKey(key string) bool {
 }
 
 func (a *app) applyKey(key string) bool {
-	if a.plainShown && key != CtrlC {
-		// The brief is on the normal screen: only ⏎ comes back.
-		if key == "\r" || key == "\n" {
+	if a.plainShown {
+		// The brief is on the normal screen: ⏎ comes back; Ctrl+C comes
+		// back too, with quit armed where the footer can say so.
+		switch key {
+		case "\r", "\n":
+			a.plainShown, a.plainBack, a.quitPending = false, true, false
+			return true
+		case CtrlC:
 			a.plainShown, a.plainBack = false, true
+			a.quitPending, a.quitTicks = true, QuitWindowTicks
 			return true
 		}
 		return false
@@ -831,7 +838,7 @@ func (a *app) openedPlan() {
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
 		for place := range a.overlay {
-			if a.overlay[place] == overlayPin || a.overlay[place] == overlayDone {
+			if a.overlay[place] == overlayPin || a.overlay[place] == overlayDone || a.overlay[place] == overlaySendoff {
 				a.overlay[place] = overlayNone // it was about the old plan
 				a.form[place] = nil
 				if PaneKind(place) != a.pane {
@@ -967,6 +974,7 @@ func (a *app) pollDoc() bool {
 		a.outline.keepSel(a.doc.plan)
 	}
 	a.notePin()
+	a.refreshBriefs()
 	if summary != "" {
 		a.flash("plan updated · "+summary, "accent")
 		a.tapeLine("plan", summary)

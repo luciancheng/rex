@@ -76,7 +76,10 @@ var (
 	// The path may hold spaces; the id is a slug, so trailing punctuation
 	// (a backtick, a full stop) isn't part of it.
 	fingerprint = regexp.MustCompile(`rex-sendoff:\s*(.+?)#([A-Za-z0-9_.-]*[A-Za-z0-9_-])`)
-	testCommand = regexp.MustCompile(`(?i)\b(go test|go vet|npm (run )?test|pnpm test|yarn test|pytest|cargo test|make (test|check)|bun test|vitest|jest|rspec|mvn test|gradle test)\b`)
+	// A pasted brief carries the fingerprint as a line of its own; a
+	// prompt that merely mentions one is not a send-off.
+	fingerprintLine = regexp.MustCompile(`(?m)^rex-sendoff:[ \t]*(.+)#([A-Za-z0-9_.-]*[A-Za-z0-9_-])[ \t]*$`)
+	testCommand     = regexp.MustCompile(`(?i)\b(go test|go vet|npm (run )?test|pnpm test|yarn test|pytest|cargo test|make (test|check)|bun test|vitest|jest|rspec|mvn test|gradle test)\b`)
 )
 
 // gather reads the evidence for task id out of events, which are raw

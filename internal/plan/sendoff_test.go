@@ -52,9 +52,10 @@ Files: internal/tui/plans.go, internal/tui/live.go, internal/tui/plans_test.go
 For the next chat
 Work only on the pinned task. Stay in scope. Open the plan file in Rex.
 Do not inject tools or expand into scope.out. If the plan is wrong, edit the JSON.
-When you finish, end your final reply with two lines:
+When you finish, end your final reply with these lines:
 accomplished: <what you actually did>
 verified: <how you checked it>
+and, last, the rex-sendoff line below as it is.
 
 rex-sendoff: rex/plans/rex_file_tasks/file_storage.rex.json#card-highlight
 `
@@ -120,5 +121,51 @@ func TestBrief(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q\n%s", want, got)
 		}
+	}
+}
+
+func TestSendoffCarriesNotesAndTheLastAttempt(t *testing.T) {
+	got, _ := Sendoff(mustParse(t, `{"tasks": [
+		{"id": "a", "status": "done", "completed_notes": "the API key lives in .env.example"},
+		{"id": "b", "status": "active", "accomplished": ["half of it"], "completed_notes": "the flaky test is TestX"}
+	]}`), "p.rex.json")
+	for _, want := range []string{"- a\n  notes: the API key lives in .env.example", "Last time:\n  actual: half of it\n  notes: the flaky test is TestX"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q\n%s", want, got)
+		}
+	}
+}
+
+func TestSendoffKeepsThePinWithManyOpenTasks(t *testing.T) {
+	var tasks []string
+	long := strings.Repeat("an open task with a long name ", 3)
+	for i := 0; i < 150; i++ {
+		tasks = append(tasks, fmt.Sprintf(`{"id": "open-%03d", "title": %q, "depends_on": ["pin"]}`, i, long))
+	}
+	pin := `{"id": "pin", "status": "active", "does": ["the real work"], "verify": ["go test ./..."], "files": ["a.go"]}`
+	got, _ := Sendoff(mustParse(t, `{"tasks": [`+pin+","+strings.Join(tasks, ",")+`]}`), "p.rex.json")
+	if len(got) > sendoffCap {
+		t.Fatalf("%d bytes", len(got))
+	}
+	for _, want := range []string{"### pin", "Does: the real work", "Verify: go test ./...", "Files: a.go", "more in the plan file", "rex-sendoff: p.rex.json#pin"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q\n%s", want, got)
+		}
+	}
+}
+
+func TestBriefsNeverCarryEscapes(t *testing.T) {
+	p := mustParse(t, "{\"title\": \"t\\u001b]0;pwned\\u0007\", \"tasks\": [{\"title\": \"x\\u001b[2J\"}, {\"id\": \"a\\u001b]52;c;aGk=\\u0007\"}]}")
+	for _, s := range []string{Brief(p, "p.rex.json"), func() string { s, _ := Sendoff(p, "p.rex.json"); return s }()} {
+		if strings.ContainsRune(s, 0x1b) || strings.ContainsRune(s, 0x07) {
+			t.Fatalf("an escape reached a brief: %q", s)
+		}
+	}
+}
+
+func TestSendoffClipsAHugeTitle(t *testing.T) {
+	got, _ := Sendoff(mustParse(t, `{"title": "`+strings.Repeat("x", 9000)+`", "tasks": [{"id": "pin", "does": ["work"]}]}`), "p.rex.json")
+	if len(got) > sendoffCap || !strings.Contains(got, "### pin") || !strings.HasSuffix(got, "rex-sendoff: p.rex.json#pin\n") {
+		t.Fatalf("%d bytes", len(got))
 	}
 }

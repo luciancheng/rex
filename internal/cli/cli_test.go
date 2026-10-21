@@ -360,7 +360,7 @@ func TestIngestInstallFlags(t *testing.T) {
 	if data, _ := os.ReadFile(hooks); strings.Contains(string(data), "ingest --source") {
 		t.Fatalf("uninstall left a rex hook:\n%s", data)
 	}
-	if code, _, stderr := run("--install", "vim"); code != 1 || !strings.Contains(stderr, "cursor, auto") {
+	if code, _, stderr := run("--install", "vim"); code != 1 || !strings.Contains(stderr, "cursor") || !strings.Contains(stderr, ", auto)") {
 		t.Fatalf("an unknown harness is an install error (exit 1, never 2), listing the names: %d %q", code, stderr)
 	}
 	if code, _, _ := run("--install"); code != 1 {

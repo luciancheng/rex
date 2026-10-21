@@ -587,8 +587,8 @@ func (p *Plan) Task(id string) *Task {
 	return nil
 }
 
-// Stub is a new, empty v1 plan for stem, every field present so an agent
-// or a human can fill it in.
+// Stub is a new, empty v1 plan for stem, every field present (but the
+// optional stack base) so an agent or a human can fill it in.
 func Stub(stem string) []byte {
 	p := Plan{
 		Version: Version,

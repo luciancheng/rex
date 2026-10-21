@@ -82,6 +82,18 @@ var (
 	testCommand     = regexp.MustCompile(`(?i)\b(go test|go vet|npm (run )?test|pnpm test|yarn test|pytest|cargo test|make (test|check)|bun test|vitest|jest|rspec|mvn test|gradle test)\b`)
 )
 
+// lastFingerprint is the reply's own send-off line: its last one, on a
+// line of its own if any. A reply may quote the line of the task its PR
+// sits on before ending with its own.
+func lastFingerprint(text string) []string {
+	for _, re := range []*regexp.Regexp{fingerprintLine, fingerprint} {
+		if all := re.FindAllStringSubmatch(text, -1); len(all) > 0 {
+			return all[len(all)-1]
+		}
+	}
+	return nil
+}
+
 // gather reads the evidence for task id out of events, which are raw
 // events from this repo, oldest first. verify is the task's own verify
 // list: a command matching it is preferred as the "verified" suggestion.
@@ -140,7 +152,7 @@ func gather(events []watch.Event, scope watch.Scope, since time.Time, rel, id st
 				runs = append(runs, run{cmd: cmd, result: result})
 			}
 		case e.Kind == "text":
-			if m := fingerprint.FindStringSubmatch(e.Text); m != nil && (m[2] != id || (rel != "" && strings.TrimSpace(m[1]) != rel)) {
+			if m := lastFingerprint(e.Text); m != nil && (m[2] != id || (rel != "" && strings.TrimSpace(m[1]) != rel)) {
 				continue // a reply about another task's (or plan's) send-off
 			}
 			if m := trailerDid.FindStringSubmatch(e.Text); m != nil {

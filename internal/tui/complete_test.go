@@ -86,6 +86,15 @@ func TestDoneFromTheTrailer(t *testing.T) {
 	}
 }
 
+func TestAReplyQuotingTheLowerPRStillBinds(t *testing.T) {
+	a, c, _ := openDemo(t, demoPlan, 120, 32)
+	reply := "Opened the PR on top of `rex-sendoff: rex/plans/cuj/demo.rex.json#plans-ui`.\n\naccomplished: the bar spans all three rows\nverified: go test passed\n\nrex-sendoff: rex/plans/cuj/demo.rex.json#card-highlight"
+	ev := gather([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "text", Text: reply})}, a.scope, c.t, "rex/plans/cuj/demo.rex.json", "card-highlight", nil)
+	if ev.did != "the bar spans all three rows" || ev.verified != "go test passed" {
+		t.Fatalf("a reply binds by its own last line: %+v", ev)
+	}
+}
+
 func TestDoneTypedAndCancelled(t *testing.T) {
 	a, _, path := openDemo(t, demoPlan, 80, 24)
 	before, _ := os.ReadFile(path)

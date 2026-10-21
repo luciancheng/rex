@@ -22,8 +22,9 @@ const (
 func Fingerprint(rel, task string) string { return "rex-sendoff: " + rel + "#" + task }
 
 // Sendoff is the handoff for the next chat or person, generated only from
-// the plan (issue #9's template, plus a short Done section, the reply
-// trailer request and the fingerprint). rel is the plan's repo-relative
+// the plan (issue #9's template, plus a short Done section, for a stacked
+// plan a Stack part saying where the pin's PR goes, the reply trailer
+// request and the fingerprint). rel is the plan's repo-relative
 // path. Every field is cleaned of terminal control characters.
 func Sendoff(p *Plan, rel string) (string, error) {
 	if p == nil || len(p.Tasks) == 0 {
@@ -191,7 +192,7 @@ func sendoff(p *Plan, rel string, done, open int) string {
 	}
 	line("Do not inject tools or expand into scope.out. If the plan is wrong, edit the JSON.")
 	if pin != nil && p.Stacked() {
-		stackLines(line, p, g, pin)
+		stackLines(line, p, g, pin, clean(rel))
 	}
 	line("When you finish, end your final reply with these lines:")
 	line("accomplished: <what you actually did>")

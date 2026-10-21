@@ -105,10 +105,14 @@ func TestSendoffStack(t *testing.T) {
 		{"on the PR below", plan("done", "active", "pending"), []string{
 			"Stack: each leaf task is one PR, stacked in plan file order on dev.\n- Branch: feature/card_highlight\n- Base: feature/plans_ui (plans-ui, done) · once its PR has merged, use dev\n",
 			"gh pr create --base feature/plans_ui --head feature/card_highlight",
-			"gh stack link --base dev feature/plans_ui feature/card_highlight",
+			"gh stack link --base dev feature/plans_ui feature/card_highlight, leaving out any whose PR merged",
+			"if it isn't on the base yet, rebase it onto the base and retarget its PR",
+			"(copy it out of the repo, git checkout -- rex/plans/demo.rex.json, switch, copy it back)",
 		}, []string{"Below it", "PRs above it"}},
+		// third up: --base names the bottom's base, so the whole done chain is listed
+		{"third in the stack", plan("done", "done", "active"), []string{"- Base: feature/card_highlight (card-highlight, done)", "gh stack link --base dev feature/plans_ui feature/card_highlight feature/load_outline,"}, []string{"gh stack link --base dev feature/card_highlight feature/load_outline"}},
 		{"bottom", plan("pending", "pending", "pending"), []string{"- Base: dev (the bottom of the stack)\n", "gh pr create --base dev --head feature/plans_ui"}, []string{"gh stack link", "the PR it sits on"}},
-		{"fix a lower PR", plan("active", "done", "done"), []string{"PRs above it, already done: feature/card_highlight, feature/load_outline.", "git rebase --update-refs feature/plans_ui", "retarget the PR of feature/card_highlight to feature/plans_ui"}, nil},
+		{"fix a lower PR", plan("active", "done", "done"), []string{"PRs above it, already done: feature/card_highlight, feature/load_outline.", "git rebase --autostash --update-refs feature/plans_ui", "retarget the PR of feature/card_highlight to feature/plans_ui"}, nil},
 		{"out of order", plan("done", "blocked", "active"), []string{"- Below it, not done yet: card-highlight (blocked).", "gh pr create --base feature/plans_ui --head feature/load_outline"}, nil},
 	}
 	for _, c := range cases {
@@ -141,10 +145,37 @@ func TestSendoffStackNeverPutsUnsafeNamesInCommands(t *testing.T) {
 			t.Fatalf("%q reached the brief:\n%s", bad, got)
 		}
 	}
-	for _, want := range []string{"on the trunk (", `this task's "branch" is not a plain branch name`, "the branch of a (done; not in the plan", "gh pr create --base <base> --head <branch>", "gh stack link --base <trunk> <base> <branch>"} {
+	for _, want := range []string{"on the trunk (", `this task's "branch" can't be used (not a plain branch name)`, `the branch of a (done; its "branch" in the plan can't be used: not a plain branch name)`, "gh pr create --base <base> --head <branch>", "gh stack link --base <trunk> <the stack's branches, bottom first> <branch>"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q\n%s", want, got)
 		}
+	}
+}
+
+func TestSendoffNeverNamesABranchRexFlagged(t *testing.T) {
+	for name, tasks := range map[string]string{
+		"the base": `{"id": "a", "status": "active", "branch": "dev"}`,
+		"shared":   `{"id": "a", "status": "done", "branch": "x"}, {"id": "b", "status": "active", "branch": "x"}`,
+		"nested":   `{"id": "a", "status": "done", "branch": "feature/x"}, {"id": "b", "status": "active", "branch": "feature/x/part2"}`,
+	} {
+		p := mustParse(t, `{"base": "dev", "tasks": [`+tasks+`]}`)
+		got, _ := Sendoff(p, "p.rex.json")
+		stack := got[strings.Index(got, "\nStack: "):]
+		if len(p.Problems) == 0 || !strings.Contains(stack, `"branch" can't be used`) || strings.Contains(stack, "--head dev") || strings.Contains(stack, "--head x") || strings.Contains(stack, "--head feature/x/part2") {
+			t.Errorf("%s: %s\n%s", name, problems(p), stack)
+		}
+	}
+	if p := mustParse(t, `{"base": "feature/auth", "tasks": [{"id": "a", "branch": "feature/auth/login"}]}`); len(p.Problems) != 1 || !strings.Contains(p.Problems[0].Msg, "can't both exist in git") {
+		t.Fatalf("a branch under the base is a Problem: %s", problems(p))
+	}
+}
+
+func TestAReopenedPinFindsItsOwnBranch(t *testing.T) {
+	got, _ := Sendoff(mustParse(t, `{"id": "demo", "base": "dev", "tasks": [
+		{"id": "a", "status": "active", "accomplished": ["the first try"]},
+		{"id": "b", "status": "done", "branch": "feature/b"}]}`), "p.rex.json")
+	if !strings.Contains(got, "none in the plan, but this task had a PR · find it") || strings.Contains(got, "(else demo/a)") {
+		t.Fatalf("a task that had a PR keeps its branch:\n%s", got)
 	}
 }
 

@@ -741,6 +741,7 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 	}
 	a.feed = path
 	tail := watch.NewEventTail(path, true)
+	a.health = readHealth(path)
 	a.warmStart(watch.LastEvents(path, warmRead), time.Now())
 	keys := newKeyReader(stdin)
 	paint := &renderer{full: true}

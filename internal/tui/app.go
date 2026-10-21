@@ -46,6 +46,7 @@ type app struct {
 
 	scope  watch.Scope
 	hidden int // events from other repos' agents, not shown
+	health feedHealth
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -115,6 +116,9 @@ func (a *app) composeOptions() ComposeOptions {
 	textW := PaneTextWidth(a.columns)
 	if textW > 0 {
 		opt.LogView = a.logView(textW)
+		if len(a.log) == 0 {
+			opt.LogView = a.health.lines(textW, a.hidden, time.Now())
+		}
 	}
 	if a.overlay[a.pane] == overlayHelp {
 		other := "tab tape"
@@ -660,7 +664,8 @@ func (a *app) overlayKey(key string) bool {
 
 // helpBody is the Help overlay's lines at width.
 func (a *app) helpBody(width int) []LogLine {
-	return helpLines(width, a.feed, a.hidden)
+	help := append(helpLines(width), LogLine{Kind: "gap"})
+	return append(help, a.health.lines(width, a.hidden, time.Now())...)
 }
 
 // syncPlanInput hands the plan draft to the screen that reads it: Browse

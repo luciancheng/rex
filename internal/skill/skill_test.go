@@ -128,3 +128,12 @@ func TestTheSkillsExampleIsAValidPlan(t *testing.T) {
 		t.Fatalf("%v %+v", err, p)
 	}
 }
+
+func TestTheSkillTeachesAReviewPass(t *testing.T) {
+	s := string(RexPlan)
+	for _, want := range []string{"### Review before the PR", "Reviewers change nothing", "**Design:**", "**UI**, only when", "**Break it:**", "**Lint:**", "final readiness check", "own review rules"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}

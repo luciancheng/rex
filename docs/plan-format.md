@@ -179,4 +179,4 @@ An old `{}` plan is still valid: it is a plan with no tasks.
 
 ## Teaching an agent
 
-`rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan/SKILL.md`, or the repo's `.claude/skills/` with `--project`), which teaches this format, the rules above, and the reply trailer. In Rex, `b⏎` copies a shorter planning brief to paste into any agent.
+`rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan/SKILL.md`, or the repo's `.claude/skills/` with `--project`), which teaches this format, the rules above, the reply trailer, and a read-only review pass before each task's PR (one reviewer per job: design, the UI if it changed, breaking it, lint; each finding fixed or explained; then a final readiness check). In Rex, `b⏎` copies a shorter planning brief to paste into any agent.

@@ -100,9 +100,22 @@ verified: <how you checked it, one line>
 rex-sendoff: <the same line as at the end of the brief>
 ```
 
+### Review before the PR
+
+Before you open the task's PR, mark it ready, or push new commits to it, review it read-only. If the repo has its own review rules, follow those instead.
+
+- **Reviewers change nothing.** Each one reads the diff and the code, runs what it needs in a scratch copy outside the repo, and reports each finding with a severity (blocker: must not merge; major: wrong or risky, fix it before the PR or explain why not; minor: worth fixing now; nit: polish), file:line, evidence and a suggested fix. If you can start subagents, give each job its own read-only subagent, side by side; otherwise do the passes yourself, one at a time, without editing in between.
+- **One job each:**
+  - **Design:** how the change fits the system: effects across modules, failure modes, the repo's rules and the task's scope.
+  - **UI**, only when the UI or CLI output changed: drive it like a user, in an isolated session, at narrow and wide sizes.
+  - **Break it:** hostile inputs, edge cases, concurrency, and regressions against the base branch, with tests that fail before a fix.
+  - **Lint:** the repo's formatter, linters, type checks and pre-PR gate, and docs the change made stale.
+- **Then fix** each finding, with a test where it can have one, or say in the PR body why you skipped it. The reviewers' runs are theirs: your `verified:` line names the check you ran yourself.
+- **Then a final readiness check:** one more read-only pass over the fixed branch: the diff, the tests and their output, the PR body (problem, what changed, why, how, tests run, captures for UI changes) and the issue it closes. Repeat while it still finds blockers or majors that are neither fixed nor explained, then open or update the PR.
+
 ### Its PR, when the send-off has a Stack part
 
-Do these steps when the repo's own rules for a PR are met (its checks, review and PR body):
+Do these steps when the repo's own rules for a PR are met (its checks, the review above, and its PR body):
 
 1. **Cut.** Create the `Branch:` from the `Base:` branch (`git switch -c <branch> <base>`). If it already exists (an earlier chat started it, or the task was reopened), switch to it and add commits rather than amending them. If it isn't on the base yet (the base moved, or a lower task finished since), rebase it onto the base with `--autostash` and retarget its PR. If the PR below has merged, cut from the plan's `base`; after a squash merge, move an existing branch with `git rebase --autostash --onto <plan base> <old base> <branch>`. If the PR below was closed without merging, stop and ask.
 2. **Record.** If the plan has no branch for this task, or you used another name, write it as this task's `"branch"`, touching nothing else.

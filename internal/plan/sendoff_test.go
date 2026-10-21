@@ -52,6 +52,7 @@ Files: internal/tui/plans.go, internal/tui/live.go, internal/tui/plans_test.go
 For the next chat
 Work only on the pinned task. Stay in scope. Open the plan file in Rex.
 Do not inject tools or expand into scope.out. If the plan is wrong, edit the JSON.
+Before you open or update the PR, review it read-only, one reviewer per job (design, the UI if it changed, breaking it, lint and checks); fix or explain each finding, then a final readiness check. Repo review rules win.
 When you finish, end your final reply with these lines:
 accomplished: <what you actually did>
 verified: <how you checked it>
@@ -188,5 +189,23 @@ func TestSendoffClipsAHugeTitle(t *testing.T) {
 	got, _ := Sendoff(mustParse(t, `{"title": "`+strings.Repeat("x", 9000)+`", "tasks": [{"id": "pin", "does": ["work"]}]}`), "p.rex.json")
 	if len(got) > sendoffCap || !strings.Contains(got, "### pin") || !strings.HasSuffix(got, "rex-sendoff: p.rex.json#pin\n") {
 		t.Fatalf("%d bytes", len(got))
+	}
+}
+
+func TestSendoffAsksForAReviewPass(t *testing.T) {
+	got, _ := Sendoff(mustParse(t, issue9Plan), issue9Rel)
+	i := strings.Index(got, "review it read-only, one reviewer per job")
+	if i < 0 || i > strings.Index(got, "When you finish") || !strings.Contains(got, "Before you open or update the PR") {
+		t.Fatalf("the review pass comes before the trailer request:\n%s", got)
+	}
+	stacked, _ := Sendoff(mustParse(t, `{"base": "dev", "tasks": [{"id": "a", "status": "active", "branch": "f/a"}]}`), "p.rex.json")
+	if r := strings.Index(stacked, "review it read-only"); r < 0 || r > strings.Index(stacked, "\nStack: ") || !strings.Contains(stacked, "checks pass and the review is done, push it") {
+		t.Fatalf("in a stack, the review comes before the step that opens the PR:\n%s", stacked)
+	}
+	if done, _ := Sendoff(mustParse(t, `{"tasks": [{"id": "a", "status": "done"}]}`), "p.rex.json"); strings.Contains(done, "review it read-only") {
+		t.Fatal("with nothing pinned there is no PR to review")
+	}
+	if b := Brief(mustParse(t, issue9Plan), issue9Rel); !strings.Contains(b, "before it opens, it gets a read-only review") {
+		t.Fatalf("the planning brief says each PR is reviewed:\n%s", b)
 	}
 }

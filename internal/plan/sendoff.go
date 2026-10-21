@@ -22,9 +22,10 @@ const (
 func Fingerprint(rel, task string) string { return "rex-sendoff: " + rel + "#" + task }
 
 // Sendoff is the handoff for the next chat or person, generated only from
-// the plan (issue #9's template, plus a short Done section, for a stacked
-// plan a Stack part saying where the pin's PR goes, the reply trailer
-// request and the fingerprint). rel is the plan's repo-relative
+// the plan (issue #9's template, plus a short Done section, a request to
+// review the pin's PR read-only before it opens, for a stacked plan a Stack
+// part saying where that PR goes, the reply trailer request and the
+// fingerprint). rel is the plan's repo-relative
 // path. Every field is cleaned of terminal control characters.
 func Sendoff(p *Plan, rel string) (string, error) {
 	if p == nil || len(p.Tasks) == 0 {
@@ -46,16 +47,24 @@ func Sendoff(p *Plan, rel string) (string, error) {
 }
 
 // keepTail cuts s to n bytes. The closing instructions and the
-// fingerprint always stay, since the tape and the completion form rely on
-// them; the pin's Next section stays when it fits in most of what is left,
-// and the task list is what gives way.
+// fingerprint stay, since the tape and the completion form rely on them;
+// the pin's Next section stays when it fits in most of what is left, and
+// the task list is what gives way. Only when the footer alone doesn't fit
+// does the Stack part give way from its end, before the trailer request
+// and the fingerprint.
 func keepTail(s string, n int) string {
 	const cut = "\n… (see plan file)"
 	var foot string
 	if j := strings.LastIndex(s, "\nFor the next chat\n"); j >= 0 {
 		s, foot = s[:j], s[j:]
 	}
-	if len(foot)+len(cut)+64 > n { // a huge pin id or path: no room to keep it whole
+	if len(foot)+len(cut)+64 > n {
+		// No room for the whole footer: keep its end, the trailer request
+		// and the fingerprint, and cut what comes before it. A huge pin id
+		// or path leaves no room even for that.
+		if k := strings.LastIndex(foot, "\nWhen you finish, "); k >= 0 && len(foot)-k+len(cut)+64 <= n {
+			return capBytes(s+foot[:k], n-(len(foot)-k)-len(cut)) + cut + foot[k:]
+		}
 		return capBytes(s+foot, n)
 	}
 	n -= len(foot)
@@ -191,6 +200,9 @@ func sendoff(p *Plan, rel string, done, open int) string {
 		line("Work only on the pinned task. Stay in scope. Open the plan file in Rex.")
 	}
 	line("Do not inject tools or expand into scope.out. If the plan is wrong, edit the JSON.")
+	if pin != nil {
+		line("Before you open or update the PR, review it read-only, one reviewer per job (design, the UI if it changed, breaking it, lint and checks); fix or explain each finding, then a final readiness check. Repo review rules win.")
+	}
 	if pin != nil && p.Stacked() {
 		stackLines(line, p, g, pin)
 	}
@@ -265,7 +277,7 @@ func Brief(p *Plan, rel string) string {
 	line("- ids are short, stable slugs; never renumber or reuse them")
 	line("- file order is do order and stack order; keep the tasks array flat")
 	line("- parent groups tasks under a heading (a heading is not a PR); depends_on lists hard prerequisites only, all earlier in the file")
-	line("- one task should fit one PR a human can review in one sitting")
+	line("- one task should fit one PR a human can review in one sitting; before it opens, it gets a read-only review: one reviewer per job (design, the UI if it changed, breaking it, lint), each finding fixed or explained, then a final readiness check")
 	line("- the leaf tasks stack in file order: the first PR targets base, each next one the branch of the task before it, so each task builds and passes its tests on the tasks before it alone")
 	line("- base = the branch the stack lands on (the repo's trunk, e.g. main or dev); branch = a leaf task's PR branch, named the way this repo names branches (letters, digits, . _ - /); leave both out if the work won't be PRs")
 	line("- work that should merge on its own, apart from this stack, goes in its own plan")

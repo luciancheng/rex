@@ -376,10 +376,11 @@ sendoff · esc close · c⏎ copy · o⏎ print plain
 
   Rex adds:
   - a short Done section (intended vs actual, modified, verified, and the task's `completed_notes`);
+  - when a task is pinned, a request to review its PR read-only before opening or updating it, one reviewer per job (design, the UI if it changed, breaking it, lint and checks), fix or explain each finding, then a final readiness check; the repo's own review rules win;
   - for a plan that is a stack (docs/plan-format.md, Stacks), a `Stack:` part in For the next chat: the pin's branch, its base (the nearest earlier done task's branch, else the plan's `base`), earlier tasks not done yet, how to cut, open and link its PR, done PRs above it to restack, that the plan file stays uncommitted while the stack is in flight, and that repo rules win. It comes from the JSON like everything else; Rex runs no git;
   - a request that the agent end its final reply with `accomplished:` / `verified:` lines and then the fingerprint line, so the completion form knows which task the reply is about;
   - the fingerprint `rex-sendoff: <path>#<task>`.
-- **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`. To fit, finished tasks leave the list first, then open tasks beyond the pin and what it waits on (`… N more in the plan file`), then old Done entries (the last one stays while it fits). The pin's Next section stays unless it alone would crowd out the rest, and the closing instructions (with the Stack part) and the fingerprint are never cut.
+- **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`. To fit, finished tasks leave the list first, then open tasks beyond the pin and what it waits on (`… N more in the plan file`), then old Done entries (the last one stays while it fits). The pin's Next section stays unless it alone would crowd out the rest, and the closing instructions (with the Stack part) and the fingerprint are kept whole. Only when they alone don't fit, which takes every field near its cap, the Stack part gives way from its end, and the trailer request and the fingerprint still end the brief.
 - **Always from the file as it is now.** An open overlay is rebuilt when the plan changes, and `c⏎` / `o⏎` use the plan as it is at that moment. A missing or unparsable file refuses (`can't send off: …`) rather than send the last good copy.
 - **Copying is honest.**
   - Rex uses the native tool (`pbcopy`, `wl-copy`, `xclip` or `xsel`, `clip.exe`) and says `copied (<tool>)` only if it exited 0.
@@ -392,7 +393,7 @@ sendoff · esc close · c⏎ copy · o⏎ print plain
 `b⏎` / `brief⏎` opens the same overlay in **planning mode**. It has the same copy status, `c⏎`, `o⏎` and Esc, and leaves the tape record `── brief · copied (pbcopy) ──`. The planning brief contains:
 - the plan path;
 - the v1 shape in a few lines;
-- the field rules (ids are short stable slugs; file order is do order and stack order; `parent` groups tasks; `depends_on` lists hard prerequisites only, all earlier in the file; one task should fit one PR; optional `base` and `branch` for a stack of PRs; separate work, separate plan);
+- the field rules (ids are short stable slugs; file order is do order and stack order; `parent` groups tasks; `depends_on` lists hard prerequisites only, all earlier in the file; one task should fit one PR, reviewed read-only before it opens; optional `base` and `branch` for a stack of PRs; separate work, separate plan);
 - `fill or refine <path>`.
 
 The outline reloads live while the agent writes the file.

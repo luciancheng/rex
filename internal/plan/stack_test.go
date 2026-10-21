@@ -212,7 +212,9 @@ func TestSendoffKeepsTheStackWhenTrimmed(t *testing.T) {
 	if len(got) > sendoffCap || !strings.HasSuffix(got, "rex-sendoff: big.rex.json#"+strings.Repeat("p", 70)+"\n") || !strings.Contains(got, "\nStack: ") || !strings.Contains(got, "--update-refs") || !strings.Contains(got, "(see plan file)") {
 		t.Fatalf("%d bytes:\n%s", len(got), got[max(0, len(got)-2500):])
 	}
-	if i := strings.Index(got, "\nFor the next chat\n"); len(got)-i > 2600 {
+	// measured 2761 with the review line; the hard limit is keepTail's room
+	// (TestTheStackFitsWithEveryFieldAtItsCap keeps the fingerprint there)
+	if i := strings.Index(got, "\nFor the next chat\n"); len(got)-i > 2900 {
 		t.Fatalf("footer %d bytes", len(got)-i)
 	}
 }
@@ -261,5 +263,22 @@ func TestTheLinkFallsBackToWords(t *testing.T) {
 	// the PR above has no branch
 	if got := stack(`{"id": "a", "status": "done", "branch": "f/a"}, {"id": "b", "status": "active", "branch": "f/b"}, {"id": "c", "status": "done"}`); !strings.Contains(got, "this task's in its place>") || strings.Contains(got, "<<") {
 		t.Fatal(got)
+	}
+}
+
+// Past every cap, with a long plan path: the closing lines still end the
+// brief, and what gives way is the Stack part above them.
+func TestTheClosingLinesSurviveALongPath(t *testing.T) {
+	id := func(c byte) string { return strings.Repeat(string(c), 80) }
+	br := func(c byte) string { return "f/" + strings.Repeat(string(c), 78) }
+	var tasks []string
+	for i, st := range []string{"done", "done", "pending", "blocked", "pending", "active", "done", "done", "done"} {
+		c := byte('a' + i)
+		tasks = append(tasks, fmt.Sprintf(`{"id": %q, "status": %q, "branch": %q}`, id(c), st, br(c)))
+	}
+	rel := "rex/plans/" + strings.Repeat("deep/", 50) + "p.rex.json"
+	got, _ := Sendoff(mustParse(t, `{"id": "`+id('z')+`", "base": "`+br('y')+`", "tasks": [`+strings.Join(tasks, ",")+`]}`), rel)
+	if len(got) > sendoffCap || !strings.HasSuffix(got, "rex-sendoff: "+rel+"#"+id('f')+"\n") || !strings.Contains(got, "When you finish, end your final reply") || !strings.Contains(got, "accomplished: <what you actually did>") {
+		t.Fatalf("%d bytes, ends:\n%s", len(got), got[max(0, len(got)-700):])
 	}
 }

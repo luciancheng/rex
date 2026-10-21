@@ -65,6 +65,7 @@ type app struct {
 	form       [2]*doneForm                   // per place, while the completion form is open
 	seen       []watch.Event                  // raw events from this repo, for completion evidence
 	briefs     [2]*briefView                  // per place, while the Send-off overlay is open
+	drift      driftState                     // drift from the current pin, shown only
 	copy       func(string) <-chan copyResult // copies a brief off the UI goroutine; nil = no clipboard
 	oscOut     string                         // an OSC 52 copy for the loop to write between frames
 	copying    []pendingCopy                  // copies still running
@@ -343,6 +344,9 @@ func (a *app) statusLine() StatusLine {
 	if a.toast.Text != "" && a.now().Before(a.toastUntil) {
 		return a.toast
 	}
+	if s, ok := a.driftStatus(); ok {
+		return s
+	}
 	if a.doc == nil {
 		return StatusLine{}
 	}
@@ -398,7 +402,7 @@ func (a *app) ingest(fresh []watch.Event) bool {
 		a.health.saw(ev)
 	}
 	hidden := a.hidden
-	fresh = a.own(fromFeed(fresh))
+	fresh = a.own(fromFeed(fresh), true)
 	if len(fresh) == 0 {
 		// A hidden event still changes the count the empty tape shows.
 		return a.hidden != hidden && len(a.log) == 0
@@ -467,7 +471,7 @@ func fromFeed(events []watch.Event) []watch.Event {
 
 // own keeps the events that belong to this repo, with paths shown relative
 // to it, and counts the rest. Events with no known origin are kept.
-func (a *app) own(events []watch.Event) []watch.Event {
+func (a *app) own(events []watch.Event, live bool) []watch.Event {
 	var out []watch.Event
 	for _, ev := range events {
 		if in, known := a.scope.Owns(ev); known && !in {
@@ -475,6 +479,9 @@ func (a *app) own(events []watch.Event) []watch.Event {
 			continue
 		}
 		a.remember(ev)
+		if live {
+			a.checkDrift(ev) // history from before Rex started never counts
+		}
 		out = append(out, a.scope.Display(ev))
 	}
 	return out
@@ -485,7 +492,7 @@ func (a *app) own(events []watch.Event) []watch.Event {
 // is under two minutes old, and the last few events are painted under a
 // "before rex started" rule.
 func (a *app) warmStart(recent []watch.Event, now time.Time) {
-	recent = a.own(fromFeed(recent))
+	recent = a.own(fromFeed(recent), false)
 	if len(recent) == 0 {
 		return
 	}

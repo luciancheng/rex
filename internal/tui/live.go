@@ -33,6 +33,7 @@ var kindColor = map[string]string{
 	"done":     "muted", // a verb's record line, like the rest
 	"sendoff":  "muted",
 	"brief":    "muted",
+	"drift":    "error",
 	"thought":  "muted",
 	"command":  "accent",
 	"question": "error",
@@ -254,6 +255,7 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 	}
 	type group struct {
 		kind  string
+		label string // instead of the kind's label
 		texts []string
 	}
 	var groups []group
@@ -275,6 +277,12 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 				}
 			}
 		}
+		if kind == "drift" {
+			// Its own block per pin, never merged: "drift · <pin>".
+			pin, _ := entry.Meta["pin"].(string)
+			groups = append(groups, group{kind: kind, label: "drift · " + pin, texts: strings.Split(watch.CleanText(entry.Text), "\n")})
+			continue
+		}
 		if n := len(groups); n > 0 && groups[n-1].kind == kind && kind != "text" && kind != "user" {
 			groups[n-1].texts = append(groups[n-1].texts, text)
 			continue
@@ -289,7 +297,9 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 		}
 		if g.kind != "user" {
 			label := kindLabel[g.kind]
-			if label == "" {
+			if g.label != "" {
+				label = g.label
+			} else if label == "" {
 				label = g.kind
 			}
 			lines = append(lines, LogLine{Kind: g.kind, Text: rule(label, width)})

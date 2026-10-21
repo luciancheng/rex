@@ -14,143 +14,182 @@
 </p>
 
 <p align="center">
-  <code>rex start</code>
+  <a href="https://github.com/luciancheng/rex/actions/workflows/ci.yml"><img src="https://github.com/luciancheng/rex/actions/workflows/ci.yml/badge.svg?branch=dev" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/luciancheng/rex" alt="License: MIT" /></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/luciancheng/rex" alt="Go version" /></a>
+  <a href="https://github.com/luciancheng/rex/stargazers"><img src="https://img.shields.io/github/stars/luciancheng/rex" alt="GitHub stars" /></a>
 </p>
 
-<p align="center">
-  macOS · Linux · Windows 10+ &nbsp;·&nbsp; Go 1.22+ &nbsp;·&nbsp; MIT
-</p>
+<p align="center">macOS · Linux · Windows 10+</p>
 
-REX is a watch-only sidecar. It does not run tools, approve them, or steer the agent. You talk to Cursor, Claude Code, Codex or OpenCode as usual. Rex holds the plan you are sending off, and the pane next to the dino shows thoughts, edits, shell, questions, and your prompts as they happen.
+Rex is a terminal sidecar for developers who work with an AI coding agent: Cursor, Claude Code, Codex or OpenCode. You keep talking to your agent as usual. Rex sits in a second terminal with a pixel-art dino and shows two things:
+- **the plan**: a JSON file in your repo that breaks the work into PR-sized tasks;
+- **the tape**: what the agent is doing right now, as it happens (its thoughts, commands, edits, questions, replies and your prompts).
 
-Plans live in the repo at `rex/plans/` as JSON named `<name>.rex.json`. Commit that folder; teammates open the same plan from git. A plan is a goal, hard scope edges, and a flat list of PR-sized tasks, with `parent` for outline and `depends_on` for order ([format v1](docs/plan-format.md)). New plans start as an empty v1 stub for your agent to fill.
+Rex is **watch-only**. It never runs tools, approves them, steers the agent or sends it anything. When you want the agent to start a task, Rex builds a send-off brief from the plan for you to paste into the chat.
 
-The install script wires Cursor. Claude Code is one opt-in command away (`rex ingest --install claude`, or add `--project` to wire just this repo). Codex too: `rex ingest --install codex`, then trust the hooks once in Codex's `/hooks`. OpenCode: `rex ingest --install opencode`. Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once — after that it works from any folder.
+```
+REX plan                            idle · rex/plans/cuj/sendoff-demo.rex.json
+▸ card-highlight  Selected plan card is one block (active)
+── Send-off demo · active · 1/3 ──────────────────────────────────────────────
+  last ✓ plans-ui: Home cards, folder browser, duplicate names refused
+  ✓ plans-ui        Plans navigator · Create, open and browse rex/plans in th…
+▌ ▸ card-highlight  Selected plan card is one block · Bar, border and fill co…
+  · load-outline    Outline view · Opening a plan shows…  after card-highlight
+╭────────────────────────────────────────────────────────────────────────────╮
+│ > s⏎ sendoff · d⏎ done · p⏎ pin · ?⏎ help                                  │
+╰────────────────────────────────────────────────────────────────────────────╯
+outline · tab tape · esc plans · ⏎ detail · ?⏎ help
+```
 
-## Send off a project
+## Requirements
 
-1. **Pick or create a plan** in `rex/plans/`. Folders are for grouping (`rex/plans/onboarding/auth.rex.json`). Duplicate names are refused.
-2. **`rex start`** from the repo. Create a plan, open one, or jump to the latest. Tab is the live tape. The header stays on the current plan path.
-3. **Leave him running** and prompt your agent. Rex watches. Idle when nothing is in flight; typing while the agent is working. Ctrl+C twice to quit.
-
-Opening a plan shows its outline: every task in file order, which one is pinned, what is done, and what is waiting on what. ⏎ on a task shows its detail. Rex re-reads the file as your agent edits it. It does not inject the JSON into the agent — you still send the work off in chat. `s⏎` builds a send-off from the plan file (goal, scope, tasks, the next task, what was done and, for a plan that is a stack of PRs, the task's branch and the branch to cut it from and open its PR against) that asks the agent to review its PR read-only (design, the UI if it changed, breaking it, lint, then a final readiness check) before opening it, for you to paste into a fresh chat or hand to a teammate; Rex never sends it or runs git. `b⏎` gives you a planning brief that asks your agent to fill the plan. When your agent edits files outside the pinned task's folders, or you ask for something its `scope.out` rules out, Rex shows drift (soft or hard) on the status line and the tape; it never corrects the agent. `p⏎` pins a task; `d⏎` marks the pin done and writes what was actually done, which files changed and how it was checked into the plan, prefilled from what your agent said and what Rex saw.
+- [Go 1.22+](https://go.dev/dl/). There are no prebuilt binaries yet, so both installs build from source.
+- macOS, Linux or Windows 10+, and a terminal at least 24 columns wide (66+ to show the dino). It works in Terminal.app, iTerm, Windows Terminal and the VS Code terminal.
+- A git repo for your plans (outside one, Rex says where plans would go).
+- Optional, on Linux: `wl-copy`, `xclip` or `xsel` so Rex can copy briefs to the clipboard.
 
 ## Install
 
 macOS / Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/luciancheng/rex/HEAD/scripts/install.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/luciancheng/rex/HEAD/scripts/install.ps1 | iex
 ```
 
-That builds a binary into `~/.local/bin` (PowerShell adds it to your user PATH; the shell script prints the `export PATH=…` line when it isn't there yet), and wires Cursor (if it's installed) so this machine's agent chat is watched. Claude Code, Codex and OpenCode are opt-in: the script prints the one command for each one it finds. You need [Go 1.22+](https://go.dev/dl/). Open a new terminal, then `cd` into the repo you want to send off and run `rex start`.
+The script builds `rex` into `~/.local/bin`. PowerShell adds that folder to your user PATH; the shell script prints the `export PATH=…` line when it isn't on yours yet. If Cursor is installed, the script wires it. For Claude Code, Codex and OpenCode it prints the one command that wires each one it finds. To install a specific tag, branch or commit, set `REX_REF`, for example `curl -fsSL …/install.sh | REX_REF=dev bash`.
 
-To install a specific tag, branch or commit, set `REX_REF` (for example `curl -fsSL …/install.sh | REX_REF=dev bash`, or a commit SHA).
-
-Already have Go?
+Or with `go install`:
 
 ```bash
 go install github.com/luciancheng/rex/cmd/rex@latest
-rex ingest --install cursor
-rex start
 ```
 
-## Usage
+This puts `rex` in `$(go env GOPATH)/bin`. Then wire your agent (see [Agents](#agents)).
 
-```bash
-rex start                         # plans, then the live tape
-rex start --static                # print one frame and exit
-rex ingest --install cursor       # (re)wire Cursor; --uninstall cursor takes it out
-rex ingest --install claude       # wire Claude Code (~/.claude/settings.json, or $CLAUDE_CONFIG_DIR)
-rex ingest --install claude --project   # this repo only, git-excluded
-rex ingest --install codex        # wire Codex ($CODEX_HOME/hooks.json), then /hooks → trust
-rex ingest --install opencode     # an OpenCode plugin (~/.config/opencode/plugins/rex.js, or $XDG_CONFIG_HOME)
-rex ingest --install-skill        # teach Claude Code, Cursor and OpenCode the plan format (~/.claude/skills/rex-plan); --project for this repo
-rex --help
-```
+## Quick start
 
-Tab switches the plan ↔ the tape. In the navigator: create, open, open latest, recents; browse folders and `.rex.json` files. Nothing happens until you press Enter: type `?` for keys and verbs, `p` on the outline to pin a task, `d` to mark it done, or `breakdance` on the tape (`/breakdance` in the navigator, where typing finds or names plans) to play the dance sheet once. Anything else you type on the tape is a local note; it is never sent to your agent. `NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
+1. Wire your agent (see [Agents](#agents)), open a new terminal, `cd` into your repo and run `rex start`.
+2. Type a plan name and press ⏎. Rex creates `rex/plans/<name>.rex.json` and opens its outline.
+3. `b⏎` copies a planning brief. Paste it into your agent and it fills in the plan; the outline updates as the file changes. (`rex ingest --install-skill` teaches Claude Code, Cursor and OpenCode the plan format, so they can plan without the brief.)
+4. `p⏎` pins the task to work on, and `s⏎` copies a send-off for it. Paste that into a fresh agent chat.
+5. Press Tab to watch the tape while the agent works. When it's done, Tab back and `d⏎` marks the task done, prefilled from what the agent said and what Rex saw.
+6. Ctrl+C twice quits.
 
-## Hack on it
+If the agent edits files outside the pinned task, or you ask for something the plan's `scope.out` rules out, Rex shows **drift** on the status line and the tape. It never corrects the agent.
 
-```bash
-git clone https://github.com/luciancheng/rex.git
-cd rex
-go test ./...
-go run ./cmd/rex start
-```
+## Agents
 
-Do not `go build -o rex` at the repo root — `rex/` is the plans directory.
+Rex watches agents through their hooks: each wired agent runs `rex ingest` on its events and appends them to a local feed. Nothing is wired without your explicit command.
 
-## Edit the idle sprite
+| Agent | Wire it | Rex edits | Notes |
+| --- | --- | --- | --- |
+| Cursor | the install script, or `rex ingest --install cursor` | `~/.cursor/hooks.json` | Cursor reports only the final reply of each turn. |
+| Claude Code | `rex ingest --install claude` (add `--project` for this repo only) | `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`), or this repo's git-excluded `.claude/settings.local.json` | |
+| Codex | `rex ingest --install codex` | `~/.codex/hooks.json` (or `$CODEX_HOME`) | Then trust the hooks once in Codex's `/hooks`, and again after moving or reinstalling `rex`. |
+| OpenCode | `rex ingest --install opencode` | `~/.config/opencode/plugins/rex.js` (or `$XDG_CONFIG_HOME`) | Restart OpenCode to load the plugin. |
 
-Idle Rex is the 40×40 PNG at `assets/idle.png`, converted pixel-for-pixel into terminal art. `assets/rex.png` is the same drawing, scaled up for this README.
+- `rex ingest --install auto` wires every agent found on this machine.
+- Your other hooks and settings are kept byte for byte, and the previous file is saved next to it as `.bak`.
+- `rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan`, or `--project` for this repo). It teaches Claude Code, Cursor and OpenCode the plan format, stacked PRs and a review pass before each PR. Codex doesn't read skills: use `b⏎` and `s⏎`.
 
-```bash
-go run ./cmd/importsprite --apply assets/idle.png
-```
+## Keys
 
-`--apply` writes the grid into `internal/mascot/sprites.go` and the sampled RGB values into the `yellow` palette. Restart `rex start` after that. Idle and future poses should stay 40×40.
+Nothing fires until you press ⏎: typed words are verbs.
 
-| Letter | Role |
+| Key or verb | Does |
 | --- | --- |
-| `k` | outline |
-| `y` | body |
-| `Y` | highlight |
-| `o` | shade |
-| `d` | dark |
-| `n` | mid |
-| `a` | accent |
-| `b` | belly |
-| `p` | blush |
-| `s` | shadow |
+| Tab | switch between the plan and the tape |
+| ⏎ | open the selection, or run what you typed |
+| Esc | clear what you typed, then go up one level |
+| ↑ ↓ · PgUp PgDn | move, or scroll the tape |
+| ← → | plans: up a folder, into a folder or a task's detail |
+| Home End | first and last; on the tape, oldest and live (also Ctrl+A, Ctrl+E) |
+| Ctrl+U · Ctrl+W | clear the line · delete a word |
+| Ctrl+L | repaint |
+| Ctrl+C twice | quit |
+| `p⏎` · `pin <id>⏎` | pin the selected task · pin any task |
+| `d⏎` | mark the pinned task done |
+| `s⏎` | copy a send-off for the pinned task (`c⏎` copies again, `o⏎` prints it plain) |
+| `b⏎` | copy a planning brief |
+| `?⏎` | every key and verb, and feed health |
+| `breakdance⏎` | one dance |
 
-Blink, glance, and squat stay transforms on the idle grid. Breakdance and typing are 40×40 sheets (`assets/breakdance.png`, `assets/typing.png`) mapped onto the yellow palette — not blit.
+On the plans home, typing finds a plan or names a new one; start a verb with `/` there (`/breakdance`). Anything else you type on the tape is a local note that never reaches your agent. The full key map is in [docs/ux.md](docs/ux.md).
 
-## Layout
+## Plans
 
-```
-rex/plans/                  commitable send-off plans (<name>.rex.json)
-assets/                     idle, typing and breakdance sprites; README art
-cmd/rex                     rex start / rex ingest
-cmd/importsprite            PNG → CLI pixel art
-internal/cli/               the rex command and its flags
-internal/mascot/            sprites, palettes, half-block renderer
-internal/tui/               plans home, outline, live tape, overlays
-internal/plan/              plan format, edits, pin, completion, send-off, drift
-internal/watch/             agent event feed (hooks → JSONL → pane), harness installers
-internal/jsonedit/          byte-preserving JSON edits for configs and plans
-internal/skill/             the rex-plan agent skill (installed on request)
-internal/version/           the version rex --version prints
-docs/                       plan format (plan-format.md) and UX spec (ux.md)
-scripts/install.sh          user install (macOS/Linux)
-scripts/install.ps1         user install (Windows)
-.github/workflows/ci.yml    GitHub Actions
-```
+Plans live in the repo at `rex/plans/` as `<name>.rex.json`; folders group them (`rex/plans/onboarding/auth.rex.json`). A plan is a goal, hard scope edges, and a flat list of PR-sized tasks, with `parent` for the outline and `depends_on` for order. A plan can also be a stack of PRs, one per task, and the send-off then says which branch to cut and which PR to stack on. The format is [docs/plan-format.md](docs/plan-format.md).
 
-## Tests
+Commit the `rex/plans/` folder so teammates open the same plans from git. A plan that is a stack of PRs is committed before the stack starts or after it lands, not on its branches (see [Stacks](docs/plan-format.md#stacks)).
 
-```bash
-go test ./...
-```
+## What Rex stores
 
-CI runs the same suite on Ubuntu, macOS, and Windows across Go 1.22 and 1.24.
+Rex makes no network connections, and everything stays on this machine:
+
+- **`~/.rex/session.jsonl`**: the feed every wired agent appends to. It holds your prompts, the agent's thoughts and replies, the commands it runs, file paths and working folders, from every repo on this machine. File bodies and diffs are left out, and each event is capped at 32 KB. Only your user can read it (`0600`, in a `0700` folder). It only grows; delete it whenever you like. Set `REX_EVENTS` to keep it somewhere else.
+- **`~/.rex/state.json`**: the last plan you opened in each repo, and when each task was pinned.
+- **Your repo**: plans in `rex/plans/`. Rex writes a plan only when you act in Rex (pin, done), and only a task's status and its completion fields.
+- **Agent configs**: only the files in the [Agents](#agents) table, and only when you run `--install`.
+
+Copying a brief runs your system's clipboard tool (`pbcopy`, `wl-copy`, `xclip`, `xsel`, `clip.exe`); over SSH it asks your terminal to copy (OSC 52). The install script downloads Rex's source through Go and git.
+
+## Configuration
+
+| Setting | Effect |
+| --- | --- |
+| `REX_EVENTS` | where the feed lives (default `~/.rex/session.jsonl`). Hooks read it from the agent's environment. |
+| `rex start --events <path>` · `rex ingest --events <path>` | the same, for one run |
+| `NO_COLOR` · `rex start --no-color` | no colour |
+| `FORCE_COLOR` | colour even when the output isn't a terminal |
+| `TERM=dumb` · `rex start --static` | print one static frame and exit (pipes and CI do this too) |
+| `CLAUDE_CONFIG_DIR` · `CODEX_HOME` · `XDG_CONFIG_HOME` | where Claude Code's, Codex's and OpenCode's configs live |
+| `REX_REF` · `REX_REPO` · `REX_BIN` | for the install script: what to build, from which repo, into which folder |
+
+## Uninstall
+
+1. Take Rex out of each agent you wired. Your other hooks are left alone.
+   ```bash
+   rex ingest --uninstall cursor
+   rex ingest --uninstall claude      # in each repo you wired with --project: rex ingest --uninstall claude --project
+   rex ingest --uninstall codex
+   rex ingest --uninstall opencode
+   rex ingest --uninstall-skill       # if you installed it (add --project in each repo)
+   ```
+2. Then delete the binary: `rm "$(command -v rex)"` (on Windows, `%USERPROFILE%\.local\bin\rex.exe`, and take that folder out of your user PATH). Do this last: hooks call `rex` by its path, so deleting it first leaves them pointing at nothing.
+3. Delete Rex's data: `rm -rf ~/.rex`. Your plans in `rex/plans/` are yours to keep or delete.
+
+## Troubleshooting
+
+- **The tape stays empty.** Type `?⏎`. The feed block shows the feed path, the last event, and whether each agent is wired, with the command that wires it. Start a new agent session after wiring.
+- **Codex shows nothing.** Trust the Rex hooks in Codex's `/hooks`, and again after moving or reinstalling `rex`.
+- **Events stopped after moving or reinstalling `rex`.** Hooks call the binary by its path. Run the `rex ingest --install <agent>` command again.
+- **Events land in another file.** Hooks use the agent's `REX_EVENTS`, not your shell's. Set it in both places, or in neither.
+- **No dino, or "widen".** The dino needs 66+ columns. Under 24 columns of text Rex asks you to widen the terminal.
+- **"sent (OSC 52) · may be blocked".** Your terminal may refuse clipboard requests. Use `o⏎` to print the brief plain and copy it by hand, or install a clipboard tool.
+- **"rex/ is a file here · plans off".** A file named `rex` sits at the repo root, where the plans folder goes. Move it.
 
 ## Contributing
 
-1. Install Go 1.22+.
-2. Keep mascot rendering in `internal/mascot/` and commands in `internal/cli/`.
-3. Add `*_test.go` next to the package for new behavior.
-4. Run the pre-PR gate in [agents.md](agents.md) (Workflow) before opening a pull request. If you can't install its tools, run at least `go test ./...`: CI runs the tests on Go 1.22 and 1.24, and reviewers run the rest of the gate.
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for the code conventions, the workflow and the pre-PR gate. To hack on it:
 
-Code conventions, the Go 1.22 floor, and the branch / PR workflow are in [agents.md](agents.md).
+```bash
+git clone https://github.com/luciancheng/rex.git && cd rex
+go test ./...
+go run ./cmd/rex start
+go build -o dist/rex ./cmd/rex     # not -o rex: rex/ is the plans folder
+```
+
+Please report security issues privately: see [SECURITY.md](SECURITY.md).
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The idle dino (`assets/idle.png`, and `assets/rex.png` scaled from it) was drawn by hand by Lucian Cheng and is MIT like the code. The breakdance and typing sheets (`assets/breakdance.png`, `assets/typing.png`) were made with an AI image generator.

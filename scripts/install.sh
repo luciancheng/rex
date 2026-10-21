@@ -2,7 +2,7 @@
 # Install REX: a Go binary on PATH, plus the Cursor hook when Cursor is here.
 # Other agents are opt-in; the script prints the command for each one it finds.
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/luciancheng/rex/HEAD/scripts/install.sh | bash
 #   curl -fsSL …/install.sh | REX_REF=dev bash        # a tag, branch or commit
 #   ./scripts/install.sh                                # from a clone: installs this tree
 set -euo pipefail

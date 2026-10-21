@@ -218,3 +218,15 @@ func TestSubmittingJumpsToLive(t *testing.T) {
 		t.Fatal("a submitted note jumps to live")
 	}
 }
+
+func TestDisarmingQuitAlwaysRedraws(t *testing.T) {
+	a := testApp(t)
+	press(a, "\t")
+	a.handleKey(CtrlC)
+	if !a.handleKey("left") {
+		t.Fatal("a key that disarms quit must ask for a redraw")
+	}
+	if a.quitPending || strings.Contains(a.frame(), "ctrl+c again") {
+		t.Fatal("footer must stop saying ctrl+c again")
+	}
+}

@@ -283,7 +283,18 @@ func (a *app) handleKey(key string) bool {
 		}
 		return true
 	}
-	a.quitPending = false
+	if a.quitPending {
+		// Any other key disarms quit; redraw even if the key itself did
+		// nothing, or the footer would keep saying "ctrl+c again".
+		a.quitPending = false
+		a.handleKeyArmed(key)
+		return true
+	}
+	return a.handleKeyArmed(key)
+}
+
+// handleKeyArmed applies a key once quit is not armed.
+func (a *app) handleKeyArmed(key string) bool {
 	if text, ok := IsPaste(key); ok {
 		// A paste is typed into the draft as one line; it never submits.
 		next := capDraft(a.draft + text)

@@ -142,7 +142,11 @@ func opencodeSource(exe string) []byte {
 // write is left alone.
 func installOpenCode(path string, out io.Writer) error {
 	want := opencodeSource(rexExecutable())
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return fmt.Errorf("%s is a link to a file that isn't there; fix or remove it first", path)
+		}
 		path = resolved // a dotfiles symlink stays a symlink
 	}
 	have, err := os.ReadFile(path)
@@ -178,10 +182,17 @@ func uninstallOpenCode(path string, out io.Writer) error {
 	if !bytes.HasPrefix(have, []byte(opencodeMarker)) {
 		return fmt.Errorf("%s wasn't written by Rex; leaving it", path)
 	}
+	target := ""
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		target, _ = filepath.EvalSymlinks(path)
+	}
 	if err := os.Remove(path); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "removed the rex plugin from %s\n", path)
+	if target != "" {
+		fmt.Fprintf(out, "it was a link; the file it pointed to, %s, is kept\n", target)
+	}
 	return nil
 }
 
@@ -236,8 +247,6 @@ func MapOpenCode(payload map[string]any) *Event {
 	case "message.part.updated":
 		part := asDict(payload["part"])
 		switch strField(part, "type") {
-		case "text":
-			return event("text", strings.TrimSpace(strField(part, "text")), nil)
 		case "reasoning":
 			return event("thought", strings.TrimSpace(strField(part, "text")), nil)
 		case "tool":
@@ -251,9 +260,6 @@ func MapOpenCode(payload map[string]any) *Event {
 		return event("idle", "turn completed", nil)
 	case "session.error":
 		e := asDict(payload["error"])
-		if len(e) == 0 { // an older plugin sent the properties whole
-			e = asDict(asDict(payload["properties"])["error"])
-		}
 		name, _ := e["name"].(string)
 		msg, _ := e["message"].(string)
 		if msg == "" {
@@ -268,7 +274,10 @@ func MapOpenCode(payload map[string]any) *Event {
 		if msg == "" {
 			msg = name
 		}
-		return event("error", strings.TrimSpace("session error: "+firstLine(msg)), nil)
+		if msg == "" {
+			return event("error", "session error", nil) // OpenCode's error is optional
+		}
+		return event("error", "session error: "+firstLine(msg), nil)
 	case "permission.updated", "permission.asked":
 		props := asDict(payload["properties"])
 		text := strField(props, "title")
@@ -296,6 +305,9 @@ func MapOpenCode(payload map[string]any) *Event {
 
 func openCodeTool(part map[string]any, abs func(string) string, event func(string, string, map[string]any) *Event) *Event {
 	tool := strField(part, "tool")
+	if tool == "question" {
+		return nil // question.asked carries the question itself
+	}
 	state := asDict(part["state"])
 	input := asDict(state["input"])
 	status := strField(state, "status")
@@ -306,12 +318,7 @@ func openCodeTool(part map[string]any, abs func(string) string, event func(strin
 	deleted := false
 	if files, ok := state["files"].([]any); ok {
 		for _, f := range files {
-			switch v := f.(type) {
-			case string: // an older plugin
-				if v != "" {
-					paths = append(paths, abs(v))
-				}
-			case map[string]any:
+			if v := asDict(f); v != nil {
 				if p, _ := v["path"].(string); p != "" {
 					paths = append(paths, abs(p))
 					deleted = deleted || (len(paths) == 1 && v["type"] == "delete")

@@ -24,13 +24,12 @@ func openCodeMap(t *testing.T, payload string) *Event {
 func TestMapOpenCode(t *testing.T) {
 	cases := []struct{ payload, kind, text string }{
 		{`{"type":"chat.message","cwd":"/repo","text":"fix the cards"}`, "user", "fix the cards"},
-		{`{"type":"message.part.updated","part":{"type":"text","text":"All done."}}`, "text", "All done."},
 		{`{"type":"message.part.updated","part":{"type":"reasoning","text":"Checking the card."}}`, "thought", "Checking the card."},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"running","input":{"command":"go test ./..."}}}}`, "command", "go test ./..."},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"go test ./..."}}}}`, "result", "ran go test ./..."},
 		{`{"type":"message.part.updated","cwd":"/repo","part":{"type":"tool","tool":"edit","state":{"status":"running","input":{"filePath":"internal/tui/live.go"}}}}`, "command", "edit /repo/internal/tui/live.go"},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"write","state":{"status":"completed","input":{"filePath":"/repo/a.go"}}}}`, "result", "wrote /repo/a.go"},
-		{`{"type":"message.part.updated","part":{"type":"tool","tool":"apply_patch","state":{"status":"completed","input":{},"files":["/repo/a.go","/repo/b.go"]}}}`, "result", "wrote /repo/a.go"},
+		{`{"type":"message.part.updated","part":{"type":"tool","tool":"apply_patch","state":{"status":"completed","input":{},"files":[{"path":"/repo/a.go","type":"update"},{"path":"/repo/b.go","type":"add"}]}}}`, "result", "wrote /repo/a.go"},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"error","input":{"command":"go vet"},"error":"exit 1\nmore"}}}`, "error", "bash failed · go vet: exit 1"},
 		{`{"type":"session.idle","properties":{"sessionID":"s"}}`, "idle", "turn completed"},
 		{`{"type":"session.error","error":{"name":"APIError","message":"rate limited\nresponse body"}}`, "error", "session error: rate limited"},
@@ -49,7 +48,13 @@ func TestMapOpenCode(t *testing.T) {
 			t.Errorf("%s\n got %#v", c.payload, ev)
 		}
 	}
-	patch := openCodeMap(t, cases[7].payload)
+	var multi string
+	for _, c := range cases {
+		if strings.Contains(c.payload, `"/repo/b.go"`) {
+			multi = c.payload
+		}
+	}
+	patch := openCodeMap(t, multi)
 	if got := EventPaths(*patch); strings.Join(got, ",") != "/repo/a.go,/repo/b.go" || patch.Meta["ok"] != true {
 		t.Fatalf("%+v", patch)
 	}
@@ -121,7 +126,38 @@ func TestOpenCodeLeavesAForeignRexJSAlone(t *testing.T) {
 	}
 }
 
+func TestOpenCodeLeavesWhatItCantReadOrFindAlone(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs file modes that bind")
+	}
+	home := openCodeHome(t)
+	path := filepath.Join(home, ".config", "opencode", "plugins", "rex.js")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(opencodeMarker+"\nold\n"), 0o000)
+	if InstallHarness("opencode", io.Discard) == nil || UninstallHarness("opencode", io.Discard) == nil {
+		t.Fatal("a rex.js Rex can't read is neither replaced nor removed")
+	}
+	os.Chmod(path, 0o644)
+	if data, _ := os.ReadFile(path); string(data) != opencodeMarker+"\nold\n" {
+		t.Fatal("it is left as it was")
+	}
+	os.Remove(path)
+	os.Symlink(filepath.Join(home, "dotfiles", "rex.js"), path) // nothing there
+	if err := InstallHarness("opencode", io.Discard); err == nil {
+		t.Fatal("a link to a missing file is refused, not replaced")
+	}
+	if fi, err := os.Lstat(path); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the link stays a link")
+	}
+}
+
 func TestOpenCodeSessionErrorsAndExitCodes(t *testing.T) {
+	if ev := openCodeMap(t, `{"type":"session.error","error":{}}`); ev == nil || ev.Text != "session error" {
+		t.Fatalf("an error with nothing in it still reads whole: %#v", ev)
+	}
+	if ev := openCodeMap(t, `{"type":"message.part.updated","part":{"type":"tool","tool":"question","state":{"status":"running","input":{}}}}`); ev != nil {
+		t.Fatalf("question.asked carries the question; its tool part adds nothing: %#v", ev)
+	}
 	if ev := openCodeMap(t, `{"type":"session.error","error":{"name":"ContextOverflowError","message":"too long"}}`); ev != nil {
 		t.Fatalf("OpenCode compacts and goes on: %#v", ev)
 	}
@@ -149,7 +185,10 @@ const ev = (type, properties) => h.event({ event: { type, properties } })
 await ev("session.created", { info: { id: "child", parentID: "parent" } })
 await ev("message.updated", { info: { id: "m1", role: "assistant" } })
 await ev("message.part.updated", { part: { type: "tool", tool: "write", callID: "c1", sessionID: "parent", state: { status: "completed", input: { filePath: "a.go", content: "SECRET BODY" }, metadata: { diff: "SECRET BODY", files: [{ filePath: "a.go", type: "update", patch: "SECRET BODY" }] }, attachments: ["data:SECRET BODY"], output: "SECRET BODY" } } })
+await ev("message.part.updated", { part: { type: "tool", tool: "write", callID: "c1", sessionID: "parent", state: { status: "completed", input: { filePath: "a.go" } } } })
 await ev("message.part.updated", { part: { type: "tool", tool: "multiedit", callID: "c2", sessionID: "parent", state: { status: "running", input: { filePath: "b.go", edits: [{ oldString: "SECRET BODY", newString: "SECRET BODY" }] } } } })
+await ev("message.part.updated", { part: { id: "r1", type: "reasoning", text: "thinking it over", messageID: "m1", sessionID: "parent", time: { end: now } } })
+await ev("message.part.updated", { part: { id: "r1", type: "reasoning", text: "thinking it over", messageID: "m1", sessionID: "parent", time: { end: now } } })
 await ev("message.part.updated", { part: { id: "p1", type: "text", text: "working on it", messageID: "m1", sessionID: "parent", time: { end: now } } })
 await ev("message.part.updated", { part: { id: "p2", type: "text", text: "All done.", messageID: "m1", sessionID: "parent", time: { end: now } } })
 await ev("message.part.updated", { part: { id: "p3", type: "text", text: "OLD REPLY", messageID: "m1", sessionID: "parent", time: { end: now - 3600000 } } })
@@ -183,7 +222,7 @@ await new Promise((r) => setTimeout(r, 3000))
 			kinds = append(kinds, ev.Kind+": "+ev.Text)
 		}
 	}
-	want := []string{"result: wrote /repo/a.go", "command: multiedit /repo/b.go", "user: fix the cards", "question: permission: edit: a.go", "text: All done."}
+	want := []string{"result: wrote /repo/a.go", "command: multiedit /repo/b.go", "thought: thinking it over", "user: fix the cards", "question: permission: edit: a.go", "text: All done."}
 	if strings.Join(kinds, " | ") != strings.Join(want, " | ") {
 		t.Fatalf("mapped:\n%s\nwant:\n%s", strings.Join(kinds, "\n"), strings.Join(want, "\n"))
 	}

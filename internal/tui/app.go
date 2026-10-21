@@ -8,7 +8,8 @@ import (
 )
 
 // app is the live screen's state. RunLoop feeds it keys, hook events and
-// ticks and draws app.frame(); tests drive it the same way without a TTY.
+// ticks and paints app.frameRows() through the renderer; tests drive it
+// the same way without a TTY.
 type app struct {
 	color   string
 	enabled bool

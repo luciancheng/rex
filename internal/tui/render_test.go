@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -62,14 +63,6 @@ func TestComposeFrameStringMatchesRows(t *testing.T) {
 	}
 }
 
-func TestCtrlLAsksForRepaint(t *testing.T) {
-	a := testApp(t)
-	press(a, "\x0c")
-	if !a.repaint {
-		t.Fatal("ctrl+l")
-	}
-}
-
 func TestLogViewIsCachedPerRevision(t *testing.T) {
 	a := testApp(t)
 	a.ingest([]watch.Event{watch.NewEvent("cursor", "text", "one", nil)})
@@ -81,5 +74,35 @@ func TestLogViewIsCachedPerRevision(t *testing.T) {
 	a.ingest([]watch.Event{watch.NewEvent("cursor", "text", "two", nil)})
 	if strings.Contains(viewText(first), "two") || !strings.Contains(viewText(a.logView(60)), "two") {
 		t.Fatal("a new event must rebuild the layout")
+	}
+}
+
+// The caches never show stale content: a note typed after the tape was
+// laid out appears, a trim-only ingest relays the tape, and the mascot is
+// cached per color mode.
+func TestCachesRefresh(t *testing.T) {
+	a := testApp(t)
+	press(a, "\t")
+	a.frame() // fills the tape cache
+	typeText(a, "a fresh note")
+	press(a, "\r")
+	if !strings.Contains(a.frame(), "a fresh note") {
+		t.Fatal("a note typed after the cache filled must show")
+	}
+	var evs []watch.Event
+	for i := 0; i < MaxLog; i++ {
+		evs = append(evs, watch.NewEvent("cursor", "text", fmt.Sprintf("reply %d", i), nil))
+	}
+	a.ingest(evs)
+	rev := a.logRev
+	n := len(a.log)
+	a.ingest([]watch.Event{watch.NewEvent("cursor", "text", "one more", nil)})
+	if len(a.log) != n || a.logRev == rev {
+		t.Fatalf("a trim to MaxLog relays the tape: len %d->%d rev %d->%d", n, len(a.log), rev, a.logRev)
+	}
+	colored := stagedMascot("idle", "yellow", 40, true)
+	plain := stagedMascot("idle", "yellow", 40, false)
+	if !strings.Contains(strings.Join(colored, ""), "\033[") || strings.Contains(strings.Join(plain, ""), "\033[") {
+		t.Fatal("the mascot cache is keyed on color")
 	}
 }

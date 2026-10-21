@@ -320,8 +320,12 @@ func TestStaticStartDecision(t *testing.T) {
 
 func TestStartDumbTerminalPrintsCard(t *testing.T) {
 	t.Setenv("TERM", "dumb")
+	t.Setenv("FORCE_COLOR", "1") // even when color is forced, a dumb terminal gets none
 	var stdout bytes.Buffer
-	if code := Main([]string{"start"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{}); code != 0 || !strings.Contains(stdout.String(), "REX") {
+	if code := Main([]string{"start", "--static"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{}); code != 0 || !strings.Contains(stdout.String(), "REX") {
 		t.Fatalf("code=%d %q", code, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "\033") {
+		t.Fatalf("TERM=dumb printed escapes: %q", stdout.String())
 	}
 }

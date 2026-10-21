@@ -76,6 +76,17 @@ func TestCompleteRefusesATaskThatMovedOn(t *testing.T) {
 	}
 }
 
+func TestCompleteKeepsModifiedItCantRead(t *testing.T) {
+	path := writePlan(t, strings.Replace(doneFixture, `"modified": ["kept.go"]`, `"modified": ["kept.go", {"path": "agent.go"}]`, 1))
+	saved, err := Edit(path, CompleteOp("b", nil, false, Completion{Accomplished: []string{"x"}, AddModified: []string{"new.go"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(saved.Data); !strings.Contains(got, `"modified": ["kept.go", {"path": "agent.go"}]`) || strings.Contains(got, "new.go") {
+		t.Fatalf("a list Rex can't read is left as it is:\n%s", got)
+	}
+}
+
 func TestCompleteLeavesThePlanOpenWhileWorkRemains(t *testing.T) {
 	path := writePlan(t, strings.Replace(doneFixture, `"status": "skipped"`, `"status": "pending"`, 1))
 	saved, err := Edit(path, CompleteOp("b", nil, false, Completion{Accomplished: []string{"x"}}))

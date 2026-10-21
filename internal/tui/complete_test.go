@@ -215,16 +215,74 @@ func TestDoneFormFitsNarrowAndShortScreens(t *testing.T) {
 }
 
 func TestDoneKeepsModifiedItCantRead(t *testing.T) {
-	a, _, path := openDemo(t, strings.Replace(demoPlan, `"files": ["internal/tui/plans.go"]`, `"files": ["internal/tui/plans.go"],
+	a, c, path := openDemo(t, strings.Replace(demoPlan, `"files": ["internal/tui/plans.go"]`, `"files": ["internal/tui/plans.go"],
       "modified": ["kept.go", {"path": "agent-wrote-this.go"}]`, 1), 120, 32)
-	a.seen = []watch.Event{{Source: "claude", Kind: "result", TS: float64(time.Now().UnixNano()) / 1e9, Text: "wrote x", Meta: map[string]any{"tool": "Write", "path": filepath.Join(a.plans.Repo, "new.go"), "ok": true}}}
+	a.seen = []watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote x", Meta: map[string]any{"tool": "Write", "path": filepath.Join(a.plans.Repo, "new.go"), "ok": true}})}
 	typeText(a, "d")
 	press(a, "\r")
+	if f := a.form[PanePlans]; f == nil || strings.Join(f.files, ",") != "new.go" {
+		t.Fatalf("the edit is seen: %+v", f)
+	}
 	typeText(a, "shipped")
 	press(a, "\r")
 	got, _ := os.ReadFile(path)
-	if !strings.Contains(string(got), `{"path": "agent-wrote-this.go"}`) {
-		t.Fatalf("an entry Rex can't read is never dropped:\n%s", got)
+	if !strings.Contains(string(got), `{"path": "agent-wrote-this.go"}`) || strings.Contains(string(got), `"new.go"`) {
+		t.Fatalf("a list Rex can't read is left as it is:\n%s", got)
+	}
+}
+
+func TestEvidenceSurvivesLookingAtAnotherPlan(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	a.ingest(workEvents(a, c))
+	other := strings.Replace(path, "demo.rex.json", "other.rex.json", 1)
+	os.WriteFile(other, []byte(demoPlan), 0o644)
+	c.t = c.t.Add(time.Minute)
+	a.plans.Current = other
+	a.openedPlan()
+	a.plans.Current = path
+	a.openedPlan()
+	typeText(a, "d")
+	press(a, "\r")
+	if f := a.form[PanePlans]; f == nil || strings.Join(f.files, ",") != "internal/tui/plans.go" || !strings.Contains(f.hints[0], "the bar spans all three card rows") {
+		t.Fatalf("opening another plan and coming back isn't the pin moving: %+v", f)
+	}
+}
+
+func TestEvidenceFromBeforeRexStarted(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	a.feed = filepath.Join(t.TempDir(), "session.jsonl")
+	for _, ev := range workEvents(a, c) {
+		meta := map[string]any{"cwd": a.plans.Repo}
+		for k, v := range ev.Meta {
+			meta[k] = v
+		}
+		ev.Meta = meta
+		watch.AppendEvent(a.feed, ev)
+	}
+	plan.UpdateState(a.statePath, c.t, func(s *plan.State) { s.Pins[plan.PinKey(path, "card-highlight")] = float64(c.t.Unix()) })
+	a.started = c.t.Add(time.Hour) // Rex started after the work
+	c.t = c.t.Add(2 * time.Hour)
+	typeText(a, "d")
+	press(a, "\r")
+	if f := a.form[PanePlans]; f == nil || strings.Join(f.files, ",") != "internal/tui/plans.go" || !strings.Contains(f.hints[0], "the bar spans all three card rows") {
+		t.Fatalf("a pin started before Rex reads back in the feed: %+v", f)
+	}
+}
+
+func TestClosingAFormElsewhereDropsWhatWasTyped(t *testing.T) {
+	a, _, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "\t")
+	typeText(a, "d")
+	press(a, "\r")
+	typeText(a, "did the A thing")
+	press(a, "\t")
+	other := strings.Replace(path, "demo.rex.json", "other.rex.json", 1)
+	os.WriteFile(other, []byte(demoPlan), 0o644)
+	a.plans.Current = other
+	a.openedPlan()
+	press(a, "\t")
+	if a.draft != "" {
+		t.Fatalf("the closed form's text doesn't land in the tape's composer: %q", a.draft)
 	}
 }
 

@@ -60,7 +60,7 @@ type app struct {
 	pinAsk     [2]pinAsk            // per place, while Pin confirm is open
 	pinSeen    map[string]time.Time // when this session first saw each pin
 	pinMoved   map[string]time.Time // when the pin last moved to each task this session
-	lastPin    string               // the pin notePin last saw ("" before the first look)
+	lastPin    map[string]string    // per plan file, the pin notePin last saw there
 	started    time.Time
 	form       [2]*doneForm  // per place, while the completion form is open
 	seen       []watch.Event // raw events from this repo, for completion evidence
@@ -76,7 +76,7 @@ type logViewCache struct {
 
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
 	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
-		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}, pinMoved: map[string]time.Time{}}
+		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}, pinMoved: map[string]time.Time{}, lastPin: map[string]string{}}
 	a.started = a.now()
 	if plans.Current == "" {
 		// The Continue card offers the plan last opened in this repo.
@@ -806,6 +806,9 @@ func (a *app) openedPlan() {
 			if a.overlay[place] == overlayPin || a.overlay[place] == overlayDone {
 				a.overlay[place] = overlayNone // it was about the old plan
 				a.form[place] = nil
+				if PaneKind(place) != a.pane {
+					a.parked = "" // what was typed in it can't land on the screen underneath
+				}
 			}
 		}
 	}
@@ -1093,7 +1096,7 @@ func (a *app) writePin(id string, seen plan.Status, moving []string) {
 	a.doc.took(saved)
 	now := a.now()
 	key := plan.PinKey(a.doc.path, id)
-	a.pinSeen[key], a.pinMoved[key], a.lastPin = now, now, key
+	a.pinSeen[key], a.pinMoved[key], a.lastPin[a.doc.path] = now, now, key
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) { s.Pins[key] = float64(now.Unix()) })
 	word := "pinned"
 	if seen == plan.Done {
@@ -1119,13 +1122,15 @@ func (a *app) notePin() {
 			a.pinSeen[key] = a.now()
 		}
 	}
-	if key != a.lastPin {
-		if a.lastPin != "" {
+	// Per plan file: opening another plan, or coming back to this one,
+	// is not the pin moving.
+	if last, looked := a.lastPin[a.doc.path]; key != last {
+		if looked {
 			// The pin moved here while Rex watched: evidence starts now, so
 			// another task's trailer and files can't land on this one.
 			a.pinMoved[key] = a.now()
 		}
-		a.lastPin = key
+		a.lastPin[a.doc.path] = key
 	}
 }
 

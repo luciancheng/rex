@@ -158,6 +158,9 @@ func (a *app) saveDone() bool {
 	for place, other := range a.form {
 		if other != nil && other.path == f.path && other.id == f.id {
 			a.overlay[place], a.form[place] = overlayNone, nil // the same task, done now
+			if PaneKind(place) != a.pane {
+				a.parked = ""
+			}
 		}
 	}
 	a.tapeLine("done", f.id+": "+did)

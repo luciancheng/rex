@@ -86,7 +86,9 @@ func (g *Graph) Unmet(t *Task) []string {
 			out = append(out, "?"+id)
 		case Finished(dep.Status):
 		case !g.Leaf(dep):
-			if done, total := g.Rollup(dep); total == 0 || done < total {
+			// A task under dep never waits on itself: only dep's other
+			// leaves count.
+			if done, total := g.rollupWithout(dep, t); total == 0 || done < total {
 				out = append(out, id)
 			}
 		default:
@@ -117,7 +119,10 @@ func (g *Graph) Dependents(id string) []*Task {
 }
 
 // Rollup counts the finished leaves under t, and all of them.
-func (g *Graph) Rollup(t *Task) (finished, total int) {
+func (g *Graph) Rollup(t *Task) (finished, total int) { return g.rollupWithout(t, nil) }
+
+// rollupWithout is Rollup leaving out skip and everything under it.
+func (g *Graph) rollupWithout(t, skip *Task) (finished, total int) {
 	seen := map[string]bool{}
 	var walk func(id string)
 	walk = func(id string) {
@@ -126,6 +131,9 @@ func (g *Graph) Rollup(t *Task) (finished, total int) {
 		}
 		seen[id] = true
 		for _, c := range g.Children(id) {
+			if c == skip {
+				continue
+			}
 			if g.Leaf(c) {
 				total++
 				if Finished(c.Status) {

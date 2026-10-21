@@ -684,7 +684,7 @@ func (b *PlanBrowser) addHints() {
 		case PlanRowRecent:
 			row.Hint = b.progressHint(row.Path)
 			if row.Path == b.Current {
-				row.Hint = strings.TrimSpace("open · " + row.Hint)
+				row.Hint = strings.TrimSuffix(strings.TrimSpace("open · "+row.Hint), " ·")
 			}
 		case PlanRowPlan:
 			if row.Path == b.Current {

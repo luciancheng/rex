@@ -470,3 +470,52 @@ func TestDependingOnAParentWaitsForItsLeaves(t *testing.T) {
 		t.Fatalf("pin %v", pin)
 	}
 }
+
+func TestOutlineRuleKeepsProgressWhenNarrow(t *testing.T) {
+	var tasks []string
+	for i := 1; i <= 40; i++ {
+		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "status": "done"}`, i))
+	}
+	tasks[39] = `{"id": "t40"}`
+	src := `{"title": "A very long plan title that cannot fit", "status": "active", "tasks": [` + strings.Join(tasks, ",") + `]}`
+	a, _, _ := openDemo(t, src, 80, 24)
+	if frame := a.frame(); !strings.Contains(frame, "active · 39/40") {
+		t.Fatalf("the narrow rule keeps the status and progress\n%s", frame)
+	}
+	press(a, "home")
+	if frame := a.frame(); !strings.Contains(frame, "active · 39/40") || !strings.Contains(frame, "tasks 0/40") || !strings.Contains(frame, "✓ t01") {
+		t.Fatalf("scrolled, it still does\n%s", frame)
+	}
+}
+
+func TestNarrowestParentKeepsItsRollup(t *testing.T) {
+	src := `{"tasks": [{"id": "ui", "title": "UI"}, {"id": "a", "parent": "ui", "status": "done"}, {"id": "b", "parent": "ui"}]}`
+	a, _, _ := openDemo(t, src, 24, 24) // the narrowest text column
+	found := false
+	for _, row := range a.frameRows().Rows {
+		if strings.Contains(row, " ui ") {
+			found = true
+			if !strings.Contains(row, "1/2") {
+				t.Fatalf("rollup lost at 24 cells: %q", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no parent row\n%s", a.frame())
+	}
+}
+
+func TestATaskNeverWaitsOnItselfThroughItsParent(t *testing.T) {
+	p, err := plan.Parse([]byte(`{"tasks": [
+		{"id": "ui"},
+		{"id": "a", "parent": "ui", "status": "done"},
+		{"id": "card", "parent": "ui", "depends_on": ["ui"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := p.Graph()
+	if unmet := g.Unmet(p.Task("card")); len(unmet) != 0 {
+		t.Fatalf("card waits only on ui's other leaves, which are done: %v", unmet)
+	}
+}

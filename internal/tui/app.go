@@ -179,6 +179,9 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 		body = outlineBody(a.doc, v, width, viewH)
 		head := headOf(body)
 		pinned := planHead(body[:head], len(body), viewH)
+		if v.sel == "" {
+			v.view = 0 // the title row is selected: the list starts at its top
+		}
 		v.view = windowStart(body[head:], viewH-len(pinned), v.view)
 		return body, v.view
 	}

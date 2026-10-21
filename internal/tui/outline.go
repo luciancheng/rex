@@ -343,7 +343,7 @@ func selectedLine(text string, width int) LogLine {
 // sideBySide fits left and a right-hand tag into width cells, cutting the
 // left side first so the tag stays readable.
 func sideBySide(left, right string, width int) string {
-	if right == "" || width < cellLen(right)+20 {
+	if right == "" || width < cellLen(right)+12 {
 		return left
 	}
 	room := width - cellLen(right) - 2
@@ -372,7 +372,25 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 	g := p.Graph()
 	pin := pinOf(p, g)
 	done, total := g.Progress()
-	head := planTitle(p, d.path) + " · " + string(p.Status) + " · " + fmt.Sprintf("%d/%d", done, total)
+	title, tail := planTitle(p, d.path), " · "+string(p.Status)+" · "+fmt.Sprintf("%d/%d", done, total)
+	// fit is the rule's label for room cells: when it is narrow, the title
+	// is cut and the status and progress stay.
+	fit := func(room int) string {
+		switch r := room - 6 - cellLen(tail); {
+		case cellLen(title+tail)+6 <= room:
+			return title + tail
+		case r >= 4:
+			return cutCells(title, r-1) + "…" + tail
+		case cellLen(tail)+3 <= room:
+			return strings.TrimPrefix(tail, " · ") // no room for any title
+		}
+		return cutCells(title+tail, max(1, room-7)) + "…"
+	}
+	rw := width // the rule's width; the selection bar takes two cells
+	if v.sel == "" {
+		rw = max(1, width-2)
+	}
+	head := fit(rw)
 
 	var tasks []LogLine
 	idW := 0
@@ -462,7 +480,7 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 		top = append(top, LogLine{Kind: "gap"})
 	}
 
-	ruleText := rule(head, width)
+	ruleText := rule(head, rw)
 	if 1+len(top)+len(tasks) > viewH && len(p.Tasks) > 0 {
 		at := 0
 		if v.sel != "" {
@@ -473,12 +491,8 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 			}
 		}
 		tag := fmt.Sprintf("tasks %d/%d", at, len(outlineRows(p))-1)
-		room := width - cellLen(tag) - 1
-		label := head
-		if cellLen(label)+6 > room {
-			label = cutCells(label, max(1, room-7)) + "…"
-		}
-		ruleText = rule(label, room) + " " + tag
+		room := rw - cellLen(tag) - 1
+		ruleText = rule(fit(room), room) + " " + tag
 	}
 	lines := []LogLine{{Kind: "command", Text: ruleText}}
 	if v.sel == "" {

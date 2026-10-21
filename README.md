@@ -98,7 +98,7 @@ Rex watches agents through their hooks: each wired agent runs `rex ingest` on it
 
 - `rex ingest --install auto` wires every agent found on this machine.
 - Your other hooks and settings are kept byte for byte, and the previous file is saved next to it as `.bak`.
-- `rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan`, or `--project` for this repo). It teaches Claude Code, Cursor and OpenCode the plan format, stacked PRs and a review pass before each PR. Codex doesn't read Claude's skills folder: with Codex, use `b⏎` and `s⏎`.
+- `rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan`, or `--project` for this repo; with `CLAUDE_CONFIG_DIR` set it goes there, where only Claude Code reads it). It teaches Claude Code, Cursor and OpenCode the plan format, stacked PRs and a review pass before each PR. Codex doesn't read Claude's skills folder: with Codex, use `b⏎` and `s⏎`.
 
 ## Keys
 

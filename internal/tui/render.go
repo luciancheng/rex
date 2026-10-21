@@ -8,7 +8,6 @@ import (
 const (
 	syncBegin = "\033[?2026h" // synchronized output; terminals without it ignore it
 	syncEnd   = "\033[?2026l"
-	eraseLine = "\033[K"
 )
 
 // renderer paints frames without clearing the screen: only rows that
@@ -43,8 +42,10 @@ func (r *renderer) render(f Frame) string {
 }
 
 // diffFrame writes the rows of next that differ from prev (all of them when
-// prev is nil). Each row is reset before the erase so a selection fill
-// never bleeds to the edge.
+// prev is nil). Rows are always padded to the full width, so overwriting a
+// row replaces all of it. There is deliberately no erase-to-end-of-line:
+// after a write to the last column the cursor stays on that column, and an
+// erase there would wipe the row's last character.
 func diffFrame(prev []string, next Frame, clear bool) string {
 	var b strings.Builder
 	b.WriteString(syncBegin)
@@ -58,7 +59,7 @@ func diffFrame(prev []string, next Frame, clear bool) string {
 		}
 		fmt.Fprintf(&b, "\033[%d;1H", i+1)
 		b.WriteString(row)
-		b.WriteString(Reset + eraseLine)
+		b.WriteString(Reset)
 	}
 	if next.CursorRow > 0 {
 		fmt.Fprintf(&b, "\033[%d;%dH%s", next.CursorRow, next.CursorCol, ShowCursor)

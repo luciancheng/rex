@@ -92,39 +92,49 @@ After sprite or TUI changes, restart a running `rex start`. Tests do not replace
 - Tests go in a `*_test.go` file in the same package. Use `t.TempDir()` for any repo, plans dir or feed file, and never touch the real `~` or `~/.rex`. Assert on rendered text with `viewText(BuildLogView(...))` / `viewText(BuildPlanView(...))`, and use `NO_COLOR`-style `Enabled: false` frames when you need plain text.
 - `LogLine.Kind` picks the color. It is looked up in `mascot.UI`, then in `kindColor`. A new UI role goes in `mascot.UI`, not in a new palette.
 - Pane width math uses `runeLen` / `clip` / `padRight`, never `len()`.
-- The watch package maps vendor JSON to `watch.Event`; nothing outside the adapters knows vendor names. The TUI paints kinds.
+- Vendor names live only in `internal/watch` (the adapters and installers) and in the `--source` list and help text in `internal/cli`. Adding a harness touches both. The TUI paints event kinds and never branches on a vendor.
 - Keep stdout clean in `rex ingest`. Hooks treat stdout as agent input, and exit code 2 as "block".
 
 ### Go 1.22 floor
 
-`go.mod` says `go 1.22` and CI runs 1.22. Newer toolchains compile code that 1.22 rejects, so do not use:
+`go.mod` says `go 1.22` and CI runs Go 1.22. Code built with a newer toolchain can still break the 1.22 floor:
 
-- range-over-func or the `iter` package; `maps.Keys/Values`, `slices.Collect/Sorted/Chunk` (1.23)
-- `unique`, `os.Root`, `t.Chdir`, `t.Context`, `b.Loop`, `testing/synctest`
-- `strings.Lines/SplitSeq/FieldsSeq`, `bytes.Lines`, `encoding/json/v2`, the `omitzero` tag (1.24+)
+- **The compiler** rejects newer language features, such as range-over-func, because `go.mod` sets `-lang`.
+- **`go vet`** on Go 1.23+ flags any standard-library API newer than `go.mod` through its `stdversion` check. So does `go test`, which runs vet. Run vet with a new toolchain, not only with 1.22. Examples it catches:
+  - 1.23: `iter`, `maps.Keys/Values`, `slices.Collect/Sorted/Chunk`, `unique`
+  - 1.24: `os.Root`, `t.Chdir`, `t.Context`, `b.Loop`, `strings.Lines/SplitSeq/FieldsSeq`, `bytes.Lines`
+  - 1.25+: `testing/synctest`, `sync.WaitGroup.Go`, `t.Output`, `errors.AsType` (1.26), `encoding/json/v2` (1.27)
+- **Nothing catches struct-tag options.** `json:",omitzero"` (1.24) compiles on 1.22 and is ignored there, so the same code writes different JSON depending on the toolchain. Don't use it. Rex writes the feed and plan files as JSON.
 
-`min`/`max`, `clear`, range over an int, and `slices`/`maps` functions from 1.21 are fine.
+`min`/`max`, `clear`, range over an int, and the 1.21 `slices`/`maps` functions are fine.
 
 ## Workflow
 
 - **Branches.** Branch from `dev`. When a change depends on unmerged work, stack it: cut the branch from the previous one and open the PR against it. Name branches after the issue: `feature/task_completion`, `fix/key_input`, `docs/ux_spec`.
 - **One branch, one issue.** Each branch closes exactly one issue. Work with no issue gets one first.
 - **PR body.** Include the problem, what changed, why it is needed, how it works, the tests run (with output), terminal captures for TUI changes, and any existing behavior or test that changed on purpose. Stacked PRs say what they sit on: merge them bottom-up and don't squash.
-- **Fixing a lower PR in a stack.** Add a commit to that branch, then rebase the stack with `git rebase --update-refs` and push each branch with `--force-with-lease`.
-- **Before opening a PR,** run the gate and a review pass:
+- **Fixing a lower PR in a stack.** Add a commit to that branch, never amend. Then rebase everything above it and push each moved branch:
+
+```bash
+git checkout <top-of-stack>
+git rebase --update-refs <fixed-branch>   # moves every branch in between too
+git push --force-with-lease origin <each moved branch>
+```
+
+- **Before opening a PR,** run the gate (bash) and a review pass:
 
 ```bash
 test -z "$(gofmt -l .)"
-go vet ./... && GOOS=windows go vet ./...
-staticcheck ./...
+go vet ./... && GOOS=windows go vet ./... && GOOS=linux go vet ./...
+staticcheck ./...                           # honnef.co/go/tools/cmd/staticcheck@2026.2.2
 go test -race ./...
-go1.22.12 test ./...               # golang.org/dl/go1.22.12
-git diff --exit-code go.mod go.sum # newer toolchains may add a toolchain line
+GOTOOLCHAIN=local go1.22.12 test ./...      # golang.org/dl/go1.22.12, then: go1.22.12 download
+git diff --exit-code <base-branch> -- go.mod go.sum   # no new deps, no toolchain line
 ```
 
 - **Review pass.** Read-only reviewers, each with one job:
   - critique the design and how it interacts with the system;
-  - drive the TUI in tmux on its own socket (`tmux -S <dir>/tmux.sock`), only when the UI changed;
+  - drive the TUI in tmux on its own server (`tmux -L <name>`, never the default one), only when the UI changed;
   - try to break it and check for regressions;
   - lint and format;
   - a final readiness check after fixes.
@@ -134,6 +144,6 @@ git diff --exit-code go.mod go.sum # newer toolchains may add a toolchain line
 ## Definition of done
 
 - Follows this file and any PNG the human attached.
-- `go test ./...` passes.
+- The pre-PR gate in Workflow passes (at minimum `go test ./...`).
 - Terminal state restores on quit / Ctrl+C.
 - No speculative product, extra commands, or architecture for a feature that was not requested.

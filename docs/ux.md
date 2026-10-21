@@ -371,20 +371,21 @@ sendoff · esc close · c⏎ copy · o⏎ print plain
   - Goal;
   - Scope (In / Out);
   - Tasks (`[done]` / `[active]` / `[pending]`, with `(depends on: …)`);
-  - Next (Does / Needs / Verify / Files);
+  - Next (Does / Needs / Verify / Files, and `Last time:` when the pin was done before and reopened);
   - For the next chat.
 
   Rex adds:
-  - a short Done section (intended vs actual, modified, verified);
-  - a request that the agent end its final reply with `accomplished:` / `verified:` lines;
+  - a short Done section (intended vs actual, modified, verified, and the task's `completed_notes`);
+  - a request that the agent end its final reply with `accomplished:` / `verified:` lines and then the fingerprint line, so the completion form knows which task the reply is about;
   - the fingerprint `rex-sendoff: <path>#<task>`.
-- **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`.
+- **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`. To fit, finished tasks leave the list first, then open tasks beyond the pin and what it waits on (`… N more in the plan file`), then old Done entries. The pin's Next section stays unless it alone would crowd out the rest, and the closing instructions and the fingerprint are never cut.
+- **Always from the file as it is now.** An open overlay is rebuilt when the plan changes, and `c⏎` / `o⏎` use the plan as it is at that moment. A missing or unparsable file refuses (`can't send off: …`) rather than send the last good copy.
 - **Copying is honest.**
   - Rex uses the native tool (`pbcopy`, `wl-copy`, `xclip`, `clip.exe`) and says `copied (<tool>)` only if it exited 0.
   - Over SSH, or with no tool available, it sends OSC 52 and says `sent (OSC 52) · may be blocked`.
   - `o⏎` leaves the alternate screen and prints the plain brief to the normal screen. Mouse selection is then clean, and the text stays in scrollback. ⏎ returns.
 - **No saved copy.** Rex keeps no handoff file, so nothing can drift from the JSON. The brief can always be regenerated, and `o⏎` covers terminals where copying fails.
-- **On the tape.** Rex adds a one-line record: `── sendoff · card-highlight · copied (pbcopy) ──`. When the brief comes back as a user prompt (it carries the fingerprint), the tape collapses it to `── sendoff ── card-highlight pasted (24 lines)`. That confirms the new chat started from the pin.
+- **On the tape.** Rex adds a one-line record: `── sendoff · card-highlight · copied (pbcopy) ──`. When the brief comes back as a user prompt (the fingerprint on a line of its own), the tape collapses it to `── sendoff ── card-highlight pasted (24 lines)`, followed by any words the user typed before it. That confirms the new chat started from the pin.
 - **An empty plan** (no tasks) refuses: `nothing to send · this plan has no tasks · b⏎ copies a planning brief`.
 
 `b⏎` / `brief⏎` opens the same overlay in **planning mode**. It has the same copy status, `c⏎`, `o⏎` and Esc, and leaves the tape record `── brief · copied (pbcopy) ──`. The planning brief contains:

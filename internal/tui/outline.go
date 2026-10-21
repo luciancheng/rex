@@ -467,7 +467,7 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 		top = append(top, LogLine{Kind: "error", Text: "  " + clip(plural(n, "! %d problem", "! %d problems")+" · ⏎ on the title lists them", inner)})
 	}
 	if len(p.Tasks) == 0 {
-		top = append(top, LogLine{Kind: "gap"}, LogLine{Kind: "idle", Text: "  " + clip("No tasks yet · your agent fills this file", inner)})
+		top = append(top, LogLine{Kind: "gap"}, LogLine{Kind: "idle", Text: "  " + clip("No tasks yet · your agent fills this file · b⏎ copies a planning brief", inner)})
 	} else {
 		top = append(top, LogLine{Kind: "gap"})
 	}

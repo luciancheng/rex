@@ -115,6 +115,7 @@ Each task should be one PR that a human can review in a reasonable sitting. If i
   ```
   accomplished: <what actually happened, one line>
   verified: <how it was checked, one line>
+  rex-sendoff: <path>#<task>        (the line from the send-off, when there was one)
   ```
 
 ## Never in a plan

@@ -62,8 +62,14 @@ type app struct {
 	pinMoved   map[string]time.Time // when the pin last moved to each task this session
 	lastPin    map[string]string    // per plan file, the pin notePin last saw there
 	started    time.Time
-	form       [2]*doneForm  // per place, while the completion form is open
-	seen       []watch.Event // raw events from this repo, for completion evidence
+	form       [2]*doneForm        // per place, while the completion form is open
+	seen       []watch.Event       // raw events from this repo, for completion evidence
+	briefs     [2]*briefView       // per place, while the Send-off overlay is open
+	copy       func(string) string // copies a brief and says what happened; nil = no clipboard
+	plainOut   string              // a brief to print on the normal screen (o⏎)
+	plainText  string              // the brief on the normal screen, to print again after a stop
+	plainShown bool                // the brief is on the normal screen; ⏎ returns
+	plainBack  bool                // come back to the live screen
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -160,6 +166,12 @@ func (a *app) composeOptions() ComposeOptions {
 		scroll := min(a.overlayScroll[a.pane], max(0, len(lines)-layoutFor(a.columns, a.lines).bodyH))
 		opt.Overlay = &Overlay{Lines: lines, Scroll: scroll, Footer: []string{"pin", "p⏎ move pin", "esc cancel", "↑↓ scroll"}}
 	}
+	if a.overlay[a.pane] == overlaySendoff && a.briefs[a.pane] != nil {
+		opt.Overlay = &Overlay{Lines: a.briefLines(textW), Footer: []string{"sendoff", "esc close", "c⏎ copy", "o⏎ print plain"}, Scroll: a.overlayScroll[a.pane]}
+		if a.briefs[a.pane].planning {
+			opt.Overlay.Footer[0] = "brief"
+		}
+	}
 	if f := a.form[a.pane]; a.overlay[a.pane] == overlayDone && f != nil {
 		lines := a.doneLines(textW)
 		// Keep the focused field (and the line under it) on screen.
@@ -226,7 +238,7 @@ func (a *app) planFooter() []string {
 		return []string{"outline", "read-only", "esc plans", "tab tape"}
 	}
 	if p := a.doc.plan; p == nil || len(p.Tasks) == 0 {
-		return []string{"outline", "tab tape", "esc plans"}
+		return []string{"outline", "b⏎ brief", "tab tape", "esc plans"}
 	}
 	return []string{"outline", "tab tape", "esc plans", "⏎ detail", "?⏎ help"}
 }
@@ -234,12 +246,15 @@ func (a *app) planFooter() []string {
 // verbHints are the verbs worth typing on the open plan, as the outline's
 // placeholder: the ones this build offers.
 func (a *app) verbHints() string {
+	type hint struct{ verb, text string }
+	all := []hint{{"sendoff", "s⏎ sendoff"}, {"done", "d⏎ done"}, {"pin", "p⏎ pin"}, {"help", "?⏎ help"}}
+	if a.doc != nil && a.doc.plan != nil && len(a.doc.plan.Tasks) == 0 {
+		all = []hint{{"brief", "b⏎ brief"}, {"help", "?⏎ help"}}
+	}
 	var hints []string
-	for _, h := range []struct{ verb, hint string }{
-		{"sendoff", "s⏎ sendoff"}, {"done", "d⏎ done"}, {"pin", "p⏎ pin"}, {"help", "?⏎ help"},
-	} {
+	for _, h := range all {
 		if a.offers(h.verb) {
-			hints = append(hints, h.hint)
+			hints = append(hints, h.text)
 		}
 	}
 	return strings.Join(hints, " · ")
@@ -252,6 +267,9 @@ func (a *app) placeholder() string {
 	}
 	if f := a.form[a.pane]; a.overlay[a.pane] == overlayDone && f != nil {
 		return f.hints[f.focus]
+	}
+	if a.overlay[a.pane] == overlaySendoff {
+		return "c⏎ copy · o⏎ print plain · esc close"
 	}
 	if a.overlay[a.pane] != overlayNone {
 		return "esc to close"
@@ -283,6 +301,11 @@ func (a *app) preview() string {
 		return ""
 	}
 	if verb, arg, ok := parseVerb(text); ok && a.offers(verb) {
+		if verb == "sendoff" && arg == "" && a.overlay[a.pane] == overlayNone && a.doc != nil && a.doc.plan != nil && a.briefBlocked() == "" {
+			if pin := a.doc.plan.Graph().Pin(); pin != nil {
+				arg = pin.ID // which task the brief is for, before ⏎
+			}
+		}
 		if verb == "pin" && arg == "" && a.overlay[a.pane] == overlayNone {
 			if t := a.pinCandidate(); t != nil {
 				arg = t.ID
@@ -503,6 +526,20 @@ func (a *app) handleKey(key string) bool {
 }
 
 func (a *app) applyKey(key string) bool {
+	if a.plainShown {
+		// The brief is on the normal screen: ⏎ comes back; Ctrl+C comes
+		// back too, with quit armed where the footer can say so.
+		switch key {
+		case "\r", "\n":
+			a.plainShown, a.plainBack, a.quitPending = false, true, false
+			return true
+		case CtrlC:
+			a.plainShown, a.plainBack = false, true
+			a.quitPending, a.quitTicks = true, QuitWindowTicks
+			return true
+		}
+		return false
+	}
 	if l := layoutFor(a.columns, a.lines); !l.typing && key != CtrlC && key != "\x0c" {
 		_, paste := IsPaste(key)
 		edits := paste || isPrintableKey(key) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
@@ -604,11 +641,10 @@ func (a *app) submit(text string) bool {
 	return true
 }
 
-// offers reports which verbs exist yet. The other plan verbs (sendoff,
-// brief, done) arrive with their features.
+// offers reports which verbs exist.
 func (a *app) offers(verb string) bool {
 	switch verb {
-	case "help", "breakdance", "pin", "done":
+	case "help", "breakdance", "pin", "done", "sendoff", "brief":
 		return true
 	}
 	return false
@@ -620,6 +656,10 @@ func (a *app) runVerb(verb, arg string) {
 		a.pinVerb(arg)
 	case "done":
 		a.doneVerb()
+	case "sendoff":
+		a.sendoffVerb()
+	case "brief":
+		a.briefVerb()
 	case "help":
 		a.overlay[a.pane] = overlayHelp
 		a.overlayScroll[a.pane] = 0
@@ -803,7 +843,7 @@ func (a *app) openedPlan() {
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
 		for place := range a.overlay {
-			if a.overlay[place] == overlayPin || a.overlay[place] == overlayDone {
+			if a.overlay[place] == overlayPin || a.overlay[place] == overlayDone || a.overlay[place] == overlaySendoff {
 				a.overlay[place] = overlayNone // it was about the old plan
 				a.form[place] = nil
 				if PaneKind(place) != a.pane {
@@ -939,6 +979,7 @@ func (a *app) pollDoc() bool {
 		a.outline.keepSel(a.doc.plan)
 	}
 	a.notePin()
+	a.refreshBriefs()
 	if summary != "" {
 		a.flash("plan updated · "+summary, "accent")
 		a.tapeLine("plan", summary)
@@ -964,11 +1005,7 @@ func (a *app) overlayKey(key string) bool {
 		// A page keeps two rows of overlap: the ↑/↓ more markers cover them.
 		step := max(1, page-2)
 		delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
-		lines := a.helpBody(PaneTextWidth(a.columns))
-		if a.overlay[a.pane] == overlayPin {
-			lines = pinConfirmLines(a.pinAsk[a.pane], PaneTextWidth(a.columns))
-		}
-		limit := max(0, len(lines)-page)
+		limit := max(0, len(a.overlayBody(PaneTextWidth(a.columns)))-page)
 		next := max(0, min(limit, a.overlayScroll[a.pane]+delta))
 		changed := next != a.overlayScroll[a.pane]
 		a.overlayScroll[a.pane] = next
@@ -976,6 +1013,9 @@ func (a *app) overlayKey(key string) bool {
 	case "\r", "\n":
 		if a.overlay[a.pane] == overlayPin {
 			return a.confirmPin()
+		}
+		if a.overlay[a.pane] == overlaySendoff {
+			return a.briefKey()
 		}
 		// Only the overlay's own inputs work in it; Help has none, so a
 		// typed word is dropped, never run underneath.
@@ -985,6 +1025,17 @@ func (a *app) overlayKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// overlayBody is the open overlay's lines at width.
+func (a *app) overlayBody(width int) []LogLine {
+	switch a.overlay[a.pane] {
+	case overlaySendoff:
+		return a.briefLines(width)
+	case overlayPin:
+		return pinConfirmLines(a.pinAsk[a.pane], width)
+	}
+	return a.helpBody(width)
 }
 
 // helpBody is the Help overlay's lines at width.

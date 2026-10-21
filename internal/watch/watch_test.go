@@ -268,7 +268,7 @@ func TestAppendKeepsGrowingReplyAppendOnly(t *testing.T) {
 	}
 }
 
-func TestLastEventsReadsOnlyTheTail(t *testing.T) {
+func TestLastEventsReadsAWindowFromTheEnd(t *testing.T) {
 	feed := filepath.Join(t.TempDir(), "session.jsonl")
 	filler := strings.Repeat("x", 1000)
 	f, err := os.Create(feed)
@@ -280,9 +280,12 @@ func TestLastEventsReadsOnlyTheTail(t *testing.T) {
 		f.WriteString(line + "\n")
 	}
 	f.Close()
+	if n := len(readTail(feed, tailBytes)); n > tailBytes+1 {
+		t.Fatalf("read %d bytes of a %d-byte window", n, tailBytes)
+	}
 	got := LastEvents(feed, 3)
 	if len(got) != 3 || !strings.HasPrefix(got[2].Text, "199 ") || !strings.HasPrefix(got[0].Text, "197 ") {
-		t.Fatalf("%d events, last %q", len(got), got[len(got)-1].Text[:8])
+		t.Fatalf("%d events: %+v", len(got), got)
 	}
 }
 
@@ -520,7 +523,10 @@ func TestLastEventsKeepsALineStartingExactlyAtTheWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := LastEvents(feed, 10000)
-	if len(got) == 0 || got[0].Text != "first" {
+	if len(got) == 0 {
+		t.Fatal("no events read")
+	}
+	if got[0].Text != "first" {
 		t.Fatalf("the line starting exactly at the window was dropped: first=%q", got[0].Text)
 	}
 }

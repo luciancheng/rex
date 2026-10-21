@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -261,6 +262,18 @@ func TestIngestFailsOpenOnBadFlagsAndSource(t *testing.T) {
 	data, err := os.ReadFile(feed)
 	if err != nil || !strings.Contains(string(data), "still recorded") {
 		t.Fatalf("unknown source should still ingest as auto: %v %s", err, data)
+	}
+}
+
+func TestIngestSwallowsACrash(t *testing.T) {
+	defer func(old func(io.Reader, string, string) error) { ingestFn = old }(ingestFn)
+	ingestFn = func(io.Reader, string, string) error { panic("boom") }
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"ingest", "--source", "cursor"}, strings.NewReader("{}"), &stdout, &stderr); code != 0 || stdout.Len() != 0 {
+		t.Fatalf("a panic must still exit 0 with no stdout: %d %q", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "rex: ingest crashed: boom") {
+		t.Fatalf("stderr %q", stderr.String())
 	}
 }
 

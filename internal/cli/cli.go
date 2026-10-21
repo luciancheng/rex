@@ -169,10 +169,25 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "rex: invalid source '%s', reading as auto\n", *source)
 		*source = "auto"
 	}
-	if err := watch.RunIngest(stdin, *source, *events); err != nil {
+	ingestSafely(stdin, *source, *events, stderr)
+	return 0
+}
+
+// ingestFn is watch.RunIngest; tests swap it.
+var ingestFn = watch.RunIngest
+
+// ingestSafely runs one hook payload. A hook's exit code is read by the
+// agent (2 means "block"), and a Go panic exits 2, so even a crash here is
+// reported on stderr and swallowed.
+func ingestSafely(stdin io.Reader, source, events string, stderr io.Writer) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(stderr, "rex: ingest crashed: %v\n", r)
+		}
+	}()
+	if err := ingestFn(stdin, source, events); err != nil {
 		fmt.Fprintf(stderr, "rex: %v\n", err)
 	}
-	return 0
 }
 
 func interactive(stdin io.Reader, stdout io.Writer) bool {

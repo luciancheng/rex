@@ -151,7 +151,8 @@ func privatize(f *os.File) {
 	}
 }
 
-// capText keeps event text under limit bytes, cut on a rune boundary. With
+// capText keeps event text to at most limit bytes plus "…", cut on a rune
+// boundary. With
 // the 32KB cap a line fits the 64KB tail window LastEvents reads unless the
 // text is mostly characters JSON must escape; such a line is only missed
 // by duplicate detection, never lost from the feed.

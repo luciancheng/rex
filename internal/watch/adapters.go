@@ -114,6 +114,9 @@ func DetectSource(payload map[string]any, hint string) string {
 		return hint
 	}
 	name := hookName(payload)
+	if openCodeTypes[strField(payload, "type")] {
+		return "opencode"
+	}
 	if _, ok := payload["turn_id"]; ok && (claudeEvents[name] || codexEvents[name]) {
 		return "codex" // Codex hooks share Claude's event names; turn_id is Codex's
 	}
@@ -671,6 +674,8 @@ func MapPayload(payload map[string]any, source string) *Event {
 		return MapClaude(payload)
 	case "codex":
 		return MapCodex(payload)
+	case "opencode":
+		return MapOpenCode(payload)
 	default:
 		return MapCursor(payload)
 	}

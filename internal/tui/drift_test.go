@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,5 +135,34 @@ func TestDriftBlockSitsBelowWhatItJudges(t *testing.T) {
 	a.settle(70, 24)
 	if !strings.Contains(a.statusLine().Short, "asks for extra palettes") {
 		t.Fatalf("the short row 1 keeps the reason for a prompt: %q", a.statusLine().Short)
+	}
+}
+
+func TestDriftKeepsAScrolledUpViewStill(t *testing.T) {
+	for _, where := range []string{"above", "below"} {
+		a, c, _ := openDemo(t, driftDemo, 120, 20)
+		press(a, "\t")
+		filler := func(from, n int) {
+			for i := 0; i < n; i++ {
+				a.ingest([]watch.Event{at(c, time.Duration(from+i)*time.Second, watch.Event{Source: "claude", Kind: "text", Text: fmt.Sprintf("reply %d", from+i)})})
+			}
+		}
+		filler(1, 60)
+		a.ingest([]watch.Event{edit(a, c, 100*time.Second, "README.md")}) // the block, then more below it
+		filler(200, 30)
+		if where == "above" {
+			a.scroll = 5 // the block is far above the view
+		} else {
+			for i, e := range a.log {
+				if e.Kind == "drift" {
+					a.scroll = len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns))) + 10 // the view ends just above the block
+				}
+			}
+		}
+		top := a.frameRows().Rows[3]
+		a.ingest([]watch.Event{edit(a, c, 300*time.Second, "go.mod")}) // the block gains a row
+		if got := a.frameRows().Rows[3]; got != top {
+			t.Errorf("%s: the view moved: %q → %q", where, top, got)
+		}
 	}
 }

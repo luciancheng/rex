@@ -154,13 +154,18 @@ func (a *app) noteDrift(n driftNote) bool {
 		rows = append(rows, fmt.Sprintf("%s %s (%s)", it.Level, it.Subject, it.Reason))
 	}
 	text := strings.Join(rows, "\n")
-	// One block per pin stint, updated where it first appeared. A block
-	// above a scrolled-up view grows out of sight; one below it shifts the
-	// view by the rows it gains.
+	// One block per pin stint, updated where it first appeared. A scrolled-
+	// up view keeps showing the same lines: a block above it grows out of
+	// sight, and one below it moves the view by the rows it gains.
 	for i := len(a.log) - 1; i >= 0; i-- {
 		if e := &a.log[i]; e.Kind == "drift" && e.Meta["gen"] == s.gen {
+			before := a.logLines()
+			below := a.scroll > 0 && len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns))) < a.scroll
 			e.Text = text
 			a.logRev++
+			if below {
+				a.scroll += max(0, a.logLines()-before)
+			}
 			return true
 		}
 	}

@@ -57,7 +57,7 @@ options:
   --source {auto,cursor,claude,codex,opencode}
                           payload dialect (default: auto)
   --install HARNESS       wire an agent so it writes the feed: cursor, claude,
-                          codex, or auto for every one found on this machine
+                          codex, opencode, or auto for every one found here
   --project               with claude: wire only this git repo
                           (.claude/settings.local.json, kept out of git)
   --uninstall HARNESS     take Rex's hook back out of that agent's config

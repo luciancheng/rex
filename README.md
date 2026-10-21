@@ -68,7 +68,7 @@ rex ingest --install cursor       # (re)wire Cursor; --uninstall cursor takes it
 rex ingest --install claude       # wire Claude Code (~/.claude/settings.json, or $CLAUDE_CONFIG_DIR)
 rex ingest --install claude --project   # this repo only, git-excluded
 rex ingest --install codex        # wire Codex ($CODEX_HOME/hooks.json), then /hooks → trust
-rex ingest --install opencode     # an OpenCode plugin (~/.config/opencode/plugins/rex.js)
+rex ingest --install opencode     # an OpenCode plugin (~/.config/opencode/plugins/rex.js, or $XDG_CONFIG_HOME)
 rex --help
 ```
 

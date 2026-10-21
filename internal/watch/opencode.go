@@ -23,12 +23,17 @@ var openCodeTypes = map[string]bool{
 }
 
 // opencodePluginJS is the plugin. It never throws from a hook, never waits
-// for rex, never sets output, and sends no file bodies: write content,
-// edit strings and patch text are dropped before anything leaves.
+// for rex, and never sets output. Only allow-listed fields leave it: no
+// file bodies, diffs, attachments or tool output. A subagent's (child)
+// session is agent work: its prompt, replies and turn end are not sent.
+// The reply is the last text of a turn, sent with session.idle, as Claude
+// Code's Stop does; parts older than the plugin (a fork replays history)
+// are skipped.
 const opencodePluginJS = opencodeMarker + `
 // Pipes OpenCode events to rex, which only watches: https://github.com/luciancheng/rex
 import { spawn } from "node:child_process"
 const REX = %s
+const started = Date.now()
 let q = Promise.resolve()
 function send(p) {
   let line
@@ -44,49 +49,73 @@ function send(p) {
     } catch { done() }
   })).catch(() => {})
 }
-const slim = (s = {}) => {
-  const { output, metadata, raw, ...rest } = s
-  const input = { ...(s.input || {}) }
-  delete input.content; delete input.oldString; delete input.newString; delete input.patchText
-  const files = Array.isArray(metadata?.files) ? metadata.files.map((f) => f?.filePath).filter(Boolean) : undefined
-  return { ...rest, input, files }
+const str = (v) => (typeof v === "string" ? v : undefined)
+const input = (i = {}) => {
+  const out = {}
+  for (const k of ["filePath", "path", "command", "description", "pattern", "query", "url", "name", "subagent_type"]) if (str(i[k])) out[k] = i[k]
+  if (Array.isArray(i.todos)) out.todos = i.todos.map((t) => ({ content: String(t?.content ?? ""), status: str(t?.status) }))
+  return out
 }
+const files = (m) => Array.isArray(m?.files) ? m.files.map((f) => ({ path: str(f?.movePath) || str(f?.filePath), type: str(f?.type) })).filter((f) => f.path) : undefined
+const tool = (s = {}) => ({ status: s.status, input: input(s.input), error: str(s.error), files: files(s.metadata), exit: typeof s.metadata?.exit === "number" ? s.metadata.exit : undefined })
 export const RexPlugin = async (ctx) => {
   const cwd = ctx?.directory || ctx?.worktree || ""
-  const roles = new Map(), seen = new Set()
+  const roles = new Map(), seen = new Set(), children = new Set(), last = new Map()
   return {
     event: async ({ event }) => {
       try {
         const p = event?.properties ?? {}
         switch (event?.type) {
+          case "session.created": case "session.updated":
+            if (p.info?.id && p.info.parentID) children.add(p.info.id)
+            return
           case "message.updated":
-            if (p.info?.id) roles.set(p.info.id, p.info.role)
+            if (p.info?.id) roles.set(p.info.id, p.info.summary || p.info.mode === "compaction" ? "summary" : p.info.role)
             return
           case "message.part.updated": {
             const part = p.part
             if (!part) return
+            const end = part.time?.end ?? part.state?.time?.end
+            if (typeof end === "number" && end < started - 5000) return
             if (part.type === "tool") {
               const st = part.state?.status, key = part.callID + ":" + st
               if (["running", "completed", "error"].includes(st) && !seen.has(key)) {
                 seen.add(key)
-                send({ type: event.type, cwd, sessionID: part.sessionID, part: { type: "tool", tool: part.tool, callID: part.callID, state: slim(part.state) } })
+                send({ type: event.type, cwd, sessionID: part.sessionID, part: { type: "tool", tool: part.tool, callID: part.callID, state: tool(part.state) } })
               }
               return
             }
-            if ((part.type === "text" || part.type === "reasoning") && part.time?.end && !part.synthetic && !part.ignored && roles.get(part.messageID) === "assistant")
-              send({ type: event.type, cwd, sessionID: part.sessionID, part: { type: part.type, text: part.text } })
+            if (children.has(part.sessionID) || !part.time?.end || part.synthetic || part.ignored || roles.get(part.messageID) !== "assistant" || seen.has(part.id)) return
+            seen.add(part.id)
+            if (part.type === "reasoning") send({ type: event.type, cwd, sessionID: part.sessionID, part: { type: "reasoning", text: str(part.text) } })
+            if (part.type === "text") last.set(part.sessionID, str(part.text))
             return
           }
-          case "session.idle": case "session.error": case "permission.updated": case "permission.asked": case "question.asked":
-            send({ type: event.type, cwd, properties: p })
+          case "session.idle": {
+            if (children.has(p.sessionID)) return
+            const text = last.get(p.sessionID)
+            last.delete(p.sessionID)
+            send({ type: event.type, cwd, sessionID: p.sessionID, text })
+            return
+          }
+          case "session.error":
+            if (children.has(p.sessionID)) return
+            send({ type: event.type, cwd, sessionID: p.sessionID, error: { name: str(p.error?.name), message: str(p.error?.data?.message) ?? str(p.error?.message) } })
+            return
+          case "permission.updated": case "permission.asked":
+            send({ type: event.type, cwd, properties: { title: str(p.title), type: str(p.type), permission: str(p.permission), patterns: Array.isArray(p.patterns) ? p.patterns.filter(str) : undefined, sessionID: str(p.sessionID) } })
+            return
+          case "question.asked":
+            send({ type: event.type, cwd, properties: { questions: Array.isArray(p.questions) ? p.questions.map((x) => ({ question: str(x?.question), header: str(x?.header) })) : undefined } })
             return
         }
       } catch {}
     },
-    "chat.message": async (input, output) => {
+    "chat.message": async (inp, output) => {
       try {
+        if (children.has(inp?.sessionID)) return
         const text = (output?.parts ?? []).filter((x) => x?.type === "text" && !x.synthetic && !x.ignored).map((x) => x.text).join("\n").trim()
-        if (text) send({ type: "chat.message", cwd, sessionID: input?.sessionID, text })
+        if (text) send({ type: "chat.message", cwd, sessionID: inp?.sessionID, text })
       } catch {}
     },
   }
@@ -113,7 +142,14 @@ func opencodeSource(exe string) []byte {
 // write is left alone.
 func installOpenCode(path string, out io.Writer) error {
 	want := opencodeSource(rexExecutable())
-	if have, err := os.ReadFile(path); err == nil {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved // a dotfiles symlink stays a symlink
+	}
+	have, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err // can't tell whose it is, so it stays
+	}
+	if err == nil {
 		if !bytes.HasPrefix(have, []byte(opencodeMarker)) {
 			return fmt.Errorf("%s exists and Rex didn't write it; move it to install the rex plugin", path)
 		}
@@ -165,6 +201,10 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
@@ -204,19 +244,47 @@ func MapOpenCode(payload map[string]any) *Event {
 			return openCodeTool(part, abs, event)
 		}
 	case "session.idle":
+		// The turn's last text is its reply, sent with the idle.
+		if text, _ := payload["text"].(string); strings.TrimSpace(text) != "" {
+			return event("text", strings.TrimSpace(text), nil)
+		}
 		return event("idle", "turn completed", nil)
 	case "session.error":
-		props := asDict(payload["properties"])
-		msg := strField(asDict(props["error"]), "message")
-		if msg == "" {
-			msg = strField(props, "error")
+		e := asDict(payload["error"])
+		if len(e) == 0 { // an older plugin sent the properties whole
+			e = asDict(asDict(payload["properties"])["error"])
 		}
-		return event("error", strings.TrimSpace("session error: "+msg), nil)
+		name, _ := e["name"].(string)
+		msg, _ := e["message"].(string)
+		if msg == "" {
+			msg, _ = asDict(e["data"])["message"].(string)
+		}
+		switch name {
+		case "MessageAbortedError":
+			return event("idle", "turn interrupted", map[string]any{"status": "aborted"})
+		case "ContextOverflowError":
+			return nil // OpenCode compacts and carries on
+		}
+		if msg == "" {
+			msg = name
+		}
+		return event("error", strings.TrimSpace("session error: "+firstLine(msg)), nil)
 	case "permission.updated", "permission.asked":
 		props := asDict(payload["properties"])
 		text := strField(props, "title")
 		if text == "" {
+			var patterns []string
+			if list, ok := props["patterns"].([]any); ok {
+				for _, p := range list {
+					if s, ok := p.(string); ok {
+						patterns = append(patterns, s)
+					}
+				}
+			}
 			text = strings.TrimSpace(strField(props, "permission") + " " + strField(props, "type"))
+			if len(patterns) > 0 {
+				text += ": " + strings.Join(patterns, ", ")
+			}
 		}
 		return event("question", "permission: "+text, nil)
 	case "question.asked":
@@ -235,12 +303,24 @@ func openCodeTool(part map[string]any, abs func(string) string, event func(strin
 	if p := abs(strField(input, "filePath")); p != "" {
 		paths = append(paths, p)
 	}
+	deleted := false
 	if files, ok := state["files"].([]any); ok {
 		for _, f := range files {
-			if s, ok := f.(string); ok && s != "" {
-				paths = append(paths, abs(s))
+			switch v := f.(type) {
+			case string: // an older plugin
+				if v != "" {
+					paths = append(paths, abs(v))
+				}
+			case map[string]any:
+				if p, _ := v["path"].(string); p != "" {
+					paths = append(paths, abs(p))
+					deleted = deleted || (len(paths) == 1 && v["type"] == "delete")
+				}
 			}
 		}
+	}
+	if len(paths) > 1 && paths[0] == paths[1] {
+		paths = paths[1:]
 	}
 	first := ""
 	if len(paths) > 0 {
@@ -261,14 +341,21 @@ func openCodeTool(part map[string]any, abs func(string) string, event func(strin
 		case first != "":
 			return event(toolKind(tool), tool+" "+first, meta)
 		}
-		return event(toolKind(tool), toolText(tool, state["input"]), meta)
+		return event(toolKind(tool), openCodeToolText(tool, input), meta)
 	case "completed":
 		switch {
 		case edit && first != "":
 			meta["ok"] = true
-			return event("result", "wrote "+first, meta)
+			verb := "wrote "
+			if deleted {
+				verb = "deleted "
+			}
+			return event("result", verb+first, meta)
 		case IsShellTool(tool):
 			meta["command"] = cmd
+			if exit, ok := state["exit"].(float64); ok {
+				meta["ok"] = exit == 0 // OpenCode's bash says its exit code
+			}
 			return event("result", "ran "+cmd, meta)
 		}
 		return event("result", tool, meta)
@@ -287,6 +374,23 @@ func openCodeTool(part map[string]any, abs func(string) string, event func(strin
 		return event("error", text, meta)
 	}
 	return nil
+}
+
+// openCodeToolText is a short line for one of OpenCode's own tools, never
+// a JSON dump or a whole subagent prompt.
+func openCodeToolText(tool string, input map[string]any) string {
+	switch tool {
+	case "todowrite":
+		return claudeToolText("TodoWrite", input)
+	case "task":
+		if d := firstLine(strField(input, "description")); d != "" {
+			return "task " + d
+		}
+		return "task"
+	case "skill":
+		return strings.TrimSpace("skill " + strField(input, "name"))
+	}
+	return claudeToolText(tool, input)
 }
 
 func init() {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -32,8 +33,14 @@ func TestMapOpenCode(t *testing.T) {
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"apply_patch","state":{"status":"completed","input":{},"files":["/repo/a.go","/repo/b.go"]}}}`, "result", "wrote /repo/a.go"},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"error","input":{"command":"go vet"},"error":"exit 1\nmore"}}}`, "error", "bash failed · go vet: exit 1"},
 		{`{"type":"session.idle","properties":{"sessionID":"s"}}`, "idle", "turn completed"},
-		{`{"type":"session.error","properties":{"error":{"message":"rate limited"}}}`, "error", "session error: rate limited"},
-		{`{"type":"permission.asked","properties":{"title":"Run rm -rf build?"}}`, "question", "permission: Run rm -rf build?"},
+		{`{"type":"session.error","error":{"name":"APIError","message":"rate limited\nresponse body"}}`, "error", "session error: rate limited"},
+		{`{"type":"session.error","error":{"name":"MessageAbortedError"}}`, "idle", "turn interrupted"},
+		{`{"type":"session.idle","sessionID":"s","text":"All done."}`, "text", "All done."},
+		{`{"type":"permission.asked","properties":{"permission":"bash","patterns":["rm -rf build"]}}`, "question", "permission: bash: rm -rf build"},
+		{`{"type":"permission.updated","properties":{"title":"Run rm -rf build?"}}`, "question", "permission: Run rm -rf build?"},
+		{`{"type":"message.part.updated","part":{"type":"tool","tool":"todowrite","state":{"status":"running","input":{"todos":[{"content":"write the mapper","status":"in_progress"}]}}}}`, "command", "todo: write the mapper"},
+		{`{"type":"message.part.updated","part":{"type":"tool","tool":"task","state":{"status":"running","input":{"description":"explore the repo","prompt":"long"}}}}`, "command", "task explore the repo"},
+		{`{"type":"message.part.updated","part":{"type":"tool","tool":"apply_patch","state":{"status":"completed","input":{},"files":[{"path":"/repo/old.go","type":"delete"}]}}}`, "result", "deleted /repo/old.go"},
 		{`{"type":"question.asked","properties":{"questions":[{"question":"Which plan?"}]}}`, "question", "Which plan?"},
 	}
 	for _, c := range cases {
@@ -75,11 +82,6 @@ func TestInstallOpenCode(t *testing.T) {
 	if err != nil || !bytes.HasPrefix(data, []byte(opencodeMarker)) || !strings.Contains(string(data), `"ingest", "--source", "opencode"`) {
 		t.Fatalf("%v\n%s", err, data)
 	}
-	for _, leak := range []string{"delete input.content", "delete input.oldString", "delete input.newString", "delete input.patchText"} {
-		if !strings.Contains(string(data), leak) {
-			t.Fatalf("the plugin drops file bodies: missing %q", leak)
-		}
-	}
 	out.Reset()
 	InstallHarness("opencode", &out)
 	if !strings.Contains(out.String(), "already installed") || !harnesses["opencode"].Wired(home) {
@@ -116,5 +118,94 @@ func TestOpenCodeLeavesAForeignRexJSAlone(t *testing.T) {
 	}
 	if err := UninstallHarness("opencode", io.Discard); err == nil {
 		t.Fatal("and never removed")
+	}
+}
+
+func TestOpenCodeSessionErrorsAndExitCodes(t *testing.T) {
+	if ev := openCodeMap(t, `{"type":"session.error","error":{"name":"ContextOverflowError","message":"too long"}}`); ev != nil {
+		t.Fatalf("OpenCode compacts and goes on: %#v", ev)
+	}
+	ev := openCodeMap(t, `{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"go test ./..."},"exit":1}}}`)
+	if ev.Meta["ok"] != false {
+		t.Fatalf("a non-zero exit is a failed run: %#v", ev)
+	}
+}
+
+// The plugin, run under node against a fake rex: what it actually sends.
+func TestOpenCodePluginSendsOnlyWhatItShould(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil || runtime.GOOS == "windows" {
+		t.Skip("needs node and a POSIX shell")
+	}
+	dir := t.TempDir()
+	out := filepath.Join(dir, "sent.jsonl")
+	fake := filepath.Join(dir, "rex")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat >> \""+out+"\"\n"), 0o755)
+	os.WriteFile(filepath.Join(dir, "rex.mjs"), opencodeSource(fake), 0o644)
+	driver := `import { RexPlugin } from "./rex.mjs"
+const h = await RexPlugin({ directory: "/repo" })
+const now = Date.now()
+const ev = (type, properties) => h.event({ event: { type, properties } })
+await ev("session.created", { info: { id: "child", parentID: "parent" } })
+await ev("message.updated", { info: { id: "m1", role: "assistant" } })
+await ev("message.part.updated", { part: { type: "tool", tool: "write", callID: "c1", sessionID: "parent", state: { status: "completed", input: { filePath: "a.go", content: "SECRET BODY" }, metadata: { diff: "SECRET BODY", files: [{ filePath: "a.go", type: "update", patch: "SECRET BODY" }] }, attachments: ["data:SECRET BODY"], output: "SECRET BODY" } } })
+await ev("message.part.updated", { part: { type: "tool", tool: "multiedit", callID: "c2", sessionID: "parent", state: { status: "running", input: { filePath: "b.go", edits: [{ oldString: "SECRET BODY", newString: "SECRET BODY" }] } } } })
+await ev("message.part.updated", { part: { id: "p1", type: "text", text: "working on it", messageID: "m1", sessionID: "parent", time: { end: now } } })
+await ev("message.part.updated", { part: { id: "p2", type: "text", text: "All done.", messageID: "m1", sessionID: "parent", time: { end: now } } })
+await ev("message.part.updated", { part: { id: "p3", type: "text", text: "OLD REPLY", messageID: "m1", sessionID: "parent", time: { end: now - 3600000 } } })
+await h["chat.message"]({ sessionID: "child" }, { parts: [{ type: "text", text: "SUBAGENT PROMPT" }] })
+await h["chat.message"]({ sessionID: "parent" }, { parts: [{ type: "text", text: "fix the cards" }] })
+await ev("session.idle", { sessionID: "child" })
+await ev("permission.asked", { permission: "edit", patterns: ["a.go"], metadata: { diff: "SECRET BODY" }, sessionID: "parent" })
+await ev("session.idle", { sessionID: "parent" })
+await new Promise((r) => setTimeout(r, 3000))
+`
+	os.WriteFile(filepath.Join(dir, "driver.mjs"), []byte(driver), 0o644)
+	cmd := exec.Command(node, filepath.Join(dir, "driver.mjs"))
+	cmd.Dir = dir
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node: %v\n%s", err, b)
+	}
+	data, _ := os.ReadFile(out)
+	sent := string(data)
+	for _, never := range []string{"SECRET BODY", "SUBAGENT PROMPT", "OLD REPLY", "working on it", `"sessionID":"child"`} {
+		if strings.Contains(sent, never) {
+			t.Fatalf("the plugin sent %q:\n%s", never, sent)
+		}
+	}
+	var kinds []string
+	for _, line := range strings.Split(strings.TrimSpace(sent), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) != nil {
+			t.Fatalf("not JSON: %q", line)
+		}
+		if ev := MapOpenCode(m); ev != nil {
+			kinds = append(kinds, ev.Kind+": "+ev.Text)
+		}
+	}
+	want := []string{"result: wrote /repo/a.go", "command: multiedit /repo/b.go", "user: fix the cards", "question: permission: edit: a.go", "text: All done."}
+	if strings.Join(kinds, " | ") != strings.Join(want, " | ") {
+		t.Fatalf("mapped:\n%s\nwant:\n%s", strings.Join(kinds, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestOpenCodeInstallKeepsASymlink(t *testing.T) {
+	home := openCodeHome(t)
+	plugins := filepath.Join(home, ".config", "opencode", "plugins")
+	os.MkdirAll(plugins, 0o755)
+	real := filepath.Join(t.TempDir(), "rex.js")
+	os.WriteFile(real, []byte(opencodeMarker+"\nold\n"), 0o644)
+	link := filepath.Join(plugins, "rex.js")
+	if os.Symlink(real, link) != nil {
+		t.Skip("no symlinks")
+	}
+	if err := InstallHarness("opencode", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("a dotfiles symlink stays a symlink")
+	}
+	if data, _ := os.ReadFile(real); !strings.Contains(string(data), `"ingest", "--source", "opencode"`) {
+		t.Fatal("the file it points at is updated")
 	}
 }

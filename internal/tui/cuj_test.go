@@ -12,10 +12,12 @@ import (
 	"github.com/luciancheng/rex/internal/watch"
 )
 
-// cujApp is a fresh app in a repo holding the CUJ fixture plan.
+// cujApp is a fresh app in a repo holding the CUJ fixture plan. The
+// fixture is a copy of rex/plans/cuj/sendoff-demo.rex.json, so trying Rex
+// on the repo's own demo can't change what the tests see.
 func cujApp(t *testing.T) (*app, *clock, string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "rex", "plans", "cuj", "sendoff-demo.rex.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "sendoff-demo.rex.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +61,26 @@ func TestCUJWholeLoop(t *testing.T) {
 	if a.pane != PanePlans || a.plans.Screen != ScreenHome || !strings.Contains(a.frame(), "Open latest") {
 		t.Fatal("A. starts on the plans home")
 	}
+	k.press("home", "\r")
+	k.typ("scratch")
+	k.press("\r")
+	k.spent(t, 2+len("scratch")+1, "create")
+	stub, err := plan.Load(filepath.Join(a.plans.Root, "scratch.rex.json"))
+	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || !strings.Contains(a.frame(), "No tasks yet") {
+		t.Fatalf("B. create writes a v1 stub and opens it: %v %+v\n%s", err, stub, a.frame())
+	}
+	k.press("esc", "home", "down")
+	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowNew {
+		t.Fatal("B. Create sits under Continue")
+	}
+	k.press("\r")
+	k.typ("scratch")
+	k.press("\r")
+	if !strings.Contains(a.frame(), "already exists") {
+		t.Fatalf("B. a duplicate name is refused\n%s", a.frame())
+	}
+	k.press("\x15", "esc") // Ctrl+U, then back to Home
+	k.n = 0
 	k.typ("sendoff-demo")
 	k.press("\r")
 	k.spent(t, len("sendoff-demo")+1, "open by name")
@@ -143,6 +165,9 @@ func TestCUJWholeLoop(t *testing.T) {
 		t.Fatalf("H. drift shows: %q", a.statusLine().Text)
 	}
 	a.ingest([]watch.Event{at(c, 11*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote outline.go", Meta: map[string]any{"tool": "Write", "path": filepath.Join(repo, "internal/tui/outline.go"), "ok": true}})})
+	if line := a.statusLine().Text; !strings.HasPrefix(line, "drift · hard: README.md") || strings.Contains(line, "outline.go") {
+		t.Fatalf("H. a listed file adds no drift: %q", line)
+	}
 
 	k.press("\t")
 	if a.pane != PanePlans || a.at != atOutline {
@@ -168,27 +193,55 @@ func TestCUJWholeLoop(t *testing.T) {
 // go next at the bottom.
 func TestFrameMatrix(t *testing.T) {
 	type screen struct {
-		name  string
-		setup func(a *app)
+		name    string
+		setup   func(a *app)
+		reached func(a *app) bool
 	}
+	open := func(a *app) { typeText(a, "sendoff-demo"); press(a, "\r") }
+	lib := func(sc PlanScreen) func(a *app) bool {
+		return func(a *app) bool { return a.pane == PanePlans && a.at == atLibrary && a.plans.Screen == sc }
+	}
+	at := func(p planAt) func(a *app) bool {
+		return func(a *app) bool { return a.at == p && a.overlay[a.pane] == overlayNone }
+	}
+	over := func(o overlayKind) func(a *app) bool { return func(a *app) bool { return a.overlay[a.pane] == o } }
 	screens := []screen{
-		{"home", func(a *app) {}},
+		{"home", func(a *app) {}, lib(ScreenHome)},
+		{"find", func(a *app) { typeText(a, "send") }, func(a *app) bool {
+			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan
+		}},
 		{"browse", func(a *app) {
 			a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, a.plans.Root, true
 			a.plans.Rebuild()
-		}},
-		{"create", func(a *app) { press(a, "home", "\r"); typeText(a, "x/y") }},
-		{"outline", func(a *app) { typeText(a, "sendoff-demo"); press(a, "\r") }},
-		{"task detail", func(a *app) { typeText(a, "sendoff-demo"); press(a, "\r", "\r") }},
-		{"plan detail", func(a *app) { typeText(a, "sendoff-demo"); press(a, "\r", "home", "\r") }},
+		}, lib(ScreenBrowse)},
+		{"create", func(a *app) { press(a, "home", "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
+		{"new folder", func(a *app) {
+			a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, a.plans.Root, true
+			a.plans.Rebuild()
+			for i, row := range a.plans.Rows {
+				if row.Kind == PlanRowMkdir {
+					a.plans.Cursor = i
+				}
+			}
+			press(a, "\r")
+			typeText(a, "notes")
+		}, lib(ScreenFolder)},
+		{"outline", open, at(atOutline)},
+		{"task detail", func(a *app) { open(a); press(a, "\r") }, at(atTaskDetail)},
+		{"plan detail", func(a *app) { open(a); press(a, "home", "\r") }, at(atPlanDetail)},
 		{"tape", func(a *app) {
 			press(a, "\t")
 			a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "a reply with 中文 and ⚠️ in it \x1b[2J"}})
+		}, func(a *app) bool { return a.pane == PaneChat && a.overlay[a.pane] == overlayNone }},
+		{"help", func(a *app) { press(a, "\t"); typeText(a, "?"); press(a, "\r") }, over(overlayHelp)},
+		{"sendoff", func(a *app) { open(a); typeText(a, "s"); press(a, "\r") }, func(a *app) bool {
+			return over(overlaySendoff)(a) && !a.briefs[a.pane].planning
 		}},
-		{"help", func(a *app) { press(a, "\t"); typeText(a, "?"); press(a, "\r") }},
-		{"sendoff", func(a *app) { typeText(a, "sendoff-demo"); press(a, "\r"); typeText(a, "s"); press(a, "\r") }},
-		{"done form", func(a *app) { typeText(a, "sendoff-demo"); press(a, "\r"); typeText(a, "d"); press(a, "\r") }},
-		{"pin confirm", func(a *app) { typeText(a, "sendoff-demo"); press(a, "\r", "end"); typeText(a, "p"); press(a, "\r") }},
+		{"planning brief", func(a *app) { open(a); typeText(a, "b"); press(a, "\r") }, func(a *app) bool {
+			return over(overlaySendoff)(a) && a.briefs[a.pane].planning
+		}},
+		{"done form", func(a *app) { open(a); typeText(a, "d"); press(a, "\r") }, over(overlayDone)},
+		{"pin confirm", func(a *app) { open(a); press(a, "end"); typeText(a, "p"); press(a, "\r") }, over(overlayPin)},
 	}
 	for _, size := range [][2]int{{24, 7}, {24, 12}, {24, 24}, {80, 7}, {80, 12}, {80, 24}, {120, 7}, {120, 12}, {120, 24}} {
 		for _, s := range screens {
@@ -197,6 +250,10 @@ func TestFrameMatrix(t *testing.T) {
 			a.settle(size[0], size[1])
 			f := a.frameRows()
 			name := s.name + " " + strings.Join([]string{itoa(size[0]), itoa(size[1])}, "×")
+			if !s.reached(a) {
+				t.Errorf("%s: setup didn't reach the screen", name)
+				continue
+			}
 			if len(f.Rows) != size[1] {
 				t.Errorf("%s: %d rows", name, len(f.Rows))
 				continue

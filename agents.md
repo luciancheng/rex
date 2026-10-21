@@ -15,7 +15,7 @@ Install and user docs live in `README.md`. This file is how to change the code.
 - Invent a custom `.rex` language. Plan files are JSON named `<name>.rex.json` under `rex/plans/` (commit that folder). Do not load them into the agent this turn. Don't `go build -o rex` at the repo root — that path is the plans directory.
 - Dump Write bodies, duplicate thoughts, or flatten markdown into one blob in the pane.
 - Giant ASCII, extra emoji, or a web UI squeezed into the terminal.
-- Wire a harness without an explicit `rex ingest --install <name>`. Wired today: Cursor (the install script does it) and Claude Code (opt-in). Codex has an `exec --json` mapper only.
+- Wire a harness without an explicit `rex ingest --install <name>`. Wired today: Cursor (the install script does it), and opt-in Claude Code and Codex. Codex's `hooks.json` may only hold `description` and `hooks`, and Codex trusts a hook by a hash of its handler, so the entry must stay byte-stable; the user trusts it once in Codex's `/hooks`.
 - Add plan fields beyond [docs/plan-format.md](docs/plan-format.md) v1 or extra mascot poses unless asked this turn. `internal/plan` parses plans leniently (Problems, not errors); keep it that way.
 
 Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. macOS, Linux, and Windows 10+ (VT).

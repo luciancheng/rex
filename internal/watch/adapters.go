@@ -114,6 +114,9 @@ func DetectSource(payload map[string]any, hint string) string {
 		return hint
 	}
 	name := hookName(payload)
+	if _, ok := payload["turn_id"]; ok && claudeEvents[name] {
+		return "codex" // Codex hooks share Claude's event names; turn_id is Codex's
+	}
 	if claudeEvents[name] {
 		return "claude"
 	}
@@ -625,6 +628,9 @@ func claudeToolText(tool string, input any) string {
 }
 
 func MapCodex(payload map[string]any) *Event {
+	if name := strField(payload, "hook_event_name"); name != "" {
+		return mapCodexHook(payload, name)
+	}
 	item, ok := payload["item"].(map[string]any)
 	if !ok {
 		return nil

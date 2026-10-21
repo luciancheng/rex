@@ -44,36 +44,44 @@ func (a *app) applyDrift() bool {
 	a.driftQueue = nil
 	changed := false
 	for _, ev := range queue {
-		if n, ok := a.judge(ev); ok && a.noteDrift(n) {
-			changed = true
+		for _, n := range a.judge(ev) {
+			if a.noteDrift(n) {
+				changed = true
+			}
 		}
 	}
 	return changed
 }
 
-func (a *app) judge(ev watch.Event) (driftNote, bool) {
+// judge is the drift of one event: one note per file a completed edit
+// touched (an apply_patch can touch several), or one for a prompt.
+func (a *app) judge(ev watch.Event) []driftNote {
 	if a.doc == nil || a.doc.plan == nil {
-		return driftNote{}, false
+		return nil
 	}
 	p := a.doc.plan
 	pin := p.Graph().Pin()
 	if pin == nil {
-		return driftNote{}, false
+		return nil
 	}
 	switch {
 	case ev.Kind == "result" && watch.IsFileEditEvent(ev):
 		if ok, has := ev.Meta["ok"].(bool); has && !ok {
-			return driftNote{}, false // a write that was denied didn't happen
+			return nil // a write that was denied didn't happen
 		}
-		rel, in := a.scope.Rel(watch.EventPath(ev))
-		if !in || rel == "" || strings.HasPrefix(rel, "../") {
-			return driftNote{}, false
+		var notes []driftNote
+		for _, path := range watch.EventPaths(ev) {
+			rel, in := a.scope.Rel(path)
+			if !in || rel == "" || strings.HasPrefix(rel, "../") {
+				continue
+			}
+			notes = append(notes, driftNote{d: plan.CheckEdit(p, pin, rel, foldPaths), rel: rel})
 		}
-		return driftNote{d: plan.CheckEdit(p, pin, rel, foldPaths), rel: rel}, true
+		return notes
 	case ev.Kind == "user" && ev.Source != "rex":
-		return driftNote{d: plan.CheckPrompt(p, pin, ev.Text), prompt: ev.Text}, true
+		return []driftNote{{d: plan.CheckPrompt(p, pin, ev.Text), prompt: ev.Text}}
 	}
-	return driftNote{}, false
+	return nil
 }
 
 // syncDrift starts over when the effective pin (of this plan) is not the

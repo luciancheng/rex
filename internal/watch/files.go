@@ -31,6 +31,26 @@ func EventPath(ev Event) string {
 	return pathFromText(ev.Text)
 }
 
+// EventPaths is every file an event names: all files of a multi-file
+// patch (meta "paths"), else EventPath.
+func EventPaths(ev Event) []string {
+	if list, ok := ev.Meta["paths"].([]any); ok && len(list) > 0 {
+		var out []string
+		for _, p := range list {
+			if s, ok := p.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if p := EventPath(ev); p != "" {
+		return []string{p}
+	}
+	return nil
+}
+
 func pathFromText(text string) string {
 	s := strings.TrimSpace(text)
 	s = strings.TrimPrefix(s, "$ ")

@@ -222,9 +222,9 @@ func TestParseErrors(t *testing.T) {
 // Every field Parse reads is a JSON tag on Plan or Task, and the other way
 // round, so docs, the stub and the reader cannot drift apart.
 func TestEveryTagIsRead(t *testing.T) {
-	full := `{"version":1,"id":"p","title":"t","goal":"g","status":"done","scope":{"in":["i"],"out":["o"]},"tasks":[{
+	full := `{"version":1,"id":"p","title":"t","goal":"g","status":"done","base":"dev","scope":{"in":["i"],"out":["o"]},"tasks":[{
 		"id":"a","title":"t","parent":"","status":"done","scope":{"in":["i"],"out":["o"]},"needs":["n"],"does":["d"],
-		"description":"x","depends_on":[],"verify":["v"],"files":["f"],"accomplished":["a"],"modified":["m"],
+		"description":"x","depends_on":[],"verify":["v"],"files":["f"],"branch":"feature/a","accomplished":["a"],"modified":["m"],
 		"verified_how":["h"],"completed_notes":"c"}]}`
 	p := mustParse(t, full)
 	if len(p.Problems) != 0 {

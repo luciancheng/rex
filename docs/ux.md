@@ -260,7 +260,7 @@ outline · tab tape · esc plans
 ```
 
 Layout:
-- **The rule.** The title row reads `── <title> · <status> · <done>/<total> ──`. Once the list scrolls, `tasks <selected>/<total>` appears on the right (e.g. `tasks 12/34`). ⏎ on the rule opens Plan detail (goal, scope in/out, plan problems).
+- **The rule.** The title row reads `── <title> · <status> · <done>/<total> ──`. Once the list scrolls, `tasks <selected>/<total>` appears on the right (e.g. `tasks 12/34`). ⏎ on the rule opens Plan detail (goal, stack base, scope in/out, plan problems).
 - **The last line.** It shows the last finished task's `accomplished` text, the most useful "where we left off" sentence for a teammate.
 - **Task order.**
   - Tasks are listed in **file order**, never topologically sorted. Moving deps around never reshuffles the list.
@@ -272,7 +272,7 @@ Layout:
 - **Task detail** (⏎ or → on a task) is a scrolling sub-screen:
   - title, status;
   - parent, `depends_on` (each with its state), and dependents;
-  - does, needs, verify, files, scope in/out, description;
+  - does, needs, verify, files, branch, scope in/out, description;
   - for a done task, the retrospective shown as intended (`does`) next to actual (`accomplished`, `modified`, `verified_how`, `completed_notes`).
 
 ### Plan states
@@ -376,9 +376,10 @@ sendoff · esc close · c⏎ copy · o⏎ print plain
 
   Rex adds:
   - a short Done section (intended vs actual, modified, verified, and the task's `completed_notes`);
+  - for a plan that is a stack (docs/plan-format.md, Stacks), a `Stack:` part in For the next chat: the pin's branch, its base (the nearest earlier done task's branch, else the plan's `base`), earlier tasks not done yet, how to cut, open and link its PR, done PRs above it to restack, and that repo rules win. It comes from the JSON like everything else; Rex runs no git;
   - a request that the agent end its final reply with `accomplished:` / `verified:` lines and then the fingerprint line, so the completion form knows which task the reply is about;
   - the fingerprint `rex-sendoff: <path>#<task>`.
-- **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`. To fit, finished tasks leave the list first, then open tasks beyond the pin and what it waits on (`… N more in the plan file`), then old Done entries. The pin's Next section stays unless it alone would crowd out the rest, and the closing instructions and the fingerprint are never cut.
+- **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`. To fit, finished tasks leave the list first, then open tasks beyond the pin and what it waits on (`… N more in the plan file`), then old Done entries, down to the last one. The pin's Next section stays unless it alone would crowd out the rest, and the closing instructions (with the Stack part) and the fingerprint are never cut.
 - **Always from the file as it is now.** An open overlay is rebuilt when the plan changes, and `c⏎` / `o⏎` use the plan as it is at that moment. A missing or unparsable file refuses (`can't send off: …`) rather than send the last good copy.
 - **Copying is honest.**
   - Rex uses the native tool (`pbcopy`, `wl-copy`, `xclip` or `xsel`, `clip.exe`) and says `copied (<tool>)` only if it exited 0.
@@ -391,7 +392,7 @@ sendoff · esc close · c⏎ copy · o⏎ print plain
 `b⏎` / `brief⏎` opens the same overlay in **planning mode**. It has the same copy status, `c⏎`, `o⏎` and Esc, and leaves the tape record `── brief · copied (pbcopy) ──`. The planning brief contains:
 - the plan path;
 - the v1 shape in a few lines;
-- the field rules (ids are short stable slugs; file order is do order; `parent` groups tasks; `depends_on` lists hard prerequisites only; one task should fit one PR);
+- the field rules (ids are short stable slugs; file order is do order and stack order; `parent` groups tasks; `depends_on` lists hard prerequisites only, all earlier in the file; one task should fit one PR; optional `base` and `branch` for a stack of PRs; separate work, separate plan);
 - `fill or refine <path>`.
 
 The outline reloads live while the agent writes the file.
@@ -646,3 +647,4 @@ These `agents.md` and README lines change when the slice that implements them sh
 | `feature/plan_store` | New Plans paragraph: Rex writes a plan only through `plan.Edit` (task status, completion fields, the plan's own status); `~/.rex/state.json` for what Rex remembers |
 | `feature/plan_outline` | "Opening a plan is a no-op load" → opening parses the plan read-only and shows the outline |
 | `feature/sendoff`, `feature/prompt_drift` | Send-off is generated from the JSON; drift is display-only and never written anywhere |
+| `feature/stacked_tasks` | Plan files: Rex reads the optional stack fields `base` and `branch` and never writes them; the send-off's `Stack:` part says where the pin's PR goes, and Rex runs no git |

@@ -381,7 +381,7 @@ sendoff · esc close · c⏎ copy · o⏎ print plain
 - **Size.** It aims for about 2 KB, with a 4 KB cap. Long fields are clipped with `(see plan file)`. To fit, finished tasks leave the list first, then open tasks beyond the pin and what it waits on (`… N more in the plan file`), then old Done entries. The pin's Next section stays unless it alone would crowd out the rest, and the closing instructions and the fingerprint are never cut.
 - **Always from the file as it is now.** An open overlay is rebuilt when the plan changes, and `c⏎` / `o⏎` use the plan as it is at that moment. A missing or unparsable file refuses (`can't send off: …`) rather than send the last good copy.
 - **Copying is honest.**
-  - Rex uses the native tool (`pbcopy`, `wl-copy`, `xclip`, `clip.exe`) and says `copied (<tool>)` only if it exited 0.
+  - Rex uses the native tool (`pbcopy`, `wl-copy`, `xclip` or `xsel`, `clip.exe`) and says `copied (<tool>)` only if it exited 0.
   - Over SSH, with no tool available, or when every tool fails within the 2 s the copy gets, it sends OSC 52 and says `sent (OSC 52) · may be blocked`. Until the tool answers, the overlay says `copying…`; copies run one at a time, in the order asked, so the last brief asked for is the one on the clipboard.
   - `o⏎` leaves the alternate screen and prints the plain brief to the normal screen. Mouse selection is then clean, and the text stays in scrollback. ⏎ returns.
 - **No saved copy.** Rex keeps no handoff file, so nothing can drift from the JSON. The brief can always be regenerated, and `o⏎` covers terminals where copying fails.

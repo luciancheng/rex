@@ -197,7 +197,7 @@ func TestOpenSendoffRefusesOnceThePlanBreaks(t *testing.T) {
 	} {
 		a, c, path := openDemo(t, demoPlan, 120, 40)
 		var copied []string
-		a.copy = func(text string) string { copied = append(copied, text); return "copied (fake)" }
+		a.copy = fakeCopy(&copied, copyResult{status: "copied (fake)"})
 		typeText(a, "s")
 		press(a, "\r")
 		change(path)

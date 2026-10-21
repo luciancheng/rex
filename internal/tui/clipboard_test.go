@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -168,5 +169,58 @@ func TestAReplacedBriefStillGetsItsRecord(t *testing.T) {
 	}
 	if len(records) != 2 || !strings.Contains(strings.Join(records, "|"), "copied (slow)") {
 		t.Fatalf("both briefs leave their line on the tape: %v", records)
+	}
+}
+
+// slowCopy hands out one channel per copy, answered when the test says.
+type slowCopy struct {
+	texts []string
+	done  []chan copyResult
+}
+
+func (s *slowCopy) copy(text string) <-chan copyResult {
+	ch := make(chan copyResult, 1)
+	s.texts, s.done = append(s.texts, text), append(s.done, ch)
+	return ch
+}
+
+func TestACopyOfAnOlderBriefSaysSo(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 40)
+	slow := &slowCopy{}
+	a.copy = slow.copy
+	typeText(a, "s")
+	press(a, "\r")
+	// The pin moves while the tool is still copying the first brief.
+	moved := strings.Replace(strings.Replace(demoPlan, `"status": "active",
+      "depends_on": ["plans-ui"]`, `"status": "done",
+      "depends_on": ["plans-ui"]`, 1), `"status": "pending",
+      "depends_on": ["card-highlight"]`, `"status": "active",
+      "depends_on": ["card-highlight"]`, 1)
+	os.WriteFile(path, []byte(moved), 0o644)
+	later(a, c)
+	slow.done[0] <- copyResult{status: "copied (pbcopy)"}
+	later(a, c)
+	if v := a.briefs[PanePlans]; v.status != "plan changed · c⏎ copies this one" || !strings.HasSuffix(slow.texts[0], "#card-highlight\n") {
+		t.Fatalf("the overlay never claims the rebuilt brief was copied: %q", v.status)
+	}
+	if tape := viewText(BuildLogView(a.log, 78)); !strings.Contains(tape, "card-highlight · copied (pbcopy)") || strings.Contains(tape, "load-outline · copied") {
+		t.Fatalf("the tape names the task that was copied:\n%s", tape)
+	}
+}
+
+func TestRepeatedCopiesSettleAndOnlyTheNewestWritesOSC(t *testing.T) {
+	a, c, _ := openDemo(t, demoPlan, 120, 40)
+	slow := &slowCopy{}
+	a.copy = slow.copy
+	typeText(a, "s")
+	press(a, "\r")
+	typeText(a, "c")
+	press(a, "\r") // again, before the first copy lands
+	slow.done[0] <- copyResult{status: "sent (OSC 52) · may be blocked", osc: "OLD-OSC"}
+	later(a, c)
+	slow.done[1] <- copyResult{status: "copied (pbcopy)"}
+	later(a, c)
+	if len(a.copying) != 0 || strings.Contains(a.oscOut, "OLD-OSC") || a.briefs[PanePlans].status != "copied (pbcopy)" {
+		t.Fatalf("%d left, osc %q, status %q", len(a.copying), a.oscOut, a.briefs[PanePlans].status)
 	}
 }

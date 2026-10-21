@@ -16,8 +16,17 @@ type briefView struct {
 	text     string
 	status   string // what copying did: "copied (pbcopy)", "sent (OSC 52) · may be blocked", …
 	refused  bool   // status says why the plan can't be sent off right now
-	pending  <-chan copyResult
-	recorded bool // its line is on the tape
+	copySeq  int    // its latest copy, which decides what it says
+	recorded bool   // its line is on the tape
+}
+
+// pendingCopy is one copy still running, with what it was started for:
+// the plan can change before the tool answers.
+type pendingCopy struct {
+	v          *briefView
+	done       <-chan copyResult
+	text, task string
+	seq        int
 }
 
 // startCopy copies the brief off the UI goroutine. Until the tool answers
@@ -25,30 +34,45 @@ type briefView struct {
 // brief plain.
 func (a *app) startCopy(v *briefView) {
 	if a.copy == nil {
-		v.status, v.pending = "not copied · o⏎ prints it plain", nil
-		a.recordBrief(v)
+		v.status = "not copied · o⏎ prints it plain"
+		a.recordBrief(v, v.task, v.status)
 		return
 	}
-	v.status, v.pending = "copying…", a.copy(v.text)
-	a.copying = append(a.copying, v)
+	a.copySeq++
+	v.status, v.copySeq = "copying…", a.copySeq
+	a.copying = append(a.copying, pendingCopy{v: v, done: a.copy(v.text), text: v.text, task: v.task, seq: a.copySeq})
 }
 
 // pollCopies takes in finished copies: the status they earned, the OSC 52
 // sequence for the loop to write, and the brief's line on the tape.
-// A brief closed or replaced while its copy runs still gets its result and
-// its tape line.
+// A brief closed or replaced while its copy runs still gets its tape line.
+// Only the newest copy may write OSC 52, so an older brief can't land on
+// the clipboard over a newer one, and a brief rebuilt while it copied says
+// so instead of claiming the new text was copied.
 func (a *app) pollCopies() bool {
 	changed := false
 	left := a.copying[:0]
-	for _, v := range a.copying {
+	for _, c := range a.copying {
 		select {
-		case r := <-v.pending:
-			v.status, v.pending = r.status, nil
-			a.oscOut += r.osc
-			a.recordBrief(v)
+		case r := <-c.done:
 			changed = true
+			if c.seq == a.copySeq {
+				a.oscOut += r.osc
+			}
+			if c.seq == c.v.copySeq {
+				c.v.status = r.status
+				if c.v.text != c.text {
+					c.v.status = "plan changed · c⏎ copies this one"
+				}
+				if a.doc != nil && c.v.path == a.doc.path {
+					if why := a.stale(c.v); why != "" {
+						c.v.status = why
+					}
+				}
+			}
+			a.recordBrief(c.v, c.task, r.status)
 		default:
-			left = append(left, v)
+			left = append(left, c)
 		}
 	}
 	a.copying = left
@@ -56,18 +80,18 @@ func (a *app) pollCopies() bool {
 }
 
 // recordBrief leaves one line on the tape the first time a brief is
-// copied (or not).
-func (a *app) recordBrief(v *briefView) {
+// copied (or not): the task that copy was for, and what it did.
+func (a *app) recordBrief(v *briefView, task, status string) {
 	if v.recorded {
 		return
 	}
 	v.recorded = true
 	// The tape keeps the outcome; the o⏎ hint belongs in the overlay.
-	outcome := strings.TrimSuffix(v.status, " · o⏎ prints it plain")
+	outcome := strings.TrimSuffix(status, " · o⏎ prints it plain")
 	if v.planning {
 		a.tapeLine("brief", outcome)
 	} else {
-		a.tapeLine("sendoff", v.task+" · "+outcome)
+		a.tapeLine("sendoff", task+" · "+outcome)
 	}
 }
 

@@ -106,9 +106,9 @@ func TestSendoffStack(t *testing.T) {
 			"Stack: each leaf task is one PR, stacked in plan file order on dev.\n- Branch: feature/card_highlight\n- Base: feature/plans_ui (plans-ui, done) · once its PR has merged, use dev\n",
 			"gh pr create --base feature/plans_ui --head feature/card_highlight",
 			"gh stack link --base dev feature/plans_ui feature/card_highlight, leaving out any whose PR merged",
-			"if it isn't on the base yet, rebase it onto the base and retarget its PR",
-			"never stage or commit it while the stack is in flight",
-			"Commit it once the stack has landed, or in its own PR against dev.",
+			"if it isn't on the base yet, rebase it onto the base (--autostash) and retarget its PR",
+			"never stage or commit it on a stack branch (git add only your task's files, not -A or commit -a)",
+			"If a rebase stops on a conflict, finish it before acting in Rex.",
 		}, []string{"Below it", "PRs above it"}},
 		// third up: --base names the bottom's base, so the whole done chain is listed
 		{"third in the stack", plan("done", "done", "active"), []string{"- Base: feature/card_highlight (card-highlight, done)", "gh stack link --base dev feature/plans_ui feature/card_highlight feature/load_outline,"}, []string{"gh stack link --base dev feature/card_highlight feature/load_outline"}},
@@ -242,5 +242,24 @@ func TestNestedBranchProblemsKeepTheirOrder(t *testing.T) {
 		if got := problems(mustParse(t, src)); got != want {
 			t.Fatalf("the order changed:\n%s\n%s", got, want)
 		}
+	}
+}
+
+func TestTheLinkFallsBackToWords(t *testing.T) {
+	stack := func(tasks string) string {
+		got, _ := Sendoff(mustParse(t, `{"base": "dev", "tasks": [`+tasks+`]}`), "p.rex.json")
+		return got[strings.Index(got, "\nStack: "):]
+	}
+	// a done task below has no branch, nothing above
+	if got := stack(`{"id": "a", "status": "done"}, {"id": "b", "status": "active", "branch": "f/b"}`); !strings.Contains(got, "gh stack link --base dev <the stack's branches, bottom first> f/b,") {
+		t.Fatal(got)
+	}
+	// a done task below has no branch, a done PR above the pin
+	if got := stack(`{"id": "a", "status": "done"}, {"id": "b", "status": "active", "branch": "f/b"}, {"id": "c", "status": "done", "branch": "f/c"}`); !strings.Contains(got, "gh stack link --base dev <the stack's branches, bottom first, this task's in its place>,") {
+		t.Fatal(got)
+	}
+	// the PR above has no branch
+	if got := stack(`{"id": "a", "status": "done", "branch": "f/a"}, {"id": "b", "status": "active", "branch": "f/b"}, {"id": "c", "status": "done"}`); !strings.Contains(got, "this task's in its place>") || strings.Contains(got, "<<") {
+		t.Fatal(got)
 	}
 }

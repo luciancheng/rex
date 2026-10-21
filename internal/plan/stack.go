@@ -294,7 +294,7 @@ func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task) {
 	if base != nil {
 		body += " and the PR it sits on"
 	}
-	line("- Cut the branch from the base. If it already exists, switch to it and add commits, and if it isn't on the base yet, rebase it onto the base and retarget its PR. Once the repo's checks pass, push it and, if it has no PR yet, open one against the base with %s in the body (GitHub: gh pr create --base %s --head %s).", body, on, head)
+	line("- Cut the branch from the base. If it already exists, switch to it and add commits, and if it isn't on the base yet, rebase it onto the base (--autostash) and retarget its PR. Once the repo's checks pass, push it and, if it has no PR yet, open one against the base with %s in the body (GitHub: gh pr create --base %s --head %s).", body, on, head)
 	if base != nil {
 		line("- If the forge links stacks, add this PR to the stack the PR below is in (GitHub: %s). Without that, the chain of base branches is the stack.", g.linkCommand(pin, use, trunkArg, head))
 	}
@@ -309,7 +309,7 @@ func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task) {
 		}
 		line("- PRs above it, already done: %s. Once this branch is pushed, rebase them onto it from the top of the stack (git rebase --autostash --update-refs %s; leave out any whose PR merged), push each moved branch with --force-with-lease, and retarget the PR of %s to %s.", list(names, ", "), head, clip(clean(names[0]), idCap), head)
 	}
-	line("- The plan file is the stack's, not this PR's: never stage or commit it while the stack is in flight. Its changes stay in the working tree and follow you across git switch (restack with --autostash), so Rex keeps reading the current plan. Commit it once the stack has landed, or in its own PR against %s.", trunk)
+	line("- The plan file is the stack's, not this PR's: never stage or commit it on a stack branch (git add only your task's files, not -A or commit -a). Its changes then follow you across git switch and git rebase --autostash, so Rex keeps reading the current plan. If a rebase stops on a conflict, finish it before acting in Rex.")
 	line(`- Repo rules on branches and PRs win: if you use another branch, write it into this task as "branch".`)
 }
 
@@ -330,7 +330,7 @@ func (g *Graph) linkCommand(pin *Task, use map[*Task]string, trunkArg, head stri
 		}
 		if use[c] == "" {
 			if len(g.above(pin)) > 0 {
-				return "gh stack link --base " + trunkArg + " <the stack's branches, bottom first, " + head + " in its place>, leaving out any whose PR merged"
+				return "gh stack link --base " + trunkArg + " <the stack's branches, bottom first, this task's in its place>, leaving out any whose PR merged"
 			}
 			return "gh stack link --base " + trunkArg + " <the stack's branches, bottom first> " + head + ", leaving out any whose PR merged"
 		}
@@ -339,7 +339,7 @@ func (g *Graph) linkCommand(pin *Task, use map[*Task]string, trunkArg, head stri
 	chain = append(chain, head)
 	for _, c := range g.above(pin) {
 		if use[c] == "" {
-			return "gh stack link --base " + trunkArg + " <the stack's branches, bottom first, " + head + " in its place>, leaving out any whose PR merged"
+			return "gh stack link --base " + trunkArg + " <the stack's branches, bottom first, this task's in its place>, leaving out any whose PR merged"
 		}
 		chain = append(chain, use[c]) // a PR that already sits above: say where it goes
 	}

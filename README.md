@@ -189,6 +189,14 @@ go build -o dist/rex ./cmd/rex     # not -o rex: rex/ is the plans folder
 
 Please report security issues privately: see [SECURITY.md](SECURITY.md).
 
+## Authors
+
+- [Nicholas Jano](https://github.com/nicholasjano)
+- [Lucian Cheng](https://github.com/luciancheng)
+- [Brian Manomaisupat](https://github.com/brianmano)
+
+And [everyone who has contributed](https://github.com/luciancheng/rex/graphs/contributors).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

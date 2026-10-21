@@ -107,12 +107,13 @@ func TestSendoffStack(t *testing.T) {
 			"gh pr create --base feature/plans_ui --head feature/card_highlight",
 			"gh stack link --base dev feature/plans_ui feature/card_highlight, leaving out any whose PR merged",
 			"if it isn't on the base yet, rebase it onto the base and retarget its PR",
-			"cp rex/plans/demo.rex.json /tmp/rex-plan.json && { git checkout HEAD -- rex/plans/demo.rex.json 2>/dev/null || rm rex/plans/demo.rex.json; } && <the switch or rebase>; mkdir -p rex/plans && cp /tmp/rex-plan.json rex/plans/demo.rex.json",
+			"never stage or commit it while the stack is in flight",
+			"Commit it once the stack has landed, or in its own PR against dev.",
 		}, []string{"Below it", "PRs above it"}},
 		// third up: --base names the bottom's base, so the whole done chain is listed
 		{"third in the stack", plan("done", "done", "active"), []string{"- Base: feature/card_highlight (card-highlight, done)", "gh stack link --base dev feature/plans_ui feature/card_highlight feature/load_outline,"}, []string{"gh stack link --base dev feature/card_highlight feature/load_outline"}},
 		{"bottom", plan("pending", "pending", "pending"), []string{"- Base: dev (the bottom of the stack)\n", "gh pr create --base dev --head feature/plans_ui"}, []string{"gh stack link", "the PR it sits on"}},
-		{"fix a lower PR", plan("active", "done", "done"), []string{"PRs above it, already done: feature/card_highlight, feature/load_outline.", "git rebase --update-refs feature/plans_ui", "retarget the PR of feature/card_highlight to feature/plans_ui"}, nil},
+		{"fix a lower PR", plan("active", "done", "done"), []string{"PRs above it, already done: feature/card_highlight, feature/load_outline.", "git rebase --autostash --update-refs feature/plans_ui", "retarget the PR of feature/card_highlight to feature/plans_ui"}, nil},
 		{"out of order", plan("done", "blocked", "active"), []string{"- Below it, not done yet: card-highlight (blocked).", "gh pr create --base feature/plans_ui --head feature/load_outline"}, nil},
 		// a task finished late slots in under a done PR: link says where that one goes
 		{"slots in", plan("done", "active", "done"), []string{"gh stack link --base dev feature/plans_ui feature/card_highlight feature/load_outline,"}, nil},
@@ -213,5 +214,33 @@ func TestSendoffKeepsTheStackWhenTrimmed(t *testing.T) {
 	}
 	if i := strings.Index(got, "\nFor the next chat\n"); len(got)-i > 2600 {
 		t.Fatalf("footer %d bytes", len(got)-i)
+	}
+}
+
+func TestTheStackFitsWithEveryFieldAtItsCap(t *testing.T) {
+	id := func(c byte) string { return strings.Repeat(string(c), 80) }
+	br := func(c byte) string { return "f/" + strings.Repeat(string(c), 78) }
+	var tasks []string
+	for i, st := range []string{"done", "done", "pending", "blocked", "pending", "active", "done", "done"} {
+		c := byte('a' + i)
+		tasks = append(tasks, fmt.Sprintf(`{"id": %q, "status": %q, "branch": %q}`, id(c), st, br(c)))
+	}
+	rel := "rex/plans/" + strings.Repeat("p", 60) + ".rex.json"
+	got, _ := Sendoff(mustParse(t, `{"id": "`+id('z')+`", "base": "`+br('y')+`", "tasks": [`+strings.Join(tasks, ",")+`]}`), rel)
+	if len(got) > sendoffCap || !strings.HasSuffix(got, "rex-sendoff: "+rel+"#"+id('f')+"\n") || !strings.Contains(got, "\nStack: ") || !strings.Contains(got, "PRs above it") {
+		t.Fatalf("%d bytes, ends:\n%s", len(got), got[max(0, len(got)-600):])
+	}
+}
+
+func TestNestedBranchProblemsKeepTheirOrder(t *testing.T) {
+	src := `{"base": "dev", "tasks": [{"id": "a", "branch": "x/1"}, {"id": "b", "branch": "x/2"}, {"id": "c", "branch": "x/3"}, {"id": "d", "branch": "x"}]}`
+	want := problems(mustParse(t, src))
+	if !strings.Contains(want, `a's "x/1"`) || !strings.Contains(want, `c's "x/3"`) || strings.Index(want, `a's`) > strings.Index(want, `c's`) {
+		t.Fatalf("in file order: %s", want)
+	}
+	for i := 0; i < 50; i++ {
+		if got := problems(mustParse(t, src)); got != want {
+			t.Fatalf("the order changed:\n%s\n%s", got, want)
+		}
 	}
 }

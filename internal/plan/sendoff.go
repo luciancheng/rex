@@ -192,7 +192,7 @@ func sendoff(p *Plan, rel string, done, open int) string {
 	}
 	line("Do not inject tools or expand into scope.out. If the plan is wrong, edit the JSON.")
 	if pin != nil && p.Stacked() {
-		stackLines(line, p, g, pin, clean(rel))
+		stackLines(line, p, g, pin)
 	}
 	line("When you finish, end your final reply with these lines:")
 	line("accomplished: <what you actually did>")

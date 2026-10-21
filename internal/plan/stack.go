@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"path"
 	"slices"
 	"strings"
 )
@@ -239,8 +238,7 @@ func (g *Graph) later(t, dep *Task) *Task {
 
 // stackLines are the send-off's Stack part, inside For the next chat,
 // which is never trimmed: where the pin's PR goes, from the file alone.
-// rel is the plan file, carried across branch switches as it is.
-func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task, rel string) {
+func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task) {
 	use, why := g.branches()
 	trunk, trunkArg := ref(p.Base), ref(p.Base)
 	if trunk == "" {
@@ -309,13 +307,9 @@ func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task, rel str
 				names = append(names, t.ID+"'s branch")
 			}
 		}
-		line("- PRs above it, already done: %s. Once this branch is pushed, rebase them onto it from the top of the stack (git rebase --update-refs %s; leave out any whose PR merged), push each moved branch with --force-with-lease, and retarget the PR of %s to %s.", list(names, ", "), head, clip(clean(names[0]), idCap), head)
+		line("- PRs above it, already done: %s. Once this branch is pushed, rebase them onto it from the top of the stack (git rebase --autostash --update-refs %s; leave out any whose PR merged), push each moved branch with --force-with-lease, and retarget the PR of %s to %s.", list(names, ", "), head, clip(clean(names[0]), idCap), head)
 	}
-	plan, dir := "<plan file>", "<its folder>"
-	if plainRef(rel) {
-		plan, dir = rel, path.Dir(rel)
-	}
-	line("- The plan file is the stack's, not this PR's: commit its changes only on the top branch of the stack, and keep it as it is around every git switch or rebase, in one command line so its older copy is on disk only for that moment: cp %s /tmp/rex-plan.json && { git checkout HEAD -- %s 2>/dev/null || rm %s; } && <the switch or rebase>; mkdir -p %s && cp /tmp/rex-plan.json %s", plan, plan, plan, dir, plan)
+	line("- The plan file is the stack's, not this PR's: never stage or commit it while the stack is in flight. Its changes stay in the working tree and follow you across git switch (restack with --autostash), so Rex keeps reading the current plan. Commit it once the stack has landed, or in its own PR against %s.", trunk)
 	line(`- Repo rules on branches and PRs win: if you use another branch, write it into this task as "branch".`)
 }
 
@@ -335,6 +329,9 @@ func (g *Graph) linkCommand(pin *Task, use map[*Task]string, trunkArg, head stri
 			continue
 		}
 		if use[c] == "" {
+			if len(g.above(pin)) > 0 {
+				return "gh stack link --base " + trunkArg + " <the stack's branches, bottom first, " + head + " in its place>, leaving out any whose PR merged"
+			}
 			return "gh stack link --base " + trunkArg + " <the stack's branches, bottom first> " + head + ", leaving out any whose PR merged"
 		}
 		chain = append(chain, use[c])

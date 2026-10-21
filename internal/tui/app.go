@@ -59,6 +59,8 @@ type app struct {
 	statePath  string
 	pinAsk     [2]pinAsk            // per place, while Pin confirm is open
 	pinSeen    map[string]time.Time // when this session first saw each pin
+	form       [2]*doneForm         // per place, while the completion form is open
+	seen       []watch.Event        // raw events from this repo, for completion evidence
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -154,6 +156,10 @@ func (a *app) composeOptions() ComposeOptions {
 		scroll := min(a.overlayScroll[a.pane], max(0, len(lines)-layoutFor(a.columns, a.lines).bodyH))
 		opt.Overlay = &Overlay{Lines: lines, Scroll: scroll, Footer: []string{"pin", "p⏎ move pin", "esc cancel", "↑↓ scroll"}}
 	}
+	if f := a.form[a.pane]; a.overlay[a.pane] == overlayDone && f != nil {
+		opt.Overlay = &Overlay{Lines: a.doneLines(textW), Footer: []string{"done", "⏎ save", "esc cancel", "↑↓ field"}}
+		opt.Prefix = " " + fieldLabels[f.focus] + " "
+	}
 	if a.overlay[a.pane] == overlayHelp {
 		other := "tab tape"
 		if a.pane == PaneChat {
@@ -231,6 +237,9 @@ func (a *app) verbHints() string {
 func (a *app) placeholder() string {
 	if a.overlay[a.pane] == overlayPin {
 		return "p⏎ to move the pin"
+	}
+	if f := a.form[a.pane]; a.overlay[a.pane] == overlayDone && f != nil {
+		return f.hints[f.focus]
 	}
 	if a.overlay[a.pane] != overlayNone {
 		return "esc to close"
@@ -427,6 +436,7 @@ func (a *app) own(events []watch.Event) []watch.Event {
 			a.hidden++
 			continue
 		}
+		a.remember(ev)
 		out = append(out, a.scope.Display(ev))
 	}
 	return out
@@ -505,7 +515,8 @@ func (a *app) applyKey(key string) bool {
 		}
 		// The first Ctrl+C clears the draft or closes the overlay, and arms quit.
 		// Closing an overlay drops what was typed in it too, so it can't
-		// land on the screen underneath.
+		// land on the screen underneath (in the done form it was a field).
+		a.form[a.pane] = nil
 		a.overlay[a.pane] = overlayNone
 		a.draft = ""
 		a.quitPending = true
@@ -585,7 +596,7 @@ func (a *app) submit(text string) bool {
 // brief, done) arrive with their features.
 func (a *app) offers(verb string) bool {
 	switch verb {
-	case "help", "breakdance", "pin":
+	case "help", "breakdance", "pin", "done":
 		return true
 	}
 	return false
@@ -595,6 +606,8 @@ func (a *app) runVerb(verb, arg string) {
 	switch verb {
 	case "pin":
 		a.pinVerb(arg)
+	case "done":
+		a.doneVerb()
 	case "help":
 		a.overlay[a.pane] = overlayHelp
 		a.overlayScroll[a.pane] = 0
@@ -919,6 +932,9 @@ func (a *app) pollDoc() bool {
 
 // overlayKey handles keys while an overlay covers the current place.
 func (a *app) overlayKey(key string) bool {
+	if a.overlay[a.pane] == overlayDone {
+		return a.doneKey(key)
+	}
 	switch key {
 	case "esc":
 		if a.draft != "" {

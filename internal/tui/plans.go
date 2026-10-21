@@ -906,6 +906,9 @@ func (row PlanRow) Color() string {
 }
 
 func composerPrefix(opt ComposeOptions) string {
+	if opt.Prefix != "" {
+		return opt.Prefix
+	}
 	if opt.Overlay != nil || opt.Pane != PanePlans || opt.Plans == nil || opt.PlanView != nil {
 		return InputPrefix // the open plan, like the tape, takes verbs
 	}

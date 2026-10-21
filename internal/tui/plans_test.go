@@ -46,19 +46,167 @@ func TestEnsurePlansDirCreatesFolder(t *testing.T) {
 	}
 }
 
-func TestEnsurePlansDirReplacesBinaryClash(t *testing.T) {
+func TestEnsurePlansDirKeepsAFileNamedRex(t *testing.T) {
 	repo := t.TempDir()
 	clash := filepath.Join(repo, "rex")
-	if err := os.WriteFile(clash, []byte("bin"), 0o755); err != nil {
+	if err := os.WriteFile(clash, []byte("#!/bin/sh\necho mine\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	root, err := EnsurePlansDir(repo)
-	if err != nil {
+	if _, err := EnsurePlansDir(repo); err == nil {
+		t.Fatal("expected an error instead of replacing the file")
+	}
+	b := NewPlanBrowser(repo)
+	if !strings.Contains(b.Notice, "rex/ is a file here") {
+		t.Fatalf("notice %q", b.Notice)
+	}
+	if act := b.CommitCreate("alpha"); act != PlanStay || !strings.Contains(b.Err, "move the rex file") {
+		t.Fatalf("create should refuse: act=%d err=%q", act, b.Err)
+	}
+	data, err := os.ReadFile(clash)
+	if err != nil || string(data) != "#!/bin/sh\necho mine\n" {
+		t.Fatalf("the user's rex file was touched: %v %q", err, data)
+	}
+}
+
+func TestStartCreatesNothing(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		t.Fatalf("expected plans dir, got %v", err)
+	b := NewPlanBrowser(repo)
+	if b.Notice != "" {
+		t.Fatalf("notice in a repo: %q", b.Notice)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "rex")); !os.IsNotExist(err) {
+		t.Fatalf("start created rex/: %v", err)
+	}
+	if act := b.CommitCreate("first"); act != PlanOpenChat {
+		t.Fatalf("create act=%d err=%q", act, b.Err)
+	}
+	for _, p := range []string{"rex/plans/.gitkeep", "rex/plans/first.rex.json"} {
+		if _, err := os.Stat(filepath.Join(repo, p)); err != nil {
+			t.Fatalf("create should make %s: %v", p, err)
+		}
+	}
+}
+
+func TestOutsideGitShowsWherePlansGo(t *testing.T) {
+	dir := t.TempDir()
+	b := NewPlanBrowser(dir)
+	if !strings.Contains(b.Notice, "not in a git repo") || !strings.Contains(b.Notice, "rex/plans") {
+		t.Fatalf("notice %q", b.Notice)
+	}
+	if !strings.Contains(viewText(BuildPlanView(b, 80)), "not in a git repo") {
+		t.Fatal("notice not rendered")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rex")); !os.IsNotExist(err) {
+		t.Fatalf("start outside git created rex/: %v", err)
+	}
+}
+
+func TestStartLeavesLegacyPlansAlone(t *testing.T) {
+	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	legacy := filepath.Join(repo, "rex-plans")
+	if err := os.MkdirAll(filepath.Join(legacy, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(legacy, "old.rex.json"), []byte(`{}`), 0o644)
+	os.WriteFile(filepath.Join(legacy, "src", "main.go"), []byte("package main"), 0o644)
+	b := NewPlanBrowser(repo)
+	if _, err := os.Stat(filepath.Join(repo, "rex")); !os.IsNotExist(err) {
+		t.Fatal("start must not create rex/ because rex-plans/ exists")
+	}
+	for _, p := range []string{"rex-plans/old.rex.json", "rex-plans/src/main.go"} {
+		if _, err := os.Stat(filepath.Join(repo, p)); err != nil {
+			t.Fatalf("start moved %s: %v", p, err)
+		}
+	}
+	if !strings.Contains(b.Notice, "rex-plans/ has 1 old plan") {
+		t.Fatalf("notice %q", b.Notice)
+	}
+}
+
+func TestNewFolderCreatesPlansDirAndRespectsARexFile(t *testing.T) {
+	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	b := NewPlanBrowser(repo)
+	b.Screen = ScreenBrowse
+	b.Rebuild()
+	if b.CommitFolder("grp") != PlanStay || b.Err != "" {
+		t.Fatalf("err %q", b.Err)
+	}
+	for _, p := range []string{"rex/plans/.gitkeep", "rex/plans/grp"} {
+		if _, err := os.Stat(filepath.Join(repo, p)); err != nil {
+			t.Fatalf("missing %s", p)
+		}
+	}
+	other := t.TempDir()
+	os.WriteFile(filepath.Join(other, "rex"), []byte("bin"), 0o755)
+	c := NewPlanBrowser(other)
+	c.Screen = ScreenBrowse
+	if c.CommitFolder("grp") != PlanStay || !strings.Contains(c.Err, "move the rex file") {
+		t.Fatalf("err %q", c.Err)
+	}
+	if strings.Count(viewText(BuildPlanView(c, 80)), "rex/ is a file here") != 1 {
+		t.Fatal("the notice and the error must not say the same thing twice")
+	}
+}
+
+func TestRexFileNoticeClearsWhenMovedAway(t *testing.T) {
+	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	clash := filepath.Join(repo, "rex")
+	os.WriteFile(clash, []byte("bin"), 0o755)
+	b := NewPlanBrowser(repo)
+	if b.Notice != rexFileNotice {
+		t.Fatalf("%q", b.Notice)
+	}
+	os.Rename(clash, clash+".bin")
+	b.Rebuild()
+	if b.Notice != "" {
+		t.Fatalf("stale notice %q", b.Notice)
+	}
+}
+
+func TestDanglingRexSymlinkTurnsPlansOff(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Symlink(filepath.Join(repo, "nowhere"), filepath.Join(repo, "rex")); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	b := NewPlanBrowser(repo)
+	if b.Notice != rexFileNotice {
+		t.Fatalf("%q", b.Notice)
+	}
+}
+
+func TestOutsideGitNoticeKeepsWherePlansGo(t *testing.T) {
+	deep := filepath.Join(t.TempDir(), "a", "very", "deep", "folder", "that", "does", "not", "fit")
+	os.MkdirAll(deep, 0o755)
+	b := NewPlanBrowser(deep)
+	for _, width := range []int{40, 60, 80} {
+		view := viewText(BuildPlanView(b, width))
+		if !strings.Contains(view, "git") || !strings.Contains(view, "/rex/plans") {
+			t.Fatalf("width %d\n%s", width, view)
+		}
+	}
+}
+
+// Every notice keeps its point at the narrowest text column (24 cells,
+// a 66-column terminal) and at 80 columns (38 cells).
+func TestNoticesFitNarrowPanes(t *testing.T) {
+	cases := []struct{ notice, want string }{
+		{outsideGitPrefix + "~/work/clients/acme/very/deep/folder/rex/plans", "/rex/plans"},
+		{rexFileNotice, "plans off"},
+		{"rex-plans/ has 3 old plan(s) · move them into rex/plans", "rex-plans/"},
+	}
+	for _, width := range []int{PaneTextWidth(66) - 2, PaneTextWidth(80) - 2} {
+		for _, c := range cases {
+			got := fitNotice(c.notice, width)
+			if len([]rune(got)) > width || !strings.Contains(got, c.want) {
+				t.Errorf("width %d: %q -> %q", width, c.notice, got)
+			}
+		}
 	}
 }
 
@@ -68,8 +216,8 @@ func TestPlanHomeShowsActions(t *testing.T) {
 	if b.Screen != ScreenHome {
 		t.Fatal("home first")
 	}
-	if _, err := os.Stat(b.Root); err != nil {
-		t.Fatalf("plans dir: %v", err)
+	if _, err := os.Stat(b.Root); !os.IsNotExist(err) {
+		t.Fatalf("start must not create the plans dir: %v", err)
 	}
 	view := viewText(BuildPlanView(b, 48))
 	for _, needle := range []string{"Create a plan", "Open a plan", "Open latest", "rex/plans"} {

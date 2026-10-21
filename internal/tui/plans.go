@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,7 +59,10 @@ type PlanBrowser struct {
 	From    PlanScreen
 	Current string
 	Err     string
+	Notice  string
 	Rows    []PlanRow
+
+	inGit bool
 }
 
 type PlanAction int
@@ -74,21 +79,28 @@ const (
 const maxRecents = 6
 
 func FindRepoRoot(start string) string {
+	root, _ := findRepo(start)
+	return root
+}
+
+// findRepo walks up from start to the directory holding .git. Outside a
+// repo it returns start itself and false.
+func findRepo(start string) (string, bool) {
 	if start == "" {
 		start, _ = os.Getwd()
 	}
 	dir, err := filepath.Abs(start)
 	if err != nil {
-		return start
+		return start, false
 	}
 	orig := dir
 	for {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
+			return dir, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return orig
+			return orig, false
 		}
 		dir = parent
 	}
@@ -98,19 +110,24 @@ func PlansDir(repo string) string {
 	return filepath.Join(repo, "rex", "plans")
 }
 
+// errRexFile means something that is not a folder sits where the plans
+// folder goes. Rex never deletes it; plans stay off until the human moves it.
+var errRexFile = errors.New("move the rex file to create plans") // fits a 38-cell pane
+
+const (
+	rexFileNotice    = "rex/ is a file here · plans off"
+	outsideGitPrefix = "not in a git repo · plans go to "
+)
+
+// EnsurePlansDir creates rex/plans when the human creates a plan or
+// folder. Starting Rex never calls it, and it never deletes anything.
 func EnsurePlansDir(repo string) (string, error) {
 	root := PlansDir(repo)
-	rexPath := filepath.Join(repo, "rex")
-	if info, err := os.Stat(rexPath); err == nil && !info.IsDir() {
-		_ = os.Remove(rexPath)
+	if rexIsFile(repo) {
+		return root, errRexFile
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return root, err
-	}
-	legacy := filepath.Join(repo, "rex-plans")
-	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
-		_ = migrateLegacyPlans(legacy, root)
-		_ = os.RemoveAll(legacy)
 	}
 	keep := filepath.Join(root, ".gitkeep")
 	if _, err := os.Stat(keep); err != nil {
@@ -121,26 +138,31 @@ func EnsurePlansDir(repo string) (string, error) {
 	return root, nil
 }
 
-func migrateLegacyPlans(from, to string) error {
-	ents, err := os.ReadDir(from)
+// rexIsFile reports whether repo/rex exists but is not a usable folder: a
+// regular file, a symlink to one, or a dangling symlink.
+func rexIsFile(repo string) bool {
+	path := filepath.Join(repo, "rex")
+	if _, err := os.Lstat(path); err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err != nil || !info.IsDir()
+}
+
+// legacyPlans counts plans left in an old rex-plans/ folder. Rex only
+// reports them; moving them is up to the human.
+func legacyPlans(repo string) int {
+	ents, err := os.ReadDir(filepath.Join(repo, "rex-plans"))
 	if err != nil {
-		return err
+		return 0
 	}
+	n := 0
 	for _, ent := range ents {
-		src := filepath.Join(from, ent.Name())
-		dst := filepath.Join(to, ent.Name())
-		if _, err := os.Stat(dst); err == nil {
-			continue
-		}
-		if err := os.Rename(src, dst); err != nil {
-			data, rerr := os.ReadFile(src)
-			if rerr != nil {
-				continue
-			}
-			_ = os.WriteFile(dst, data, 0o644)
+		if !ent.IsDir() && IsPlanFile(ent.Name()) {
+			n++
 		}
 	}
-	return nil
+	return n
 }
 
 func IsPlanFile(name string) bool {
@@ -181,15 +203,36 @@ func FolderName(name string) string {
 }
 
 func NewPlanBrowser(start string) *PlanBrowser {
-	repo := FindRepoRoot(start)
-	b := &PlanBrowser{Repo: repo, Screen: ScreenHome}
-	root, err := EnsurePlansDir(repo)
-	b.Root, b.Dir = root, root
-	if err != nil {
-		b.Err = err.Error()
-	}
+	repo, inGit := findRepo(start)
+	b := &PlanBrowser{Repo: repo, Screen: ScreenHome, inGit: inGit}
+	b.Root, b.Dir = PlansDir(repo), PlansDir(repo)
 	b.Rebuild()
 	return b
+}
+
+// refreshNotice says what is off about where plans live. It is recomputed
+// on every rebuild, so moving a stray rex file away clears it.
+func (b *PlanBrowser) refreshNotice() {
+	switch {
+	case rexIsFile(b.Repo):
+		b.Notice = rexFileNotice
+	case !b.inGit:
+		b.Notice = outsideGitPrefix + homePath(filepath.Join(b.Repo, "rex", "plans"))
+	case legacyPlans(b.Repo) > 0:
+		b.Notice = fmt.Sprintf("rex-plans/ has %d old plan(s) · move them into rex/plans", legacyPlans(b.Repo))
+	default:
+		b.Notice = ""
+	}
+}
+
+// homePath shows path with ~ for the home folder.
+func homePath(path string) string {
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, path); err == nil && !strings.HasPrefix(rel, "..") {
+			return filepath.ToSlash(filepath.Join("~", rel))
+		}
+	}
+	return filepath.ToSlash(path)
 }
 
 func (b *PlanBrowser) Prompting() bool {
@@ -232,6 +275,7 @@ func (b *PlanBrowser) Recents() []PlanRow {
 }
 
 func (b *PlanBrowser) Rebuild() {
+	b.refreshNotice()
 	if b.Dir == "" {
 		b.Dir = b.Root
 	}
@@ -366,6 +410,10 @@ func (b *PlanBrowser) CommitFolder(name string) PlanAction {
 	folder := FolderName(name)
 	if folder == "" {
 		b.Err = "type a folder name first"
+		return PlanStay
+	}
+	if _, err := EnsurePlansDir(b.Repo); err != nil {
+		b.Err = err.Error()
 		return PlanStay
 	}
 	path := filepath.Join(b.Dir, folder)
@@ -584,6 +632,9 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 		{Kind: "folder", Text: "  " + clip(b.RelDir(), inner)},
 		{Kind: "gap", Text: ""},
 	}
+	if b.Notice != "" {
+		lines = append(lines, LogLine{Kind: "idle", Text: "  " + clip(fitNotice(b.Notice, inner), inner)}, LogLine{Kind: "gap", Text: ""})
+	}
 	if b.Err != "" {
 		lines = append(lines, LogLine{Kind: "error", Text: "  " + clip(b.Err, inner)}, LogLine{Kind: "gap", Text: ""})
 	}
@@ -632,6 +683,37 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 		}
 	}
 	return lines
+}
+
+// fitNotice fits a Library notice into width runes without losing what
+// it is for: each notice has shorter wordings, and the outside-git notice
+// keeps the end of its path ("…/rex/plans"), which says where plans go.
+func fitNotice(notice string, width int) string {
+	fits := func(s string) bool { return len([]rune(s)) <= width }
+	var variants []string
+	switch {
+	case strings.HasPrefix(notice, outsideGitPrefix):
+		path := []rune(strings.TrimPrefix(notice, outsideGitPrefix))
+		for _, head := range []string{outsideGitPrefix, "not in git · plans go to ", "no git · plans in ", "no git · "} {
+			variants = append(variants, head+string(path))
+			if room := width - len([]rune(head)) - 1; room >= len([]rune("…/rex/plans")) && room < len(path) {
+				variants = append(variants, head+"…"+string(path[len(path)-room:]))
+			}
+		}
+	case notice == rexFileNotice:
+		variants = []string{notice, "rex is a file · plans off", "plans off: rex file"}
+	case strings.HasPrefix(notice, "rex-plans/ has "):
+		n := strings.Fields(strings.TrimPrefix(notice, "rex-plans/ has "))[0]
+		variants = []string{notice, n + " old plan(s) in rex-plans/ · move them", "rex-plans/: " + n + " old plan(s)", "rex-plans/: " + n + " old"}
+	default:
+		variants = []string{notice}
+	}
+	for _, v := range variants {
+		if fits(v) {
+			return v
+		}
+	}
+	return variants[len(variants)-1]
 }
 
 func browseLine(row PlanRow, selected bool, inner int) LogLine {

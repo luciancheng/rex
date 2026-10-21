@@ -290,3 +290,46 @@ func TestClaudeHandlerForms(t *testing.T) {
 		t.Fatal("an exec-form rex handler from any path is ours")
 	}
 }
+
+func TestClaudeToolLinesReachTheTape(t *testing.T) {
+	for _, payload := range []string{
+		`{"hook_event_name":"PreToolUse","tool_name":"ExitPlanMode","tool_input":{"plan":"# p","planFilePath":"/r/plan.md"}}`,
+		`{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"explore internal/watch"}}`,
+		`{"hook_event_name":"PreToolUse","tool_name":"TaskCreate","tool_input":{"subject":"fix: header"}}`,
+		`{"hook_event_name":"PreToolUse","tool_name":"mcp__github__search_code","tool_input":{"query":"repo:x/y rex"}}`,
+	} {
+		ev := claudeMap(t, payload)
+		if ev == nil || !KeepInPane(*ev) {
+			t.Errorf("%s: mapped to %#v, which the tape hides", payload, ev)
+		}
+	}
+	if ev := claudeMap(t, `{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/r/a.go"}}`); ev == nil || KeepInPane(*ev) {
+		t.Error("a file read is still a file look")
+	}
+}
+
+func TestClaudeCompactionKeepsTheTurn(t *testing.T) {
+	if ev := claudeMap(t, `{"hook_event_name":"SessionStart","source":"compact"}`); ev != nil {
+		t.Fatalf("a compaction mid-turn is not a turn end: %#v", ev)
+	}
+}
+
+func TestClaudeReinstallOverExecFormOnPOSIX(t *testing.T) {
+	if runtimeGOOS == "windows" {
+		t.Skip("exec form is Windows' own")
+	}
+	claudeHome(t)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	exe, _ := json.Marshal(rexExecutable())
+	os.WriteFile(path, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":`+string(exe)+`,"args":["ingest","--source","claude"],"timeout":5}]}]}}`), 0o644)
+	if err := installClaude(path, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), `"args"`) {
+		t.Fatalf("the shell form keeps no exec-form args:\n%s", data)
+	}
+	if !claudeWired(path) {
+		t.Fatal("still wired")
+	}
+}

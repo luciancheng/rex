@@ -204,6 +204,13 @@ func refreshRexHandler(e *editor, handler func(*jsonedit.Doc) *jsonedit.Node, ou
 	for _, key := range []string{"command", "args"} {
 		want, ok := ours[key]
 		if !ok {
+			// Ours has no args (the shell form): an exec-form entry's args
+			// would make the new command string fail, so they go.
+			if handler(e.doc).Member(key) != nil {
+				if err := e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Remove(handler(d), key) }); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		var have any

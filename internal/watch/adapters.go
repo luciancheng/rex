@@ -561,6 +561,9 @@ func MapClaude(payload map[string]any) *Event {
 		ev := NewEvent("claude", "error", text, nil)
 		return &ev
 	case "SessionStart":
+		if strField(payload, "source") == "compact" {
+			return nil // a compaction mid-turn; the turn goes on
+		}
 		ev := NewEvent("claude", "idle", "session started", nil)
 		return &ev
 	case "SessionEnd":

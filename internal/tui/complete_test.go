@@ -32,7 +32,7 @@ func TestGatherEvidence(t *testing.T) {
 	a, c, _ := openDemo(t, demoPlan, 120, 32)
 	evs := append([]watch.Event{at(c, -time.Hour, watch.Event{Source: "claude", Kind: "result", Text: "wrote old.go", Meta: map[string]any{"tool": "Write", "path": filepath.Join(a.plans.Repo, "old.go")}})}, workEvents(a, c)...)
 	evs = append(evs, at(c, 6*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote /elsewhere/x.go", Meta: map[string]any{"tool": "Write", "path": "/elsewhere/x.go"}}))
-	ev := gather(evs, a.scope, c.t, "card-highlight", nil)
+	ev := gather(evs, a.scope, c.t, "", "card-highlight", nil)
 	if strings.Join(ev.files, ",") != "internal/tui/plans.go" {
 		t.Fatalf("only this repo's edits since the pin, never rex/plans: %q", ev.files)
 	}
@@ -40,10 +40,10 @@ func TestGatherEvidence(t *testing.T) {
 		t.Fatalf("%+v", ev)
 	}
 	other := at(c, 7*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "rex-sendoff: rex/plans/cuj/demo.rex.json#load-outline\naccomplished: something else"})
-	if ev := gather(append(evs, other), a.scope, c.t, "card-highlight", nil); ev.did != "the bar spans all three card rows" {
+	if ev := gather(append(evs, other), a.scope, c.t, "", "card-highlight", nil); ev.did != "the bar spans all three card rows" {
 		t.Fatalf("another task's reply never lands on this one: %q", ev.did)
 	}
-	if ev := gather(evs, a.scope, time.Time{}, "card-highlight", nil); len(ev.files) != 0 {
+	if ev := gather(evs, a.scope, time.Time{}, "", "card-highlight", nil); len(ev.files) != 0 {
 		t.Fatal("no pin start, no evidence")
 	}
 }
@@ -102,8 +102,12 @@ func TestDoneTypedAndCancelled(t *testing.T) {
 		t.Fatal("each field keeps its value")
 	}
 	press(a, "esc")
+	if a.overlay[PanePlans] != overlayDone || a.draft != "" {
+		t.Fatal("the first Esc clears the field, like every draft")
+	}
+	press(a, "esc")
 	if after, _ := os.ReadFile(path); string(after) != string(before) || a.overlay[PanePlans] != overlayNone {
-		t.Fatal("Esc writes nothing")
+		t.Fatal("Esc on an empty field cancels and writes nothing")
 	}
 	typeText(a, "d")
 	press(a, "\r")
@@ -126,5 +130,114 @@ func TestDoneWithoutAPin(t *testing.T) {
 	press(a, "\r")
 	if a.statusLine().Text != "no pin · p⏎ a task first" || a.overlay[PanePlans] != overlayNone {
 		t.Fatal(a.statusLine().Text)
+	}
+}
+
+func TestDoneFormBelongsToItsPlan(t *testing.T) {
+	a, _, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "\t")
+	typeText(a, "d")
+	press(a, "\r")
+	typeText(a, "did the A thing")
+	other := strings.Replace(path, "demo.rex.json", "other.rex.json", 1)
+	os.WriteFile(other, []byte(demoPlan), 0o644)
+	press(a, "\t")
+	a.plans.Current = other
+	a.openedPlan()
+	if a.overlay[PaneChat] == overlayDone || a.form[PaneChat] != nil {
+		t.Fatal("opening another plan closes a form opened for the old one")
+	}
+	if got, _ := os.ReadFile(other); string(got) != demoPlan {
+		t.Fatal("the other plan is untouched")
+	}
+}
+
+func TestEvidenceRestartsWhenThePinComesBack(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	a.notePin() // card-highlight is the pin
+	c.t = c.t.Add(time.Minute)
+	// The agent moves the pin to load-outline, works on it, then puts it back.
+	moved := strings.Replace(strings.Replace(demoPlan, `"status": "active",
+      "depends_on": ["plans-ui"]`, `"status": "pending",
+      "depends_on": ["plans-ui"]`, 1), `"status": "pending",
+      "depends_on": ["card-highlight"]`, `"status": "active",
+      "depends_on": ["card-highlight"]`, 1)
+	os.WriteFile(path, []byte(moved), 0o644)
+	later(a, c)
+	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "text", Text: "accomplished: the outline view", Meta: map[string]any{"cwd": a.plans.Repo}})})
+	c.t = c.t.Add(time.Minute)
+	os.WriteFile(path, []byte(demoPlan), 0o644)
+	later(a, c)
+	press(a, "\t")
+	typeText(a, "d")
+	press(a, "\r")
+	if f := a.form[PaneChat]; f == nil || f.id != "card-highlight" || strings.Contains(f.hints[0], "outline view") {
+		t.Fatalf("another task's trailer from before the pin came back is no hint: %+v", f)
+	}
+}
+
+func TestEvidenceReadsMarkdownAndTrustsOnlyRealResults(t *testing.T) {
+	a, c, _ := openDemo(t, demoPlan, 120, 32)
+	repo := a.plans.Repo
+	run := func(d time.Duration, cmd string, ok bool) []watch.Event {
+		return []watch.Event{
+			at(c, d, watch.Event{Source: "claude", Kind: "command", Text: cmd, Meta: map[string]any{"tool": "Bash"}}),
+			at(c, d+time.Millisecond, watch.Event{Source: "claude", Kind: "result", Text: "ran " + cmd, Meta: map[string]any{"tool": "Bash", "command": cmd, "ok": ok}}),
+		}
+	}
+	evs := run(time.Second, "cd "+repo+string(filepath.Separator)+"internal && go test ./... 2>&1 | tail -20", true)
+	evs = append(evs, run(2*time.Second, "ls", true)...)
+	evs = append(evs, at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Done, see `rex-sendoff: rex/plans/cuj/demo.rex.json#card-highlight`.\n\n**Accomplished:** the bar spans all three rows\n- **verified**: go test passed"}))
+	ev := gather(evs, a.scope, c.t, "rex/plans/cuj/demo.rex.json", "card-highlight", []string{"Task details render on narrow terminals"})
+	if ev.did != "the bar spans all three rows" || ev.verified != "go test passed" {
+		t.Fatalf("bold trailers, and the task's own fingerprint before punctuation: %+v", ev)
+	}
+	if strings.Contains(ev.test, "ls") || !strings.Contains(ev.test, "(result not seen)") || strings.Contains(ev.test, repo) {
+		t.Fatalf("a piped test isn't 'passed', ls isn't the verify, and no machine path: %q", ev.test)
+	}
+	otherPlan := at(c, 4*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "rex-sendoff: rex/plans/other.rex.json#card-highlight\naccomplished: wrong plan"})
+	if ev := gather(append(evs, otherPlan), a.scope, c.t, "rex/plans/cuj/demo.rex.json", "card-highlight", nil); ev.did == "wrong plan" {
+		t.Fatal("a reply about another plan's task of the same id doesn't count")
+	}
+}
+
+func TestDoneFormFitsNarrowAndShortScreens(t *testing.T) {
+	a, _, _ := openDemo(t, demoPlan, 80, 24)
+	typeText(a, "d")
+	press(a, "\r")
+	if frame := a.frame(); !strings.Contains(frame, "may be partial") {
+		t.Fatalf("the files are always labelled partial at 80×24\n%s", frame)
+	}
+	a.settle(80, 12)
+	if frame := a.frame(); !strings.Contains(frame, "▌ did ›") {
+		t.Fatalf("the focused field stays on screen at 80×12\n%s", frame)
+	}
+}
+
+func TestDoneKeepsModifiedItCantRead(t *testing.T) {
+	a, _, path := openDemo(t, strings.Replace(demoPlan, `"files": ["internal/tui/plans.go"]`, `"files": ["internal/tui/plans.go"],
+      "modified": ["kept.go", {"path": "agent-wrote-this.go"}]`, 1), 120, 32)
+	a.seen = []watch.Event{{Source: "claude", Kind: "result", TS: float64(time.Now().UnixNano()) / 1e9, Text: "wrote x", Meta: map[string]any{"tool": "Write", "path": filepath.Join(a.plans.Repo, "new.go"), "ok": true}}}
+	typeText(a, "d")
+	press(a, "\r")
+	typeText(a, "shipped")
+	press(a, "\r")
+	got, _ := os.ReadFile(path)
+	if !strings.Contains(string(got), `{"path": "agent-wrote-this.go"}`) {
+		t.Fatalf("an entry Rex can't read is never dropped:\n%s", got)
+	}
+}
+
+func TestSavingClosesTheOtherPlacesForm(t *testing.T) {
+	a, _, _ := openDemo(t, demoPlan, 120, 32)
+	typeText(a, "d")
+	press(a, "\r") // a form in PLAN
+	press(a, "\t")
+	typeText(a, "d")
+	press(a, "\r") // and one on the tape, same task
+	typeText(a, "shipped")
+	press(a, "\r")
+	if a.form[PanePlans] != nil || a.overlay[PanePlans] == overlayDone {
+		t.Fatal("the other place's form for the same task closes once it's done")
 	}
 }

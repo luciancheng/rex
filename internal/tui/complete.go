@@ -2,14 +2,18 @@ package tui
 
 import (
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/luciancheng/rex/internal/plan"
+	"github.com/luciancheng/rex/internal/watch"
 )
 
 // doneForm is the completion overlay (docs/ux.md §8), bound to one task.
 // The focused field is edited in the composer; the other is kept here.
 type doneForm struct {
+	path     string // the plan it was opened for
 	id       string
 	title    string
 	seen     plan.Task // the task as it was when the form opened
@@ -42,9 +46,25 @@ func (a *app) doneVerb() {
 		a.flash("no pin · p⏎ a task first", "muted")
 		return
 	}
-	since, label := a.pinStart(plan.PinKey(a.doc.path, pin.ID))
-	ev := gather(a.seen, a.scope, since, pin.ID, pin.Verify)
-	f := &doneForm{id: pin.ID, title: pin.Title, seen: *pin, intended: strings.Join(pin.Does, " · "), files: ev.files, since: label}
+	since, label := a.pinStart(plan.PinKey(a.doc.path, pin.ID), a.doc.path)
+	events := a.seen
+	if a.feed != "" && !since.IsZero() && since.Before(a.started) {
+		// The pin started before Rex did: read further back in the feed
+		// than the warm start, this repo's events only.
+		var older []watch.Event
+		for _, e := range watch.LastEvents(a.feed, evidenceKeep) {
+			if in, known := a.scope.Owns(e); (in || !known) && e.TS < float64(a.started.UnixNano())/1e9 {
+				older = append(older, e)
+			}
+		}
+		events = append(older, a.seen...)
+	}
+	rel := ""
+	if r, err := filepath.Rel(a.plans.Repo, a.doc.path); err == nil {
+		rel = filepath.ToSlash(r)
+	}
+	ev := gather(events, a.scope, since, rel, pin.ID, pin.Verify)
+	f := &doneForm{path: a.doc.path, id: pin.ID, title: pin.Title, seen: *pin, intended: strings.Join(pin.Does, " · "), files: ev.files, since: label}
 	f.json[0] = strings.Join(pin.Accomplished, " · ")
 	f.json[1] = strings.Join(pin.VerifiedHow, " · ")
 	f.vals = f.json
@@ -95,6 +115,11 @@ func (f *doneForm) moveFocus(a *app, delta int) bool {
 // written, so its bytes don't move.
 func (a *app) saveDone() bool {
 	f := a.form[a.pane]
+	if a.doc == nil || a.doc.path != f.path {
+		a.overlay[a.pane], a.form[a.pane], a.draft = overlayNone, nil, ""
+		a.flash("that form was for another plan · nothing written", "error")
+		return true
+	}
 	f.vals[f.focus] = a.draft
 	did := strings.TrimSpace(f.vals[0])
 	if did == "" {
@@ -130,13 +155,18 @@ func (a *app) saveDone() bool {
 	a.overlay[a.pane] = overlayNone
 	a.form[a.pane] = nil
 	a.draft = ""
+	for place, other := range a.form {
+		if other != nil && other.path == f.path && other.id == f.id {
+			a.overlay[place], a.form[place] = overlayNone, nil // the same task, done now
+		}
+	}
 	a.tapeLine("done", f.id+": "+did)
 	g := saved.Plan.Graph()
 	next := g.Pin()
 	switch {
 	case next != nil:
 		a.flash("✓ "+f.id+" done · next up "+next.ID+" · p⏎ pins it", "accent")
-		if a.at == atOutline || a.at == atTaskDetail {
+		if a.pane == PanePlans && (a.at == atOutline || a.at == atTaskDetail) {
 			a.outline.sel = next.ID
 		}
 	case saved.Plan.Status == plan.Done:
@@ -161,9 +191,13 @@ func (a *app) doneKey(key string) bool {
 	switch key {
 	case "up":
 		return f.moveFocus(a, -1)
-	case "down", "\t":
+	case "down":
 		return f.moveFocus(a, 1)
 	case "esc":
+		if a.draft != "" {
+			a.draft = "" // clear the field first, like every other draft
+			return true
+		}
 		a.cancelDone()
 		return true
 	case "\r", "\n":
@@ -196,14 +230,23 @@ func (a *app) doneLines(width int) []LogLine {
 		if label != "" {
 			lines = append(lines, LogLine{Kind: "muted", Text: "  " + label})
 		}
-		lines = append(lines, LogLine{Kind: kind, Text: "    " + clip(value, max(1, width-4))})
+		for _, row := range wrap(value, max(1, width-4)) {
+			lines = append(lines, LogLine{Kind: kind, Text: "    " + row})
+		}
 	}
 	if f.intended != "" {
 		field("intended", f.intended, "text")
 	}
 	files := "none seen"
 	if len(f.files) > 0 {
-		files = strings.Join(f.files, ", ")
+		shown := f.files
+		if len(shown) > 4 {
+			shown = shown[:3] // all of them are written; the form shows a few
+		}
+		files = strings.Join(shown, ", ")
+		if len(f.files) > len(shown) {
+			files += fmt.Sprintf(" +%d more", len(f.files)-len(shown))
+		}
 	}
 	field("files", files, "text")
 	field("", f.since+" · may be partial", "muted")

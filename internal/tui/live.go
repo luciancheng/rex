@@ -30,7 +30,7 @@ var kindColor = map[string]string{
 	"before":   "muted",
 	"note":     "muted",
 	"plan":     "muted",
-	"done":     "accent",
+	"done":     "muted", // a verb's record line, like the rest
 	"thought":  "muted",
 	"command":  "accent",
 	"question": "error",

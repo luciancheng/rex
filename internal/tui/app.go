@@ -59,8 +59,11 @@ type app struct {
 	statePath  string
 	pinAsk     [2]pinAsk            // per place, while Pin confirm is open
 	pinSeen    map[string]time.Time // when this session first saw each pin
-	form       [2]*doneForm         // per place, while the completion form is open
-	seen       []watch.Event        // raw events from this repo, for completion evidence
+	pinMoved   map[string]time.Time // when the pin last moved to each task this session
+	lastPin    string               // the pin notePin last saw ("" before the first look)
+	started    time.Time
+	form       [2]*doneForm  // per place, while the completion form is open
+	seen       []watch.Event // raw events from this repo, for completion evidence
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -73,7 +76,8 @@ type logViewCache struct {
 
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
 	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
-		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}}
+		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}, pinMoved: map[string]time.Time{}}
+	a.started = a.now()
 	if plans.Current == "" {
 		// The Continue card offers the plan last opened in this repo.
 		if last := plan.LoadState(a.statePath).Repos[plans.Repo].Plan; last != "" && IsPlanFile(last) {
@@ -157,7 +161,15 @@ func (a *app) composeOptions() ComposeOptions {
 		opt.Overlay = &Overlay{Lines: lines, Scroll: scroll, Footer: []string{"pin", "p⏎ move pin", "esc cancel", "↑↓ scroll"}}
 	}
 	if f := a.form[a.pane]; a.overlay[a.pane] == overlayDone && f != nil {
-		opt.Overlay = &Overlay{Lines: a.doneLines(textW), Footer: []string{"done", "⏎ save", "esc cancel", "↑↓ field"}}
+		lines := a.doneLines(textW)
+		// Keep the focused field (and the line under it) on screen.
+		scroll := 0
+		for i, line := range lines {
+			if line.Selected {
+				scroll = max(0, min(i+3-layoutFor(a.columns, a.lines).bodyH, len(lines)-layoutFor(a.columns, a.lines).bodyH))
+			}
+		}
+		opt.Overlay = &Overlay{Lines: lines, Scroll: scroll, Footer: []string{"done", "⏎ save", "esc cancel", "↑↓ field"}}
 		opt.Prefix = " " + fieldLabels[f.focus] + " "
 	}
 	if a.overlay[a.pane] == overlayHelp {
@@ -791,8 +803,9 @@ func (a *app) openedPlan() {
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
 		for place := range a.overlay {
-			if a.overlay[place] == overlayPin {
-				a.overlay[place] = overlayNone // it asked about the old plan
+			if a.overlay[place] == overlayPin || a.overlay[place] == overlayDone {
+				a.overlay[place] = overlayNone // it was about the old plan
+				a.form[place] = nil
 			}
 		}
 	}
@@ -1080,7 +1093,7 @@ func (a *app) writePin(id string, seen plan.Status, moving []string) {
 	a.doc.took(saved)
 	now := a.now()
 	key := plan.PinKey(a.doc.path, id)
-	a.pinSeen[key] = now
+	a.pinSeen[key], a.pinMoved[key], a.lastPin = now, now, key
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) { s.Pins[key] = float64(now.Unix()) })
 	word := "pinned"
 	if seen == plan.Done {
@@ -1099,11 +1112,20 @@ func (a *app) notePin() {
 	if a.doc == nil || a.doc.plan == nil {
 		return
 	}
+	key := "\x00none"
 	if pin := a.doc.plan.Graph().Pin(); pin != nil {
-		key := plan.PinKey(a.doc.path, pin.ID)
+		key = plan.PinKey(a.doc.path, pin.ID)
 		if _, ok := a.pinSeen[key]; !ok {
 			a.pinSeen[key] = a.now()
 		}
+	}
+	if key != a.lastPin {
+		if a.lastPin != "" {
+			// The pin moved here while Rex watched: evidence starts now, so
+			// another task's trailer and files can't land on this one.
+			a.pinMoved[key] = a.now()
+		}
+		a.lastPin = key
 	}
 }
 

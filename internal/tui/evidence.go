@@ -31,29 +31,58 @@ func (a *app) remember(ev watch.Event) {
 }
 
 // pinStart is when the task became the pin: from ~/.rex/state.json when
-// it was pinned with p⏎, else when this session first saw it as the pin.
-func (a *app) pinStart(key string) (time.Time, string) {
-	if ts := plan.LoadState(a.statePath).Pins[key]; ts > 0 {
-		t := time.Unix(int64(ts), 0)
-		return t, "since " + t.Format("15:04")
+// it was pinned with p⏎ (and no later pin of the plan took over), else
+// when this session first saw it as the pin. If the pin moved to the task
+// while Rex watched, after that start, the move is the start.
+func (a *app) pinStart(key, planPath string) (time.Time, string) {
+	var start time.Time
+	label := ""
+	st := plan.LoadState(a.statePath)
+	if ts := st.Pins[key]; ts > 0 {
+		stale := false
+		for k, other := range st.Pins {
+			if k != key && strings.HasPrefix(k, plan.PinKey(planPath, "")) && other > ts {
+				stale = true // another task of this plan was pinned since
+			}
+		}
+		if !stale {
+			start, label = time.Unix(int64(ts), 0), "since "
+		}
 	}
-	if t, ok := a.pinSeen[key]; ok {
-		return t, "seen since " + t.Format("15:04") + " (this session)"
+	if t, ok := a.pinMoved[key]; ok && t.Sub(start) > time.Second {
+		start, label = t, "seen since "
 	}
-	return time.Time{}, "not seen on this machine"
+	if start.IsZero() {
+		t, ok := a.pinSeen[key]
+		if !ok {
+			return time.Time{}, "not seen on this machine"
+		}
+		start, label = t, "seen since "
+	}
+	when := start.Format("15:04")
+	if y, m, d := start.Date(); y != a.now().Year() || m != a.now().Month() || d != a.now().Day() {
+		when = start.Format("Jan 2 15:04")
+	}
+	if label == "seen since " {
+		return start, label + when + " (this session)"
+	}
+	return start, label + when
 }
 
 var (
-	trailerDid      = regexp.MustCompile(`(?im)^[\s>*_-]*accomplished\s*[:：]\s*(.+?)\s*$`)
-	trailerVerified = regexp.MustCompile(`(?im)^[\s>*_-]*verified(?:_how)?\s*[:：]\s*(.+?)\s*$`)
-	fingerprint     = regexp.MustCompile(`rex-sendoff:\s*(\S+)#(\S+)`)
-	testCommand     = regexp.MustCompile(`(?i)\b(go test|go vet|npm (run )?test|pnpm test|yarn test|pytest|cargo test|make (test|check)|bun test|vitest|jest|rspec|mvn test|gradle test)\b`)
+	// Labels may be bold or italic (**accomplished:**, _verified_:).
+	trailerDid      = regexp.MustCompile(`(?im)^[\s>*_-]*accomplished[*_]*\s*[:：][*_\s]*(.+?)[*_\s]*$`)
+	trailerVerified = regexp.MustCompile(`(?im)^[\s>*_-]*verified(?:_how)?[*_]*\s*[:：][*_\s]*(.+?)[*_\s]*$`)
+	// The path may hold spaces; the id is a slug, so trailing punctuation
+	// (a backtick, a full stop) isn't part of it.
+	fingerprint = regexp.MustCompile(`rex-sendoff:\s*(.+?)#([A-Za-z0-9_.-]*[A-Za-z0-9_-])`)
+	testCommand = regexp.MustCompile(`(?i)\b(go test|go vet|npm (run )?test|pnpm test|yarn test|pytest|cargo test|make (test|check)|bun test|vitest|jest|rspec|mvn test|gradle test)\b`)
 )
 
 // gather reads the evidence for task id out of events, which are raw
 // events from this repo, oldest first. verify is the task's own verify
 // list: a command matching it is preferred as the "verified" suggestion.
-func gather(events []watch.Event, scope watch.Scope, since time.Time, id string, verify []string) evidence {
+func gather(events []watch.Event, scope watch.Scope, since time.Time, rel, id string, verify []string) evidence {
 	var ev evidence
 	if since.IsZero() {
 		return ev
@@ -110,8 +139,8 @@ func gather(events []watch.Event, scope watch.Scope, since time.Time, id string,
 				runs = append(runs, run{cmd: cmd, result: result})
 			}
 		case e.Kind == "text":
-			if m := fingerprint.FindStringSubmatch(e.Text); m != nil && m[2] != id {
-				continue // a reply about another task's send-off
+			if m := fingerprint.FindStringSubmatch(e.Text); m != nil && (m[2] != id || (rel != "" && strings.TrimSpace(m[1]) != rel)) {
+				continue // a reply about another task's (or plan's) send-off
 			}
 			if m := trailerDid.FindStringSubmatch(e.Text); m != nil {
 				ev.did = strings.TrimSpace(m[1])
@@ -123,8 +152,11 @@ func gather(events []watch.Event, scope watch.Scope, since time.Time, id string,
 	}
 	pick := -1
 	for i := len(runs) - 1; i >= 0 && pick < 0; i-- {
+		cmd := strings.ToLower(runs[i].cmd)
 		for _, v := range verify {
-			if v = strings.ToLower(strings.TrimSpace(v)); v != "" && (strings.Contains(strings.ToLower(runs[i].cmd), v) || strings.Contains(v, strings.ToLower(runs[i].cmd))) {
+			// The run contains the verify line, or a verify sentence names a
+			// real test command; "ls" inside "details" is no match.
+			if v = strings.ToLower(strings.TrimSpace(v)); v != "" && (strings.Contains(cmd, v) || (testCommand.MatchString(cmd) && strings.Contains(v, cmd))) {
 				pick = i
 				break
 			}
@@ -137,11 +169,13 @@ func gather(events []watch.Event, scope watch.Scope, since time.Time, id string,
 	}
 	if pick >= 0 {
 		r := runs[pick]
-		switch r.result {
-		case "":
-			ev.test = r.cmd + " (result not seen)"
+		cmd := scope.Relativize(r.cmd) // no machine paths in a committed plan
+		switch {
+		case r.result == "" || strings.ContainsAny(r.cmd, "|;"):
+			// A pipe or a ; means the exit status was another command's.
+			ev.test = cmd + " (result not seen)"
 		default:
-			ev.test = r.cmd + " (" + r.result + ")"
+			ev.test = cmd + " (" + r.result + ")"
 		}
 	}
 	return ev

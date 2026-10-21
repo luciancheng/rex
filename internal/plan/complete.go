@@ -1,18 +1,20 @@
 package plan
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // Completion is what marking a task done writes. A nil list leaves that
 // field as it is in the file, so a value nobody edited keeps its bytes.
 // Modified paths are added to what the file already lists.
+// (completed_notes is the agent's or a human's; Rex doesn't write it.)
 type Completion struct {
 	Accomplished []string
 	VerifiedHow  []string
 	AddModified  []string
-	Notes        *string
 }
 
 // CompleteOp marks task id done with its retrospective (docs/ux.md §8).
@@ -42,11 +44,10 @@ func CompleteOp(id string, seen *Task, force bool, c Completion) Op {
 		if c.VerifiedHow != nil && !reflect.DeepEqual(c.VerifiedHow, t.VerifiedHow) {
 			changes = append(changes, SetList(id, "verified_how", c.VerifiedHow))
 		}
-		if merged := mergePaths(t.Modified, c.AddModified); len(merged) != len(t.Modified) {
+		if merged := mergePaths(t.Modified, c.AddModified); len(merged) != len(t.Modified) && readable(p, id, "modified") {
+			// Only when Rex read the whole list: rewriting it would drop
+			// what it couldn't read.
 			changes = append(changes, SetList(id, "modified", merged))
-		}
-		if c.Notes != nil && *c.Notes != t.CompletedNotes {
-			changes = append(changes, SetString(id, "completed_notes", *c.Notes))
 		}
 		if p.Status != Done && allFinishedWith(p, g, t) {
 			changes = append(changes, SetStatus("", Done))
@@ -57,7 +58,17 @@ func CompleteOp(id string, seen *Task, force bool, c Completion) Op {
 
 // ErrTaskChanged means the task was edited on disk after the completion
 // form opened.
-var ErrTaskChanged = fmt.Errorf("the task changed on disk")
+var ErrTaskChanged = errors.New("the task changed on disk")
+
+// readable reports that Parse read task id's field without a problem.
+func readable(p *Plan, id, field string) bool {
+	for _, pr := range p.Problems {
+		if pr.Where == id && strings.HasPrefix(pr.Msg, field) {
+			return false
+		}
+	}
+	return true
+}
 
 func sameTask(a, b Task) bool {
 	a.Index, b.Index = 0, 0

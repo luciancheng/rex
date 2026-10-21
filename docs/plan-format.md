@@ -109,7 +109,7 @@ Each task should be one PR that a human can review in a reasonable sitting. If i
 ## Who writes what
 
 - **Agents and humans** write the plan: every planning field, and statuses as work moves.
-- **Rex** writes only when you act in Rex: pinning sets `status`, and marking a task done writes `status` plus `accomplished`, `modified` and `verified_how` (and `completed_notes` if you typed one). Rex edits only the members it changes, inside that task's object: a completion field changes only when you edit it in Rex, and `modified` only gains paths. The one write outside a task is the plan's own `status`: `active` when a task is pinned in a `pending` or `done` plan, `done` when every leaf task is `done` or `skipped`.
+- **Rex** writes only when you act in Rex: pinning sets `status`, and marking a task done writes `status` plus `accomplished`, `modified` and `verified_how` (`completed_notes` is left to you or the agent). Rex edits only the members it changes, inside that task's object: a completion field changes only when you edit it in Rex, and `modified` only gains paths (and isn't touched at all if it holds entries Rex can't read). The one write outside a task is the plan's own `status`: `active` when a task is pinned in a `pending` or `done` plan, `done` when every leaf task is `done` or `skipped`.
 - **Agents finishing a task** end their final reply with a trailer, so Rex can prefill the completion:
 
   ```

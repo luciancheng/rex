@@ -193,19 +193,24 @@ func (s Scope) Display(ev Event) Event {
 		}
 		ev.Text = strings.ReplaceAll(ev.Text, p, short)
 	}
-	// Any other mention of the repo in a command line drops the repo
-	// prefix: the longer spelling first (the resolved /private/tmp/x before
-	// the given /tmp/x, which it ends with), and only where a path starts.
+	ev.Text = s.Relativize(ev.Text)
+	return ev
+}
+
+// Relativize drops the repo prefix wherever it starts a path in text: the
+// longer spelling first (the resolved /private/tmp/x before the given
+// /tmp/x, which it ends with).
+func (s Scope) Relativize(text string) string {
 	roots := []string{s.root, s.given}
 	if len(s.given) > len(s.root) {
 		roots[0], roots[1] = s.given, s.root
 	}
 	for _, root := range roots {
 		if root != "" && root != string(filepath.Separator) {
-			ev.Text = stripPrefixAt(ev.Text, root+string(filepath.Separator))
+			text = stripPrefixAt(text, root+string(filepath.Separator))
 		}
 	}
-	return ev
+	return text
 }
 
 // stripPrefixAt removes prefix wherever it starts a path in text: at the

@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/luciancheng/rex/internal/watch"
-
 	"github.com/luciancheng/rex/internal/mascot"
+	"github.com/luciancheng/rex/internal/watch"
 )
 
 type PaneKind int

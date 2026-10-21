@@ -144,3 +144,20 @@ func TestEmojiSequencesMeasureAsDrawn(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// A ZWJ joins pictographs only: between letters or CJK it is just
+// zero-width, and what follows counts in full. A tail never starts on a
+// modifier.
+func TestZWJJoinsOnlyPictographs(t *testing.T) {
+	if cellLen("a‍b") != 2 || cellLen(strings.Repeat("‍中", 4)) != 8 {
+		t.Fatalf("a‍b %d, ‍中×4 %d", cellLen("a‍b"), cellLen(strings.Repeat("‍中", 4)))
+	}
+	if got := clip(strings.Repeat("‍中", 4), 5); cellLen(got) != 5 || !strings.Contains(got, "…") {
+		t.Fatalf("%q", got)
+	}
+	for _, s := range []string{"ab⚠️", "x1️⃣"} {
+		if got := tailCells(s, 1); strings.ContainsAny(got, "️⃣") {
+			t.Errorf("tailCells(%q, 1) starts on a modifier: %q", s, got)
+		}
+	}
+}

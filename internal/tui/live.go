@@ -443,8 +443,6 @@ func clipPathLeft(path string, width int) string {
 	return "…" + tailCells(path, width-1)
 }
 
-// visibleDraft is the end of the draft that fits room cells, so the
-// cursor always sits after what was just typed.
 // visibleDraft is the end of the draft that fits in room cells, with "…"
 // on the left when it was cut. It leaves the last cell free for the
 // cursor.

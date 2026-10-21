@@ -71,8 +71,9 @@ func cellWidth(r rune) int {
 	return 1
 }
 
-// stepWidth is the cells r adds after prev (0 at the start of the text).
-func stepWidth(prev, r rune) int {
+// stepWidth is the cells r adds after prev (0 at the start of the text);
+// before is the glyph ahead of prev, which a ZWJ joins r to.
+func stepWidth(before, prev, r rune) int {
 	switch {
 	case r == 0xfe0f || r == 0x20e3:
 		if prev != 0 && cellWidth(prev) == 1 {
@@ -81,19 +82,31 @@ func stepWidth(prev, r rune) int {
 		return 0
 	case r >= 0x1f3fb && r <= 0x1f3ff && prev != 0 && cellWidth(prev) == 2:
 		return 0 // skin tone on the emoji before it
-	case prev == 0x200d:
-		return 0 // joined to the glyph before the ZWJ
+	case prev == 0x200d && pictograph(before) && pictograph(r):
+		return 0 // 👨‍💻: one glyph
 	}
 	return cellWidth(r)
+}
+
+// pictograph is an emoji a ZWJ can join: the emoji blocks, and the
+// symbols U+FE0F turns into emoji.
+func pictograph(r rune) bool {
+	return (r >= 0x1f000 && r <= 0x1faff) || (r >= 0x2600 && r <= 0x27bf)
+}
+
+// joiner is a rune that only modifies or joins the glyph before it, so a
+// cut must not start on it.
+func joiner(prev, r rune) bool {
+	return r == 0xfe0f || r == 0x20e3 || r == 0x200d || (r >= 0x1f3fb && r <= 0x1f3ff) || prev == 0x200d
 }
 
 // cellLen is the width of s in terminal cells.
 func cellLen(s string) int {
 	n := 0
-	var prev rune
+	var before, prev rune
 	for _, r := range s {
-		n += stepWidth(prev, r)
-		prev = r
+		n += stepWidth(before, prev, r)
+		before, prev = prev, r
 	}
 	return n
 }
@@ -101,14 +114,14 @@ func cellLen(s string) int {
 // cutCells returns the longest prefix of s that fits in width cells.
 func cutCells(s string, width int) string {
 	n := 0
-	var prev rune
+	var before, prev rune
 	for i, r := range s {
-		w := stepWidth(prev, r)
+		w := stepWidth(before, prev, r)
 		if n+w > width {
 			return s[:i]
 		}
 		n += w
-		prev = r
+		before, prev = prev, r
 	}
 	return s
 }
@@ -118,10 +131,10 @@ func cutCells(s string, width int) string {
 func tailCells(s string, width int) string {
 	r := []rune(s)
 	w := make([]int, len(r))
-	var prev rune
+	var before, prev rune
 	for i, c := range r {
-		w[i] = stepWidth(prev, c)
-		prev = c
+		w[i] = stepWidth(before, prev, c)
+		before, prev = prev, c
 	}
 	n, start := 0, 0
 	for i := len(r) - 1; i >= 0; i-- {
@@ -131,7 +144,7 @@ func tailCells(s string, width int) string {
 		}
 		n += w[i]
 	}
-	for start > 0 && start < len(r) && w[start] == 0 {
+	for start > 0 && start < len(r) && (w[start] == 0 || joiner(r[start-1], r[start])) {
 		start++
 	}
 	return string(r[start:])

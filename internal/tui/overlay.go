@@ -8,6 +8,7 @@ const (
 	overlayNone overlayKind = iota
 	overlayHelp
 	overlayPin
+	overlayDone
 )
 
 // pinAsk is a pin waiting for its confirm: the task, the status the user
@@ -96,6 +97,7 @@ func helpLines(width int) []LogLine {
 		head("type a word, then ⏎"),
 		row("? help", "this screen"),
 		row("p  pin [id]", "pin the selected task, or next up, or that id"),
+		row("d  done", "mark the pin done: what was done, how it was checked"),
 		row("breakdance", "one dance"),
 		row("/word", "in plans, where typing finds or names, a verb starts with /"),
 		row("anything else", "on the tape, a note: local, never sent"),

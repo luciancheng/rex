@@ -30,6 +30,7 @@ var kindColor = map[string]string{
 	"before":   "muted",
 	"note":     "muted",
 	"plan":     "muted",
+	"done":     "muted", // a verb's record line, like the rest
 	"thought":  "muted",
 	"command":  "accent",
 	"question": "error",
@@ -55,6 +56,7 @@ var kindLabel = map[string]string{
 	"before":   "before rex started",
 	"note":     "note · local",
 	"plan":     "plan",
+	"done":     "done",
 	"thought":  "thinking",
 	"command":  "run",
 	"question": "ask",
@@ -610,6 +612,7 @@ type ComposeOptions struct {
 	Overlay       *Overlay
 	Placeholder   string    // dim hint in an empty composer
 	Preview       string    // what ⏎ will do with the draft, shown in the footer
+	Prefix        string    // composer prefix, when an overlay names its field
 	PlanView      []LogLine // the open plan's screen, when PLAN shows it
 	PlanScroll    int       // its first visible line
 	PlanFooter    []string

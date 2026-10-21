@@ -45,7 +45,7 @@ Letters always type into the composer. What the text means depends on the screen
 | Name prompt | plan or folder name | ` + ` | `plan name (a/b for a folder)` |
 | Outline / detail | a verb | ` > ` | `s⏎ sendoff · d⏎ done · p⏎ pin · ?⏎` |
 | Tape | a verb, or a local note | ` > ` | `note (not sent) · sendoff · ?` |
-| Completion | the focused field | ` › ` | see §8 |
+| Completion | the focused field | ` did › ` / ` verified › ` | see §8 |
 | Send-off / brief | `c` copies again, `o` prints plain | ` > ` | `c⏎ copy · o⏎ print plain` |
 | Pin confirm | `p` confirms | ` > ` | `p⏎ to move the pin` |
 | Help | – | ` > ` | `esc to close` |
@@ -308,8 +308,8 @@ Reload behaviour:
   - When nothing was seen, the panel says `not seen on this machine` and lists no files.
 - **`~/.rex/state.json`** is outside the repo and never committed. It holds the last plan opened per repo root and the pin start times. Each write re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries (two writes in the same instant can still drop one; that costs a Continue card or a start time, never plan data).
 - **After `done`, nothing is auto-claimed.**
-  - The cursor moves to the first newly ready task.
-  - Row 1 says `▸ <id> <title> (next up · p⏎ pins it)`.
+  - Done from PLAN, the outline cursor moves to the first newly ready task. Done from the tape, PLAN's cursor stays where you left it (§1: a place moves only on its own keys).
+  - Row 1 says `✓ <id> done · next up <next> · p⏎ pins it` for a few seconds, then `▸ <next> <title> (next up · p⏎ pins it)`.
   - Drift and send-off use the effective pin in the meantime.
 
 ---

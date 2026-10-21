@@ -33,7 +33,7 @@ The install script wires Cursor. Claude Code is one opt-in command away (`rex in
 2. **`rex start`** from the repo. Create a plan, open one, or jump to the latest. Tab is the live tape. The header stays on the current plan path.
 3. **Leave him running** and prompt your agent. Rex watches. Idle when nothing is in flight; typing while the agent is working. Ctrl+C twice to quit.
 
-Opening a plan shows its outline: every task in file order, which one is pinned, what is done, and what is waiting on what. ⏎ on a task shows its detail. Rex re-reads the file as your agent edits it. It does not inject the JSON into the agent — you still send the work off in chat.
+Opening a plan shows its outline: every task in file order, which one is pinned, what is done, and what is waiting on what. ⏎ on a task shows its detail. Rex re-reads the file as your agent edits it. It does not inject the JSON into the agent — you still send the work off in chat. `p⏎` pins a task; `d⏎` marks the pin done and writes what was actually done, which files changed and how it was checked into the plan, prefilled from what your agent said and what Rex saw.
 
 ## Install
 
@@ -70,7 +70,7 @@ rex ingest --install claude --project   # this repo only, git-excluded
 rex --help
 ```
 
-Tab switches the plan ↔ the tape. In the navigator: create, open, open latest, recents; browse folders and `.rex.json` files. Nothing happens until you press Enter: type `?` for keys and verbs, `p` on the outline to pin a task, or `breakdance` on the tape (`/breakdance` in the navigator, where typing finds or names plans) to play the dance sheet once. Anything else you type on the tape is a local note; it is never sent to your agent. `NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
+Tab switches the plan ↔ the tape. In the navigator: create, open, open latest, recents; browse folders and `.rex.json` files. Nothing happens until you press Enter: type `?` for keys and verbs, `p` on the outline to pin a task, `d` to mark it done, or `breakdance` on the tape (`/breakdance` in the navigator, where typing finds or names plans) to play the dance sheet once. Anything else you type on the tape is a local note; it is never sent to your agent. `NO_COLOR=1` disables ANSI color. Pipes and CI print a static frame instead of opening the live view.
 
 ## Hack on it
 

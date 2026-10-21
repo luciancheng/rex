@@ -236,3 +236,17 @@ func TestPinSurvivesARepeatedIdLoop(t *testing.T) {
 	typeText(a, "pin x")
 	press(a, "\r")
 }
+
+func TestRevertingRexsPinIsAnOutsideEdit(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "down")
+	typeText(a, "p")
+	press(a, "\r")
+	typeText(a, "p")
+	press(a, "\r")                              // pinned load-outline
+	os.WriteFile(path, []byte(demoPlan), 0o644) // someone puts the old file back
+	later(a, c)
+	if !strings.Contains(a.statusLine().Text, "plan updated") {
+		t.Fatalf("a revert of Rex's own write is announced: %q", a.statusLine().Text)
+	}
+}

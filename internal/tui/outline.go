@@ -92,7 +92,7 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, summary string)
 // Rex's own edit as someone else's.
 func (d *planDoc) took(saved *plan.Saved) {
 	d.own = plan.Hash(saved.Data)
-	d.hash, d.plan = d.own, saved.Plan
+	d.hash, d.good, d.plan = d.own, d.own, saved.Plan // so going back to the old bytes reads as an edit
 	d.bad, d.badPolls, d.err, d.gone = "", 0, "", false
 }
 
@@ -668,8 +668,7 @@ func docStatus(d *planDoc) (StatusLine, bool) {
 }
 
 // pinStatus is row 1's pin line: the pin, a warning about two active
-// tasks, or why there is no pin.
-// pinStatus is row 1's pin line. writable is false when p⏎ would be
+// tasks, or why there is no pin. writable is false when p⏎ would be
 // refused, so the line doesn't offer it.
 func pinStatus(p *plan.Plan, writable bool) StatusLine {
 	if p == nil || len(p.Tasks) == 0 {

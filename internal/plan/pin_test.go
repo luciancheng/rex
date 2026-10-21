@@ -128,3 +128,13 @@ func TestOnlyActiveLeavesCountAsTwoActive(t *testing.T) {
 		}
 	}
 }
+
+func TestIdlessChildrenStayChildren(t *testing.T) {
+	g := mustParse(t, `{"tasks":[{"id":"p","title":"Parent"},{"title":"child","parent":"p"}]}`).Graph()
+	if g.Leaf(g.Task("p")) {
+		t.Fatal("a parent with an id-less child is no leaf")
+	}
+	if pin := g.Pin(); pin != nil && pin.ID == "p" {
+		t.Fatal("a parent is never pinned")
+	}
+}

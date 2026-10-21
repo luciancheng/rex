@@ -5,16 +5,14 @@ body:
   - type: markdown
     attributes:
       value: Security issues go through SECURITY.md (a private report), not here.
-  - type: input
-    id: version
+  - type: textarea
+    id: build
     attributes:
-      label: rex --version
+      label: Rex build
+      description: How you installed Rex (the install script, with REX_REF if you set it, or go install), and the output of `go version -m "$(command -v rex)"` (PowerShell `go version -m (Get-Command rex).Source`). `rex --version` doesn't say which commit you have.
+      render: text
     validations:
       required: true
-  - type: input
-    id: go
-    attributes:
-      label: go version
   - type: input
     id: os
     attributes:
@@ -33,7 +31,7 @@ body:
     id: agent
     attributes:
       label: Agent
-      options: [Cursor, Claude Code, Codex, OpenCode, none]
+      options: [Cursor, Claude Code, Codex, OpenCode, No agent / other]
     validations:
       required: true
   - type: textarea

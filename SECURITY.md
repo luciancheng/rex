@@ -8,7 +8,7 @@ Rex has no tagged releases yet. Security fixes go to the tip of `dev`; once rele
 
 Please don't open a public issue. Report it privately through GitHub: on [the repository](https://github.com/luciancheng/rex), open **Security → Report a vulnerability** ([direct link](https://github.com/luciancheng/rex/security/advisories/new)). If that form isn't available, open an issue that only asks a maintainer to contact you, with no details, and one will reach out.
 
-Include what you found, how to reproduce it, and the `rex --version`, OS and agent you used. Please allow a few days for a first reply.
+Include what you found, how to reproduce it, how you installed Rex, the output of `go version -m` on the `rex` binary (`rex --version` doesn't name the commit), and the OS and agent you used. Please allow a few days for a first reply.
 
 ## What is in scope
 

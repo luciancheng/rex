@@ -33,11 +33,12 @@ REX plan                            idle · rex/plans/cuj/sendoff-demo.rex.json
 ▸ card-highlight  Selected plan card is one block (active)
 ── Send-off demo · active · 1/3 ──────────────────────────────────────────────
   last ✓ plans-ui: Home cards, folder browser, duplicate names refused
+
   ✓ plans-ui        Plans navigator · Create, open and browse rex/plans in th…
 ▌ ▸ card-highlight  Selected plan card is one block · Bar, border and fill co…
   · load-outline    Outline view · Opening a plan shows…  after card-highlight
 ╭────────────────────────────────────────────────────────────────────────────╮
-│ > s⏎ sendoff · d⏎ done · p⏎ pin · ?⏎ help                                  │
+│ > (s⏎ sendoff · d⏎ done · p⏎ pin · ?⏎ help)                                │
 ╰────────────────────────────────────────────────────────────────────────────╯
 outline · tab tape · esc plans · ⏎ detail · ?⏎ help
 ```
@@ -86,18 +87,18 @@ If the agent edits files outside the pinned task, or you ask for something the p
 
 ## Agents
 
-Rex watches agents through their hooks: each wired agent runs `rex ingest` on its events and appends them to a local feed. Nothing is wired without your explicit command.
+Rex watches agents through their hooks: each wired agent runs `rex ingest` on its events and appends them to a local feed. Apart from the install script wiring Cursor, nothing is wired until you run `rex ingest --install`.
 
 | Agent | Wire it | Rex edits | Notes |
 | --- | --- | --- | --- |
 | Cursor | the install script, or `rex ingest --install cursor` | `~/.cursor/hooks.json` | Cursor reports only the final reply of each turn. |
 | Claude Code | `rex ingest --install claude` (add `--project` for this repo only) | `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`), or this repo's git-excluded `.claude/settings.local.json` | |
-| Codex | `rex ingest --install codex` | `~/.codex/hooks.json` (or `$CODEX_HOME`) | Then trust the hooks once in Codex's `/hooks`, and again after moving or reinstalling `rex`. |
+| Codex | `rex ingest --install codex` | `~/.codex/hooks.json` (or `$CODEX_HOME`) | Then trust the hooks once in Codex's `/hooks`, and again after moving `rex` (the hook names its path). |
 | OpenCode | `rex ingest --install opencode` | `~/.config/opencode/plugins/rex.js` (or `$XDG_CONFIG_HOME`) | Restart OpenCode to load the plugin. |
 
 - `rex ingest --install auto` wires every agent found on this machine.
 - Your other hooks and settings are kept byte for byte, and the previous file is saved next to it as `.bak`.
-- `rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan`, or `--project` for this repo). It teaches Claude Code, Cursor and OpenCode the plan format, stacked PRs and a review pass before each PR. Codex doesn't read skills: use `b⏎` and `s⏎`.
+- `rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan`, or `--project` for this repo). It teaches Claude Code, Cursor and OpenCode the plan format, stacked PRs and a review pass before each PR. Codex doesn't read Claude's skills folder: with Codex, use `b⏎` and `s⏎`.
 
 ## Keys
 
@@ -133,12 +134,12 @@ Commit the `rex/plans/` folder so teammates open the same plans from git. A plan
 
 Rex makes no network connections, and everything stays on this machine:
 
-- **`~/.rex/session.jsonl`**: the feed every wired agent appends to. It holds your prompts, the agent's thoughts and replies, the commands it runs, file paths and working folders, from every repo on this machine. File bodies and diffs are left out, and each event is capped at 32 KB. Only your user can read it (`0600`, in a `0700` folder). It only grows; delete it whenever you like. Set `REX_EVENTS` to keep it somewhere else.
+- **`~/.rex/session.jsonl`** (and the `session.jsonl.lock` next to it): the feed every wired agent appends to. It holds your prompts, the agent's thoughts and replies, the commands it runs, file paths and working folders, from every repo on this machine. File bodies and diffs are left out, and each event's text is capped at 32 KB. Only your user can read it (`0600`, in a `0700` folder). It only grows; delete it whenever you like. Set `REX_EVENTS` to keep it somewhere else.
 - **`~/.rex/state.json`**: the last plan you opened in each repo, and when each task was pinned.
-- **Your repo**: plans in `rex/plans/`. Rex writes a plan only when you act in Rex (pin, done), and only a task's status and its completion fields.
-- **Agent configs**: only the files in the [Agents](#agents) table, and only when you run `--install`.
+- **Your repo**: plans in `rex/plans/`, written only when you act in Rex. Create and New folder write the new plan or folder (and `rex/plans/.gitkeep` the first time); pin and done write task statuses, a task's completion fields and the plan's own status.
+- **Agent configs**: only the files in the [Agents](#agents) table, each with a `.bak` copy of what was there, and only when you run `--install`. `--install claude --project` also adds two lines to the repo's `.git/info/exclude`, and `--install-skill` writes the `rex-plan` skill folder.
 
-Copying a brief runs your system's clipboard tool (`pbcopy`, `wl-copy`, `xclip`, `xsel`, `clip.exe`); over SSH it asks your terminal to copy (OSC 52). The install script downloads Rex's source through Go and git.
+Copying a brief runs your system's clipboard tool (`pbcopy`, `wl-copy`, `xclip`, `xsel`, `clip.exe`); over SSH, or when no tool works, it asks your terminal to copy (OSC 52). The install script downloads Rex's source through Go and git.
 
 ## Configuration
 
@@ -162,17 +163,17 @@ Copying a brief runs your system's clipboard tool (`pbcopy`, `wl-copy`, `xclip`,
    rex ingest --uninstall opencode
    rex ingest --uninstall-skill       # if you installed it (add --project in each repo)
    ```
-2. Then delete the binary: `rm "$(command -v rex)"` (on Windows, `%USERPROFILE%\.local\bin\rex.exe`, and take that folder out of your user PATH). Do this last: hooks call `rex` by its path, so deleting it first leaves them pointing at nothing.
-3. Delete Rex's data: `rm -rf ~/.rex`. Your plans in `rex/plans/` are yours to keep or delete.
+2. Then delete the binary: `rm "$(command -v rex)"` (PowerShell: `Remove-Item ~\.local\bin\rex.exe`, then take that folder out of your user PATH). Do this last: hooks call `rex` by its path, so deleting it first leaves them pointing at nothing.
+3. Delete Rex's data: `rm -rf ~/.rex` (PowerShell: `Remove-Item -Recurse -Force ~\.rex`), and the file `REX_EVENTS` points to if you set it. The `.bak` files next to your agent configs still hold Rex's hooks: delete them, don't restore them. Your plans in `rex/plans/` are yours to keep or delete.
 
 ## Troubleshooting
 
 - **The tape stays empty.** Type `?⏎`. The feed block shows the feed path, the last event, and whether each agent is wired, with the command that wires it. Start a new agent session after wiring.
-- **Codex shows nothing.** Trust the Rex hooks in Codex's `/hooks`, and again after moving or reinstalling `rex`.
-- **Events stopped after moving or reinstalling `rex`.** Hooks call the binary by its path. Run the `rex ingest --install <agent>` command again.
+- **Codex shows nothing.** Trust the Rex hooks in Codex's `/hooks`, and again after moving `rex`.
+- **Events stopped after moving `rex`, or installing it to a different folder.** Hooks call the binary by its path. Run the `rex ingest --install <agent>` command again.
 - **Events land in another file.** Hooks use the agent's `REX_EVENTS`, not your shell's. Set it in both places, or in neither.
 - **No dino, or "widen".** The dino needs 66+ columns. Under 24 columns of text Rex asks you to widen the terminal.
-- **"sent (OSC 52) · may be blocked".** Your terminal may refuse clipboard requests. Use `o⏎` to print the brief plain and copy it by hand, or install a clipboard tool.
+- **"sent (OSC 52) · may be blocked".** Rex asked your terminal to copy, which it does over SSH or when no clipboard tool works. Allow clipboard access in your terminal (in tmux, `set -g set-clipboard on`), or use `o⏎` to print the brief plain and copy it by hand. On a local Linux desktop, installing `wl-copy`, `xclip` or `xsel` avoids it.
 - **"rex/ is a file here · plans off".** A file named `rex` sits at the repo root, where the plans folder goes. Move it.
 
 ## Contributing

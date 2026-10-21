@@ -49,7 +49,7 @@ To change idle: replace `assets/idle.png`, then:
 go run ./cmd/importsprite --apply assets/idle.png
 ```
 
-That writes the idle `Pixels(...)` grid into `internal/mascot/sprites.go` and the sampled RGB values into the yellow palette, 1:1; restart `rex start` after it. The grid's letters are palette roles:
+That writes the idle `Pixels(...)` grid into `internal/mascot/sprites.go` and the sampled RGB values into the yellow palette, 1:1; restart `rex start` after it. The grid's letters are palette roles; the current idle grid uses these (the full set, with eye, white, mark, green, red and teal, is `mascot.PixelRoles`):
 
 | Letter | Role | Letter | Role |
 | --- | --- | --- | --- |

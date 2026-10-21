@@ -186,3 +186,31 @@ func TestAppResizeIsPickedUp(t *testing.T) {
 		t.Fatal("no change, no redraw")
 	}
 }
+
+// A scrolled-up tape keeps showing the same lines while new events arrive
+// below it.
+func TestAppScrolledViewStaysPut(t *testing.T) {
+	a := testApp(t)
+	var evs []watch.Event
+	for i := 0; i < 60; i++ {
+		evs = append(evs, watch.NewEvent("cursor", "text", fmt.Sprintf("reply number %d", i), nil))
+	}
+	a.ingest(evs)
+	press(a, "\t", "up", "up", "up", "up", "up")
+	if a.scroll != 5 {
+		t.Fatalf("scroll %d", a.scroll)
+	}
+	top := func() string {
+		view := BuildLogView(a.log, PaneTextWidth(a.columns))
+		end := len(view) - a.scroll
+		return view[max(0, end-PaneBodyHeight(a.lines))].Text
+	}
+	before, lines := top(), a.logLines()
+	a.ingest([]watch.Event{watch.NewEvent("cursor", "text", "a new reply", nil)})
+	if a.scroll != 5+a.logLines()-lines {
+		t.Fatalf("scroll %d after %d new lines", a.scroll, a.logLines()-lines)
+	}
+	if top() != before {
+		t.Fatalf("the view moved: %q -> %q", before, top())
+	}
+}

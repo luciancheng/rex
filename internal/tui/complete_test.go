@@ -262,10 +262,28 @@ func TestEvidenceFromBeforeRexStarted(t *testing.T) {
 	plan.UpdateState(a.statePath, c.t, func(s *plan.State) { s.Pins[plan.PinKey(path, "card-highlight")] = float64(c.t.Unix()) })
 	a.started = c.t.Add(time.Hour) // Rex started after the work
 	c.t = c.t.Add(2 * time.Hour)
+	a.pinSeen = map[string]time.Time{plan.PinKey(path, "card-highlight"): c.t} // this session saw it only now
+	a.pinMoved = map[string]time.Time{}
 	typeText(a, "d")
 	press(a, "\r")
 	if f := a.form[PanePlans]; f == nil || strings.Join(f.files, ",") != "internal/tui/plans.go" || !strings.Contains(f.hints[0], "the bar spans all three card rows") {
 		t.Fatalf("a pin started before Rex reads back in the feed: %+v", f)
+	}
+}
+
+func TestSavingDropsTheOtherFormsText(t *testing.T) {
+	a, _, _ := openDemo(t, demoPlan, 120, 32)
+	typeText(a, "d")
+	press(a, "\r") // a form in PLAN
+	typeText(a, "half typed")
+	press(a, "\t")
+	typeText(a, "d")
+	press(a, "\r") // the same task's form on the tape
+	typeText(a, "shipped")
+	press(a, "\r")
+	press(a, "\t")
+	if a.draft != "" {
+		t.Fatalf("the other place's form closed, and its text with it: %q", a.draft)
 	}
 }
 

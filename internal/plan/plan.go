@@ -12,9 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/luciancheng/rex/internal/jsonedit"
 )
@@ -132,42 +134,91 @@ func conflictLine(data []byte) int {
 	return 0
 }
 
-// describe turns a JSON error into "line:col: message".
+// describe turns a JSON error into "line:col: message". The position comes
+// from encoding/json's own pass over the whole file, whose offset is the
+// same on every Go release (one byte past the bad one); the decoder's
+// token offsets are not. A duplicate key, which encoding/json accepts, is
+// found by its own walk.
 func describe(data []byte, err error) error {
-	var syn *json.SyntaxError
-	if errors.As(err, &syn) {
-		line, col := position(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")), int(syn.Offset)-offsetSkew)
-		return fmt.Errorf("%d:%d: %s", line, col, syn.Error())
-	}
 	if errors.Is(err, jsonedit.ErrUTF16) {
 		return err
+	}
+	body := bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	if len(bytes.TrimSpace(body)) == 0 {
+		return errors.New("not valid JSON: the file is empty")
+	}
+	if errors.Is(err, jsonedit.ErrDuplicateKey) {
+		if at := duplicateKey(body); at >= 0 {
+			line, col := position(body, at)
+			return fmt.Errorf("%d:%d: %v", line, col, err)
+		}
+		return err
+	}
+	var raw json.RawMessage
+	var syn *json.SyntaxError
+	if uerr := json.Unmarshal(body, &raw); errors.As(uerr, &syn) {
+		msg, at := syn.Error(), int(syn.Offset)-1
+		if int(syn.Offset) >= len(body) && strings.Contains(msg, "end of JSON input") {
+			msg, at = "the file ends before the JSON does", len(body)
+		}
+		line, col := position(body, at)
+		return fmt.Errorf("%d:%d: %s", line, col, msg)
 	}
 	return fmt.Errorf("not valid JSON: %w", err)
 }
 
-// offsetSkew is how far past the offending byte a json.Decoder.Token
-// SyntaxError points; Go releases differ (1.22 points at it, later ones
-// just past it).
-var offsetSkew = func() int {
-	dec := json.NewDecoder(strings.NewReader("[1 x]"))
-	var syn *json.SyntaxError
-	for {
-		_, err := dec.Token()
-		if err == nil {
-			continue
-		}
-		if errors.As(err, &syn) && syn.Offset == 4 {
-			return 1
-		}
-		return 0
+// duplicateKey is the byte offset of the first key that repeats one
+// already in its object, or -1.
+func duplicateKey(body []byte) int {
+	type frame struct {
+		obj, wantKey bool
+		keys         map[string]bool
 	}
-}()
+	dec := json.NewDecoder(bytes.NewReader(body))
+	var stack []*frame
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return -1
+		}
+		var top *frame
+		if len(stack) > 0 {
+			top = stack[len(stack)-1]
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			if t == '}' || t == ']' {
+				stack = stack[:len(stack)-1]
+				continue
+			}
+			if top != nil && top.obj {
+				top.wantKey = true // after this value, a key
+			}
+			stack = append(stack, &frame{obj: t == '{', wantKey: true, keys: map[string]bool{}})
+		default:
+			if top == nil || !top.obj {
+				continue
+			}
+			if !top.wantKey {
+				top.wantKey = true
+				continue
+			}
+			key, _ := t.(string)
+			if top.keys[key] {
+				quoted, _ := json.Marshal(key)
+				return max(0, int(dec.InputOffset())-len(quoted))
+			}
+			top.keys[key] = true
+			top.wantKey = false
+		}
+	}
+}
 
+// position is the 1-based line and column (in characters) of offset.
 func position(data []byte, offset int) (line, col int) {
 	offset = max(0, min(offset, len(data)))
-	line = 1 + bytes.Count(data[:offset], []byte("\n"))
-	col = offset - bytes.LastIndexByte(data[:offset], '\n')
-	return line, col
+	start := bytes.LastIndexByte(data[:offset], '\n') + 1
+	return 1 + bytes.Count(data[:offset], []byte("\n")), 1 + utf8.RuneCount(data[start:offset])
 }
 
 type reader struct {
@@ -191,16 +242,29 @@ func (r *reader) readOnly(why string) {
 
 func (r *reader) plan(root *jsonedit.Node) {
 	p := r.p
+	p.Version = Version // a missing version reads as 1
 	if n := root.Member("version"); n != nil && !r.null(n) {
-		v, err := strconv.Atoi(string(r.doc.Raw(n)))
+		raw := string(r.doc.Raw(n))
+		v, err := strconv.Atoi(raw)
+		if n.Kind == '"' {
+			var quoted string
+			r.doc.Decode(n, &quoted)
+			if v, err = strconv.Atoi(strings.TrimSpace(quoted)); err == nil {
+				r.problem("plan", "version is not a whole number (read %q as %d)", quoted, v)
+			}
+		}
 		switch {
-		case err != nil || v < 0:
-			r.problem("plan", "version is not a whole number")
+		case err != nil || v < 1:
+			// Rex can't tell which format this is, so it won't write it.
+			r.problem("plan", "version is not a whole number from 1")
+			r.readOnly("version unreadable · fix it to edit")
 		case v > Version:
 			r.problem("plan", "version %d is newer than this Rex reads (%d)", v, Version)
 			r.readOnly(fmt.Sprintf("version %d · update rex to edit", v))
+			p.Version = v
+		default:
+			p.Version = v
 		}
-		p.Version = v
 	}
 	p.ID = r.text("plan", root, "id")
 	p.Title = r.text("plan", root, "title")
@@ -357,9 +421,11 @@ func (r *reader) check() {
 			ids[t.ID]++
 		}
 	}
-	for id, n := range ids {
-		if n > 1 {
-			r.problem(id, "id is used by %d tasks", n)
+	told := map[string]bool{}
+	for _, t := range p.Tasks { // in file order, so problems read the same every time
+		if n := ids[t.ID]; n > 1 && !told[t.ID] {
+			told[t.ID] = true
+			r.problem(t.ID, "id is used by %d tasks", n)
 		}
 	}
 	var active []string
@@ -396,8 +462,13 @@ func (r *reader) check() {
 	}
 }
 
-// cycles finds each loop in the graph given by next, once, as the path
-// from the loop's first task in file order back to itself.
+// maxLoops caps the loops reported per graph: a dense file could have a
+// great many, and a few are enough to fix it.
+const maxLoops = 10
+
+// cycles finds loops in the graph given by next, as paths from a task back
+// to itself, each set of tasks once, at most maxLoops of them. The walk
+// starts from tasks in file order.
 func (p *Plan) cycles(next func(Task) []string) [][]string {
 	byID := map[string]*Task{}
 	for i := range p.Tasks {
@@ -413,6 +484,7 @@ func (p *Plan) cycles(next func(Task) []string) [][]string {
 	state := map[string]int{}
 	var path []string
 	var out [][]string
+	seen := map[string]bool{}
 	var visit func(id string)
 	visit = func(id string) {
 		state[id] = onPath
@@ -426,10 +498,15 @@ func (p *Plan) cycles(next func(Task) []string) [][]string {
 				visit(n)
 			case onPath:
 				for i, v := range path {
-					if v == n {
-						out = append(out, append(append([]string(nil), path[i:]...), n))
-						break
+					if v != n || len(out) >= maxLoops {
+						continue
 					}
+					loop := append(append([]string(nil), path[i:]...), n)
+					if key := loopKey(loop); !seen[key] {
+						seen[key] = true
+						out = append(out, loop)
+					}
+					break
 				}
 			}
 		}
@@ -442,6 +519,13 @@ func (p *Plan) cycles(next func(Task) []string) [][]string {
 		}
 	}
 	return out
+}
+
+// loopKey names a loop by its tasks, wherever it was entered.
+func loopKey(loop []string) string {
+	ids := append([]string(nil), loop[:len(loop)-1]...)
+	sort.Strings(ids)
+	return strings.Join(ids, "\x00")
 }
 
 // Task returns the first task with this id, or nil.

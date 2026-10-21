@@ -93,7 +93,8 @@ Keep `needs` and `does` apart: one is "we still lack X", the other is "we will s
 
 - Write status down. Do not leave it to be inferred from git or from `verify`.
 - At most one task is `active`: that is the pinned task. If none is active, the pin is the first `pending` task, in file order, whose `depends_on` are all `done` or `skipped`.
-- Only leaf tasks (tasks that are nobody's `parent`) are pinned. A parent's progress is its children's.
+- Only leaf tasks (tasks that are nobody's `parent`) are pinned. A parent's progress is its children's, and Rex never writes a parent's status.
+- A `depends_on` that names a parent is met once every leaf under it is `done` or `skipped` (or the parent itself is marked `done` or `skipped`).
 
 ## Parent vs depends_on
 
@@ -108,7 +109,7 @@ Each task should be one PR that a human can review in a reasonable sitting. If i
 ## Who writes what
 
 - **Agents and humans** write the plan: every planning field, and statuses as work moves.
-- **Rex** writes only when you act in Rex: pinning sets `status`, and marking a task done writes `status` plus the four completion fields. Rex edits only the members it changes, inside that task's object, and never overwrites what someone else wrote in a completion field.
+- **Rex** writes only when you act in Rex: pinning sets `status`, and marking a task done writes `status` plus `accomplished`, `modified` and `verified_how` (and `completed_notes` if you typed one). Rex edits only the members it changes, inside that task's object: a completion field changes only when you edit it in Rex, and `modified` only gains paths.
 - **Agents finishing a task** end their final reply with a trailer, so Rex can prefill the completion:
 
   ```
@@ -135,7 +136,7 @@ Rex shows what it can and lists the rest under the plan:
 - an unknown status (read as `pending`);
 - a value of the wrong type (ignored).
 
-Rex will not write to a file whose `version` is newer than 1 or whose `tasks` is not a list. A file that is not valid JSON, that has a duplicate key, or that still has git conflict markers is not shown; Rex keeps the last good copy on screen and names the line.
+Rex will not write to a file whose `version` is newer than 1 or unreadable (a quoted number such as `"1"` is read, with a warning), whose `tasks` is not a list, or that still has git conflict markers. A missing `version` reads as 1. A file that is not valid JSON or that has a duplicate key is not shown: Rex keeps the last good copy on screen and names the line and column (`14:3`); for conflict markers it names the line of the first one.
 
 ## A new plan
 

@@ -3,6 +3,7 @@ package plan
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -164,6 +165,14 @@ func TestProblems(t *testing.T) {
 			t.Errorf("%s: a problem alone does not lock the file (%q)", c.name, p.ReadOnly)
 		}
 	}
+	for _, src := range []string{`{"version":"two"}`, `{"version":1.5}`, `{"version":0}`} {
+		if p := mustParse(t, src); p.ReadOnly == "" {
+			t.Errorf("%s: a version Rex can't read locks the file", src)
+		}
+	}
+	if p := mustParse(t, `{"title":"x"}`); p.Version != Version || p.ReadOnly != "" {
+		t.Fatalf("a missing version reads as %d: %d %q", Version, p.Version, p.ReadOnly)
+	}
 	if p := mustParse(t, `{"tasks":[{"id":"a","status":"wip"}]}`); p.Tasks[0].Status != Pending {
 		t.Fatal("unknown status reads as pending")
 	}
@@ -188,6 +197,13 @@ func TestParseErrors(t *testing.T) {
 		{"{\n<<<<<<< HEAD\n  \"id\": \"a\"\n=======\n  \"id\": \"b\"\n>>>>>>> main\n}", "line 2: merge conflict markers"},
 		{"\xff\xfe{\x00}\x00", "UTF-16"},
 		{``, "not valid JSON"},
+		// Positions are the same on every Go release, for errors inside
+		// values too.
+		{"{\n  \"tasks\": [\n    {\"id\": tru}\n  ]\n}", "3:15: "},
+		{"{\n  \"id\": \"a\",\n  \"id\": \"b\"\n}", `3:3: duplicate key "id"`},
+		{"{\"id\": \"a\"} x", "1:13: "},
+		{"{\n  \"tasks\": [\n", "3:1: the file ends before the JSON does"},
+		{"{\"t\": \"é\", x}", "1:12: "},
 	}
 	for _, c := range cases {
 		_, err := Parse([]byte(c.src))
@@ -262,7 +278,9 @@ func TestFormatDocMatchesCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	var blocks []string
-	for _, part := range strings.Split(string(data), "```json\n")[1:] {
+	// A Windows checkout may turn the doc's line endings into CRLF.
+	doc := strings.ReplaceAll(string(data), "\r\n", "\n")
+	for _, part := range strings.Split(doc, "```json\n")[1:] {
 		blocks = append(blocks, part[:strings.Index(part, "```")])
 	}
 	if len(blocks) < 2 {
@@ -274,5 +292,30 @@ func TestFormatDocMatchesCode(t *testing.T) {
 	}
 	if stub := blocks[len(blocks)-1]; stub != string(Stub("auth-flow")) {
 		t.Fatalf("doc stub\n%s\ncode stub\n%s", stub, Stub("auth-flow"))
+	}
+}
+
+func TestDenseLoopsAreCapped(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"tasks":[`)
+	const n = 40
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"id":"t%d","depends_on":[`, i)
+		for j := 0; j < n; j++ {
+			if j > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, `"t%d"`, j)
+		}
+		b.WriteString("]}")
+	}
+	b.WriteString("]}")
+	p := mustParse(t, b.String())
+	loops := strings.Count(problems(p), "depends_on loops")
+	if loops == 0 || loops > maxLoops {
+		t.Fatalf("%d loops reported", loops)
 	}
 }

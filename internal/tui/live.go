@@ -357,7 +357,8 @@ func statusForTurn(turn Turn, lastKind string) string {
 	case TurnThinking:
 		return "thinking"
 	case TurnRunning:
-		if s, ok := kindStatus[lastKind]; ok && lastKind != "user" {
+		// A tool that failed mid-turn doesn't stop the turn: still running.
+		if s, ok := kindStatus[lastKind]; ok && lastKind != "user" && lastKind != "error" {
 			return s
 		}
 		return "running"
@@ -931,7 +932,7 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				prevTurn := turn
 				for _, ev := range fresh {
 					turn = ApplyTurn(turn, ev)
-					if watch.KeepInPane(ev) {
+					if watch.KeepInPane(ev) || ev.Kind == "idle" { // a turn end clears an old error
 						lastKind = ev.Kind
 					}
 				}

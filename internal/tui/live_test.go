@@ -383,3 +383,20 @@ func TestIdleHeaderNeverSaysRunning(t *testing.T) {
 		t.Fatal("a turn-level error ends the turn")
 	}
 }
+
+// The header word follows the turn: a tool failing mid-turn keeps it
+// running, a completed turn is idle again, and only a turn that ended in
+// an error says error.
+func TestHeaderWordAfterFailures(t *testing.T) {
+	failed := watch.Event{Source: "cursor", Kind: "error", Text: "Write failed", Meta: map[string]any{"tool": "Write"}}
+	if got := statusForTurn(ApplyTurn(TurnRunning, failed), "error"); got != "running" {
+		t.Fatalf("mid-turn failure: %q", got)
+	}
+	if got := statusForTurn(TurnIdle, "idle"); got != "idle" {
+		t.Fatalf("after a completed turn: %q", got)
+	}
+	ended := watch.Event{Source: "cursor", Kind: "error", Text: "turn ended with an error"}
+	if got := statusForTurn(ApplyTurn(TurnRunning, ended), "error"); got != "error" {
+		t.Fatalf("a turn that ended in an error: %q", got)
+	}
+}

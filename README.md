@@ -21,7 +21,7 @@
   macOS · Linux · Windows 10+ &nbsp;·&nbsp; Go 1.22+ &nbsp;·&nbsp; MIT
 </p>
 
-REX is a watch-only sidecar. It does not run tools, approve them, or steer the agent. You talk to Cursor or Claude Code as usual. Rex holds the plan you are sending off, and the pane next to the dino shows thoughts, edits, shell, questions, and your prompts as they happen.
+REX is a watch-only sidecar. It does not run tools, approve them, or steer the agent. You talk to Cursor, Claude Code, Codex or OpenCode as usual. Rex holds the plan you are sending off, and the pane next to the dino shows thoughts, edits, shell, questions, and your prompts as they happen.
 
 Plans live in the repo at `rex/plans/` as JSON named `<name>.rex.json`. Commit that folder; teammates open the same plan from git. A plan is a goal, hard scope edges, and a flat list of PR-sized tasks, with `parent` for outline and `depends_on` for order ([format v1](docs/plan-format.md)). New plans start as an empty v1 stub for your agent to fill.
 
@@ -117,13 +117,17 @@ Blink, glance, and squat stay transforms on the idle grid. Breakdance and typing
 
 ```
 rex/plans/                  commitable send-off plans (<name>.rex.json)
-assets/idle.png             source 40×40 sprite
-assets/rex.png              README art (same drawing, scaled)
+assets/                     idle, typing and breakdance sprites; README art
 cmd/rex                     rex start / rex ingest
 cmd/importsprite            PNG → CLI pixel art
+internal/cli/               the rex command and its flags
 internal/mascot/            sprites, palettes, half-block renderer
-internal/tui/               plans navigator + live tape
-internal/watch/             agent event feed (hooks → JSONL → pane)
+internal/tui/               plans home, outline, live tape, overlays
+internal/plan/              plan format, edits, pin, completion, send-off, drift
+internal/watch/             agent event feed (hooks → JSONL → pane), harness installers
+internal/jsonedit/          byte-preserving JSON edits for configs and plans
+internal/skill/             the rex-plan agent skill (installed on request)
+docs/                       plan format (plan-format.md) and UX spec (ux.md)
 scripts/install.sh          user install (macOS/Linux)
 scripts/install.ps1         user install (Windows)
 .github/workflows/ci.yml    GitHub Actions

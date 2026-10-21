@@ -340,3 +340,44 @@ func TestInterruptedToolEndsTheTurn(t *testing.T) {
 		t.Fatalf("%#v", ev)
 	}
 }
+
+func TestHarnessRegistryCursor(t *testing.T) {
+	home := cursorHome(t)
+	var out bytes.Buffer
+	if err := InstallHarness("auto", &out); err != nil || !strings.Contains(out.String(), "no supported agent") {
+		t.Fatalf("auto with nothing present: %v %q", err, out.String())
+	}
+	os.MkdirAll(filepath.Join(home, ".cursor"), 0o755)
+	statuses := HarnessStatuses()
+	if len(statuses) == 0 || statuses[0].Name != "cursor" || !statuses[0].Present || statuses[0].Wired {
+		t.Fatalf("%#v", statuses)
+	}
+	out.Reset()
+	if err := InstallHarness("auto", &out); err != nil || !strings.Contains(out.String(), "installed cursor hooks") {
+		t.Fatalf("%v %q", err, out.String())
+	}
+	if !HarnessStatuses()[0].Wired {
+		t.Fatal("wired after install")
+	}
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	data, _ := os.ReadFile(path)
+	os.WriteFile(path, bytes.Replace(data, []byte(`"stop": [`), []byte(`"stop": [{"command": "say done"}, `), 1), 0o644)
+	out.Reset()
+	if err := UninstallHarness("cursor", &out); err != nil {
+		t.Fatal(err)
+	}
+	if HarnessStatuses()[0].Wired {
+		t.Fatal("still wired after uninstall")
+	}
+	got := readHooks(t, path)
+	hooks := got["hooks"].(map[string]any)
+	if stop := hooks["stop"].([]any); len(stop) != 1 || stop[0].(map[string]any)["command"] != "say done" {
+		t.Fatalf("foreign hook lost: %#v", hooks["stop"])
+	}
+	if _, ok := hooks["preToolUse"]; ok {
+		t.Fatal("lists Rex emptied are removed")
+	}
+	if err := InstallHarness("nope", &out); err == nil {
+		t.Fatal("unknown harness")
+	}
+}

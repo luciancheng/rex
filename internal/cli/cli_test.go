@@ -332,3 +332,21 @@ func TestStartDumbTerminalPrintsCard(t *testing.T) {
 		t.Fatalf("TERM=dumb printed escapes: %q", stdout.String())
 	}
 }
+
+func TestIngestInstallFlags(t *testing.T) {
+	home := os.Getenv("HOME")
+	os.MkdirAll(home+"/.cursor", 0o755)
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"ingest", "--install", "cursor"}, bytes.NewReader(nil), &stdout, &stderr); code != 0 {
+		t.Fatalf("code=%d %s", code, stderr.String())
+	}
+	if code := Main([]string{"ingest", "--install-cursor-hook"}, bytes.NewReader(nil), &stdout, &stderr); code != 0 {
+		t.Fatal("the old flag still works")
+	}
+	if code := Main([]string{"ingest", "--uninstall", "cursor"}, bytes.NewReader(nil), &stdout, &stderr); code != 0 {
+		t.Fatalf("uninstall %s", stderr.String())
+	}
+	if code := Main([]string{"ingest", "--install", "vim"}, bytes.NewReader(nil), &stdout, &stderr); code != 1 {
+		t.Fatal("an unknown harness is an install error (exit 1, never 2)")
+	}
+}

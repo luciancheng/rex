@@ -55,7 +55,7 @@ Already have Go?
 
 ```bash
 go install github.com/luciancheng/rex/cmd/rex@latest
-rex ingest --install-cursor-hook
+rex ingest --install cursor
 rex start
 ```
 
@@ -64,7 +64,7 @@ rex start
 ```bash
 rex start                         # plans, then the live tape
 rex start --static                # print one frame and exit
-rex ingest --install-cursor-hook  # reinstall the Cursor watcher
+rex ingest --install cursor       # (re)wire Cursor; --uninstall cursor takes it out
 rex --help
 ```
 

@@ -35,8 +35,10 @@ var retiredCursorHookEvents = []string{"beforeShellExecution"}
 
 const cursorHookTimeout = 20
 
+var runtimeGOOS = runtime.GOOS
+
 func IngestCommand() string {
-	return ingestCommand("cursor", rexExecutable(), runtime.GOOS)
+	return ingestCommand("cursor", rexExecutable(), runtimeGOOS)
 }
 
 // ingestCommand is the shell command a hook runs. Cursor runs hooks through
@@ -92,6 +94,10 @@ func InstallCursorHook(stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	return installCursor(home, stdout)
+}
+
+func installCursor(home string, stdout io.Writer) error {
 	path := filepath.Join(home, ".cursor", "hooks.json")
 	command := IngestCommand()
 	changed, err := UpdateJSONFile(path, []byte("{\n  \"version\": 1,\n  \"hooks\": {}\n}\n"), func(d *jsonedit.Doc) ([]byte, error) {
@@ -211,6 +217,41 @@ func mergeHookList(e *editor, name string, ours map[string]any, want bool) error
 		return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Remove(hooks(d), name) })
 	}
 	return nil
+}
+
+// removeCursorHooks takes every Rex entry out of hooks.json and drops
+// event lists that become empty.
+func removeCursorHooks(d *jsonedit.Doc, command string) ([]byte, error) {
+	e := &editor{doc: d}
+	hooks := e.doc.Root().Member("hooks")
+	if e.doc.Root().Kind != '{' || hooks == nil || hooks.Kind != '{' {
+		return e.doc.Bytes(), nil
+	}
+	ours := map[string]any{"command": command, "timeout": cursorHookTimeout}
+	var names []string
+	for _, m := range hooks.Members {
+		names = append(names, m.Key)
+	}
+	for _, name := range names {
+		node := e.doc.Root().Member("hooks").Member(name)
+		if node == nil || node.Kind != '[' || !hasRexEntry(e.doc, node, command) {
+			continue // leave lists Rex has nothing in exactly as they are
+		}
+		if err := mergeHookList(e, name, ours, false); err != nil {
+			return nil, err
+		}
+	}
+	return e.doc.Bytes(), nil
+}
+
+func hasRexEntry(d *jsonedit.Doc, list *jsonedit.Node, command string) bool {
+	for _, el := range list.Elems {
+		var entry map[string]any
+		if d.Decode(el, &entry) == nil && isRexIngestCommand(fmt.Sprint(entry["command"]), command, "cursor") {
+			return true
+		}
+	}
+	return false
 }
 
 func sameJSON(a, b any) bool {

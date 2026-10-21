@@ -34,6 +34,7 @@ Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. 
 | README art | `assets/rex.png` (scaled idle) |
 | Importer | `cmd/importsprite` |
 | Tests | `*_test.go` next to the package |
+| UX spec | `docs/ux.md` (target CUJ, keys, friction register) |
 
 ## Mascot
 
@@ -66,6 +67,8 @@ New harness = adapter (+ installer). Do not special-case vendors in `live.go`.
 Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`.
 
 ## TUI
+
+The target loop, key map and screen states are in `docs/ux.md`. TUI changes cite the section they implement.
 
 - Left ~40 columns: mascot. Right: labeled log blocks (`thinking`, `run`, `ask`, `reply`). Commands yellow, replies bright, thoughts muted. Skip file-look commands and `done`/result echoes. Each assistant `text` event is its own reply block.
 - Chat header always shows turn state **and** the open plan as a repo-relative path (`thinking · rex/plans/foo.rex.json`).

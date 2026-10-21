@@ -86,9 +86,71 @@ CI: GitHub Actions, Ubuntu/macOS/Windows, Go 1.22 and 1.24.
 
 After sprite or TUI changes, restart a running `rex start`. Tests do not replace looking at the terminal.
 
+## Code conventions
+
+- Match the code around you. Comments are rare and say *why*. Names are short (`b` for a browser, `ev` for an event, `opt` for compose options).
+- Tests go in a `*_test.go` file in the same package. Use `t.TempDir()` for any repo, plans dir or feed file, and never touch the real `~` or `~/.rex`. Assert on rendered text with `viewText(BuildLogView(...))` / `viewText(BuildPlanView(...))`, and use `NO_COLOR`-style `Enabled: false` frames when you need plain text.
+- `LogLine.Kind` picks the color. It is looked up in `mascot.UI`, then in `kindColor`. A new UI role goes in `mascot.UI`, not in a new palette.
+- Pane width math uses `runeLen` / `clip` / `padRight`, never `len()`.
+- Vendor names live in `internal/watch` (adapters, installers), in the `rex ingest` flags, `--source` list and help in `internal/cli`, and in `scripts/install.*`. Adding a harness touches all three. The TUI paints event kinds and never branches on a vendor.
+- Keep stdout clean in `rex ingest`. Hooks treat stdout as agent input, and exit code 2 as "block".
+
+### Go 1.22 floor
+
+`go.mod` says `go 1.22` and CI runs Go 1.22. Code built with a newer toolchain can still break the 1.22 floor:
+
+- **The compiler** rejects newer language features, such as range-over-func, because `go.mod` sets `-lang`.
+- **`go vet`** on Go 1.23+ flags any standard-library API newer than `go.mod` through its `stdversion` check. `go test` runs that check only on the newest toolchains (not on 1.23 or 1.24), so always run `go vet` explicitly, with a new toolchain. Examples it catches:
+  - 1.23: `iter`, `maps.Keys/Values`, `slices.Collect/Sorted/Chunk`, `unique`
+  - 1.24: `os.Root`, `t.Chdir`, `t.Context`, `b.Loop`, `strings.Lines/SplitSeq/FieldsSeq`, `bytes.Lines`
+  - 1.25+: `testing/synctest`, `sync.WaitGroup.Go`, `t.Output`, `errors.AsType` (1.26), `encoding/json/v2` (1.27)
+- **Nothing catches struct-tag options.** `json:",omitzero"` (1.24) compiles on 1.22 and is ignored there, so the same code writes different JSON depending on the toolchain. Don't use it. Rex writes the feed and plan files as JSON.
+
+`min`/`max`, `clear`, range over an int, and the 1.21 `slices`/`maps` functions are fine.
+
+## Workflow
+
+- **Branches.** Branch from `dev`. When a change depends on unmerged work, stack it: cut the branch from the previous one and open the PR against it. Name branches after the issue: `feature/task_completion`, `fix/key_input`, `docs/ux_spec`.
+- **One branch, one issue.** Each branch closes exactly one issue. Work with no issue gets one first.
+- **PR body.** Include the problem, what changed, why it is needed, how it works, the tests run (with output), terminal captures for TUI changes, and any existing behavior or test that changed on purpose. Stacked PRs say what they sit on: merge them bottom-up and don't squash.
+- **Fixing a lower PR in a stack.** Add a commit to that branch, never amend. Then rebase everything above it and push each moved branch (`--update-refs` needs Git 2.38+):
+
+```bash
+git checkout <top-of-stack>
+git rebase --update-refs <fixed-branch>   # moves every branch in between too
+git push --force-with-lease origin <each moved branch>
+```
+
+- **Before opening a PR,** run the gate and a review pass. Save the gate as a script and run it with `bash gate.sh <base-branch>` (don't paste it into your login shell: it stops at the first failure):
+
+```bash
+set -euo pipefail
+base=${1:?usage: bash gate.sh <base-branch>}
+out=$(gofmt -l .); [ -z "$out" ] || { echo "gofmt needed: $out"; exit 1; }
+for os in darwin linux windows; do GOOS=$os go vet ./...; done
+# dev has two known staticcheck findings until #19; until then they report
+# without stopping the gate (#19 makes this step fatal again).
+staticcheck ./... || echo "staticcheck: findings above; only the two from $base may remain"
+go test -race ./...
+GOTOOLCHAIN=local go1.22.12 test ./...      # go install golang.org/dl/go1.22.12@latest && go1.22.12 download
+git diff --exit-code "$base" -- go.mod go.sum  # no new deps, no toolchain line
+echo "gate ok"
+```
+
+  staticcheck: `go install honnef.co/go/tools/cmd/staticcheck@2026.2.2`.
+
+- **Review pass.** Read-only reviewers, each with one job:
+  - critique the design and how it interacts with the system;
+  - drive the TUI in tmux on its own server (`tmux -L <name>`, never the default one), only when the UI changed;
+  - try to break it and check for regressions;
+  - lint and format;
+  - a final readiness check after fixes.
+
+  Fix each finding, or say in the PR why it was skipped.
+
 ## Definition of done
 
 - Follows this file and any PNG the human attached.
-- `go test ./...` passes.
+- The pre-PR gate in Workflow passes.
 - Terminal state restores on quit / Ctrl+C.
 - No speculative product, extra commands, or architecture for a feature that was not requested.

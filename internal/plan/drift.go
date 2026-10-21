@@ -49,7 +49,7 @@ func CheckEdit(p *Plan, pin *Task, rel string, fold bool) Drift {
 			return d
 		}
 	}
-	if w := outPath(p, pin, target); w != "" {
+	if w := outPath(p, pin, target, fold); w != "" {
 		d.Level, d.Reason = Hard, "touches "+w+", which is out of scope"
 		return d
 	}
@@ -248,7 +248,7 @@ func pathWords(rel string) []string {
 // path touches an entry when its segments hold all of the entry's words,
 // or the entry's last word, its head ("extra palettes" → palettes): a
 // path names one thing, and that is the thing an entry is about.
-func outPath(p *Plan, pin *Task, rel string) string {
+func outPath(p *Plan, pin *Task, rel string, fold bool) string {
 	have := map[string]bool{}
 	for _, s := range pathWords(rel) {
 		have[stem(strings.ToLower(s))] = true
@@ -256,7 +256,11 @@ func outPath(p *Plan, pin *Task, rel string) string {
 	for _, entry := range append(append([]string(nil), p.Scope.Out...), pin.Scope.Out...) {
 		entry = strings.TrimSpace(entry)
 		if strings.ContainsAny(entry, "/*") && !strings.Contains(entry, " ") {
-			if matchPath(strings.ToLower(entry), rel) {
+			pattern := entry
+			if fold {
+				pattern = strings.ToLower(pattern) // as rel already is
+			}
+			if matchPath(pattern, rel) {
 				return entry
 			}
 			continue

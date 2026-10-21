@@ -129,9 +129,12 @@ func (a *app) noteDrift(n driftNote) bool {
 	s := &a.drift
 	d := n.d
 	if d.Level == plan.OnPin {
+		if n.rel == "" {
+			return false // a prompt on the pin ("ok, continue") clears nothing
+		}
 		changed := s.soft != nil
-		s.soft = nil // back on the pin: the soft notice can go
-		if s.hard != nil && n.rel != "" && s.hard.rel == n.rel {
+		s.soft = nil // an edit back on the pin: the soft notice can go
+		if s.hard != nil && s.hard.rel == n.rel {
 			s.hard, changed = nil, true // the same file, now fine
 		}
 		return changed
@@ -148,16 +151,12 @@ func (a *app) noteDrift(n driftNote) bool {
 	s.items = append(s.items, d)
 	var rows []string
 	for _, it := range s.items {
-		rows = append(rows, fmt.Sprintf("%-4s  %s (%s)", it.Level, it.Subject, it.Reason))
+		rows = append(rows, fmt.Sprintf("%s %s (%s)", it.Level, it.Subject, it.Reason))
 	}
 	text := strings.Join(rows, "\n")
-	before := a.logLines()
-	defer func() {
-		if a.scroll > 0 {
-			a.scroll += max(0, a.logLines()-before) // a scrolled-up view stays put
-		}
-	}()
-	// One block per pin stint, updated where it first appeared.
+	// One block per pin stint, updated where it first appeared. A block
+	// above a scrolled-up view grows out of sight; one below it shifts the
+	// view by the rows it gains.
 	for i := len(a.log) - 1; i >= 0; i-- {
 		if e := &a.log[i]; e.Kind == "drift" && e.Meta["gen"] == s.gen {
 			e.Text = text
@@ -165,8 +164,12 @@ func (a *app) noteDrift(n driftNote) bool {
 			return true
 		}
 	}
+	before := a.logLines()
 	a.log = append(a.log, watch.NewEvent("rex", "drift", text, map[string]any{"gen": s.gen, "pin": s.pin}))
 	a.logRev++
+	if a.scroll > 0 {
+		a.scroll += max(0, a.logLines()-before) // a new block below a scrolled-up view keeps it put
+	}
 	return true
 }
 

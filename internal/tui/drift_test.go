@@ -38,6 +38,10 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 		!strings.Contains(view, "hard README.md (outside card-highlight files)") || !strings.Contains(view, "soft internal/tui/live_view.go (next to plans.go)") {
 		t.Fatalf("one block per pin, each path once:\n%s", view)
 	}
+	a.ingest([]watch.Event{at(c, 3500*time.Millisecond, watch.Event{Source: "claude", Kind: "user", Text: "ok continue"})})
+	if a.drift.soft == nil || !strings.HasPrefix(a.statusLine().Text, "drift · hard: README.md") {
+		t.Fatal("a short prompt on the pin clears nothing, the soft notice included")
+	}
 	a.ingest([]watch.Event{edit(a, c, 4*time.Second, "internal/tui/plans.go")})
 	if !strings.HasPrefix(a.statusLine().Text, "drift · hard: README.md") {
 		t.Fatal("an on-pin edit clears a soft notice, not a hard one")

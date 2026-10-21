@@ -142,6 +142,24 @@ func TestDriftMatchesWholeEntriesAndWords(t *testing.T) {
 	}
 }
 
+func TestScopeOutPathsFoldOnlyWhereTheFilesystemDoes(t *testing.T) {
+	p := mustParse(t, `{"scope": {"out": ["docs/ADR/**"]}, "tasks": [{"id": "a"}]}`)
+	pin := p.Task("a")
+	for _, c := range []struct {
+		rel   string
+		fold  bool
+		level DriftLevel
+	}{
+		{"docs/ADR/0001.md", false, Hard},
+		{"docs/adr/0001.md", false, OnPin}, // another folder on a case-sensitive disk
+		{"docs/adr/0001.md", true, Hard},
+	} {
+		if d := CheckEdit(p, pin, c.rel, c.fold); d.Level != c.level {
+			t.Errorf("%s fold=%v: %v %q", c.rel, c.fold, d.Level, d.Reason)
+		}
+	}
+}
+
 func TestDriftGlobsStayCheap(t *testing.T) {
 	p := mustParse(t, `{"tasks": [{"id": "a", "files": ["**/**/**/**/**/**/**/**/**/**/**/**/x/**/y/**/z"]}]}`)
 	done := make(chan struct{})

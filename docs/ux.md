@@ -426,8 +426,8 @@ If the pin lists no files, only the `scope.out` rule applies.
 
 ```
 ── drift · card-highlight ─────────────
-  hard  README.md (outside card-highlight files)
-  soft  internal/tui/live_view.go (next to live.go)
+  hard README.md (outside card-highlight files)
+  soft internal/tui/live_view.go (next to live.go)
 ```
 
 - Each path or prompt is listed once per pin.

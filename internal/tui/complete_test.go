@@ -31,7 +31,8 @@ func workEvents(a *app, c *clock) []watch.Event {
 func TestGatherEvidence(t *testing.T) {
 	a, c, _ := openDemo(t, demoPlan, 120, 32)
 	evs := append([]watch.Event{at(c, -time.Hour, watch.Event{Source: "claude", Kind: "result", Text: "wrote old.go", Meta: map[string]any{"tool": "Write", "path": filepath.Join(a.plans.Repo, "old.go")}})}, workEvents(a, c)...)
-	evs = append(evs, at(c, 6*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote /elsewhere/x.go", Meta: map[string]any{"tool": "Write", "path": "/elsewhere/x.go"}}))
+	elsewhere := filepath.Join(t.TempDir(), "x.go") // absolute on every OS, outside the repo
+	evs = append(evs, at(c, 6*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + elsewhere, Meta: map[string]any{"tool": "Write", "path": elsewhere}}))
 	ev := gather(evs, a.scope, c.t, "", "card-highlight", nil)
 	if strings.Join(ev.files, ",") != "internal/tui/plans.go" {
 		t.Fatalf("only this repo's edits since the pin, never rex/plans: %q", ev.files)

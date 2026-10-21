@@ -1,10 +1,15 @@
 package watch
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 func TestCursorUserPrompt(t *testing.T) {
@@ -239,22 +244,118 @@ func TestEventTailKeepsIncompleteLine(t *testing.T) {
 	}
 }
 
-func TestAppendReplacesGrowingReply(t *testing.T) {
+func TestAppendKeepsGrowingReplyAppendOnly(t *testing.T) {
 	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	tail := NewEventTail(feed, false)
 	if _, err := AppendEvent(feed, NewEvent("cursor", "text", "Typing now means", nil)); err != nil {
 		t.Fatal(err)
 	}
+	first := tail.Poll()
 	ok, err := AppendEvent(feed, NewEvent("cursor", "text", "Typing now means the agent is writing.", nil))
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
+	second := tail.Poll()
 	data, _ := os.ReadFile(feed)
-	lines := nonempty(string(data))
-	if len(lines) != 1 {
-		t.Fatalf("lines=%d %s", len(lines), data)
+	if lines := nonempty(string(data)); len(lines) != 2 {
+		t.Fatalf("want both lines kept, got %d: %s", len(lines), data)
 	}
-	if !strings.Contains(lines[0], "the agent is writing") {
-		t.Fatalf("%s", lines[0])
+	if len(first) != 1 || len(second) != 1 || !strings.Contains(second[0].Text, "the agent is writing") {
+		t.Fatalf("tail lost the growing reply: %#v %#v", first, second)
+	}
+	if !IsGrowingText(first[0], second[0]) {
+		t.Fatal("second line should read as a growing reply")
+	}
+}
+
+func TestLastEventsReadsAWindowFromTheEnd(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	filler := strings.Repeat("x", 1000)
+	f, err := os.Create(feed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		line, _ := NewEvent("cursor", "thought", fmt.Sprintf("%d %s", i, filler), nil).ToJSON()
+		f.WriteString(line + "\n")
+	}
+	f.Close()
+	if n := len(readTail(feed, tailBytes)); n > tailBytes+1 {
+		t.Fatalf("read %d bytes of a %d-byte window", n, tailBytes)
+	}
+	got := LastEvents(feed, 3)
+	if len(got) != 3 || !strings.HasPrefix(got[2].Text, "199 ") || !strings.HasPrefix(got[0].Text, "197 ") {
+		t.Fatalf("%d events: %+v", len(got), got)
+	}
+}
+
+func TestAppendCapsHugeText(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	huge := strings.Repeat("é", maxEventText)
+	if _, err := AppendEvent(feed, NewEvent("cursor", "text", huge, nil)); err != nil {
+		t.Fatal(err)
+	}
+	got := LastEvents(feed, 1)
+	if len(got) != 1 {
+		t.Fatal("capped event should still fit the tail window")
+	}
+	if len(got[0].Text) > maxEventText+len("…") || !utf8.ValidString(got[0].Text) || !strings.HasSuffix(got[0].Text, "…") {
+		t.Fatalf("len=%d", len(got[0].Text))
+	}
+}
+
+func TestFeedIsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	dir := filepath.Join(t.TempDir(), "rex")
+	feed := filepath.Join(dir, "session.jsonl")
+	if _, err := AppendEvent(feed, NewEvent("cursor", "user", "secret prompt", nil)); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{dir: 0o700, feed: 0o600} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
+			t.Fatalf("%s mode %o, want %o", path, info.Mode().Perm(), want)
+		}
+	}
+}
+
+func TestPayloadsFromRawStripsBOM(t *testing.T) {
+	got := PayloadsFromRaw("\uFEFF{\"hook_event_name\":\"beforeSubmitPrompt\",\"prompt\":\"hi\"}")
+	if len(got) != 1 || got[0]["prompt"] != "hi" {
+		t.Fatalf("%#v", got)
+	}
+}
+
+func TestReadPayloadDoesNotWaitForEOF(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	go w.Write([]byte(`{"hook_event_name":"stop"}`))
+	start := time.Now()
+	got := readPayload(r, 5*time.Second)
+	if string(got) != `{"hook_event_name":"stop"}` {
+		t.Fatalf("%q", got)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("waited %v for a stdin that never closed", elapsed)
+	}
+}
+
+func TestReadPayloadGivesUpAtDeadline(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	go w.Write([]byte(`{"hook_event_name":`))
+	start := time.Now()
+	got := readPayload(r, 150*time.Millisecond)
+	if string(got) != `{"hook_event_name":` {
+		t.Fatalf("%q", got)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("deadline ignored: %v", elapsed)
 	}
 }
 
@@ -385,4 +486,88 @@ func splitLines(s string) []string {
 		lines = append(lines, s[start:])
 	}
 	return lines
+}
+
+func TestEventTailDropsPartialLineAfterTruncate(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"aaaaaaaaaaaaaaaaaaaaaaaa"}`+"\n"+`{"source":"cursor","kind":"user","te`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tail := NewEventTail(feed, false)
+	if got := tail.Poll(); len(got) != 1 {
+		t.Fatalf("first poll %#v", got)
+	}
+	if err := os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"b"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := tail.Poll()
+	if len(got) != 1 || got[0].Text != "b" {
+		t.Fatalf("event after truncation lost: %#v", got)
+	}
+}
+
+func TestLastEventsKeepsALineStartingExactlyAtTheWindow(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	first, _ := NewEvent("cursor", "user", "first", nil).ToJSON()
+	filler, _ := NewEvent("cursor", "thought", strings.Repeat("x", 100), nil).ToJSON()
+	window := first + "\n"
+	for len(window)+len(filler)+1 <= tailBytes {
+		window += filler + "\n"
+	}
+	window += strings.Repeat("q", tailBytes-len(window)-1) + "\n" // a junk line pads to exactly tailBytes
+	if len(window) != tailBytes {
+		t.Fatalf("setup: window is %d bytes", len(window))
+	}
+	content := `{"source":"cursor","kind":"user","text":"before"}` + "\n" + window
+	if err := os.WriteFile(feed, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := LastEvents(feed, 10000)
+	if len(got) == 0 {
+		t.Fatal("no events read")
+	}
+	if got[0].Text != "first" {
+		t.Fatalf("the line starting exactly at the window was dropped: first=%q", got[0].Text)
+	}
+}
+
+func TestFeedPermissionsTightenOnOldInstalls(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".rex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	feed := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(feed, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AppendEvent(feed, NewEvent("cursor", "user", "private", nil)); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{dir: 0o700, feed: 0o600} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
+			t.Fatalf("%s mode %o, want %o", path, info.Mode().Perm(), want)
+		}
+	}
+}
+
+func TestEventTailDropsPartialLineAfterDeleteAndRecreate(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"a"}`+"\n"+`{"source":"cursor","kind":"us`), 0o600)
+	tail := NewEventTail(feed, false)
+	tail.Poll()
+	os.Remove(feed)
+	tail.Poll()
+	os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"b"}`+"\n"), 0o600)
+	if got := tail.Poll(); len(got) != 1 || got[0].Text != "b" {
+		t.Fatalf("%#v", got)
+	}
 }

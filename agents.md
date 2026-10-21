@@ -60,7 +60,9 @@ Unix live mode is cbreak (ECHO/ICANON/ISIG off) and **must keep OPOST**. Do not 
 
 ## Watch feed
 
-Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`. Adapters map vendor JSON to `watch.Event`; `AppendEvent` dedupes; `NewEventTail(path, true)` paints new lines. Visible assistant replies come from `afterAgentResponse`, which Cursor currently fires with the **final** message of the turn. In-between chat lines are not on any hook — do not scrape transcripts to invent them. Thoughts still arrive via `afterAgentThought`. Do not map `stop` as text.
+Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`. Adapters map vendor JSON to `watch.Event`; `AppendEvent` dedupes and only ever appends (a growing reply is a new line; `ExtendLog` merges it); `NewEventTail(path, true)` paints new lines.
+
+`rex ingest` runs inside agent hooks: run from a hook it **always exits 0 and never writes stdout** (harnesses read exit 2 as "block" and some feed stdout to the agent); only `-h`, `--version` and the interactive `--install*` flags print. An unknown top-level command exits 1, never 2. Stdin reads and the feed lock are time-bounded. The feed is private (file 0600, `~/.rex` 0700, tightened on old installs). Keep it that way. Visible assistant replies come from `afterAgentResponse`, which Cursor currently fires with the **final** message of the turn. In-between chat lines are not on any hook — do not scrape transcripts to invent them. Thoughts still arrive via `afterAgentThought`. Do not map `stop` as text.
 
 New harness = adapter (+ installer). Do not special-case vendors in `live.go`.
 

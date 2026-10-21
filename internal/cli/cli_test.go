@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -64,10 +65,10 @@ func TestStartNoninteractivePrintsCard(t *testing.T) {
 	}
 }
 
-func TestUnknownCommandIsError(t *testing.T) {
+func TestUnknownCommandIsErrorButNotBlock(t *testing.T) {
 	var stderr bytes.Buffer
 	code := Main([]string{"demo"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
-	if code != 2 {
+	if code != 1 { // 2 would read as "block" to an agent hook
 		t.Fatalf("code=%d", code)
 	}
 }
@@ -238,5 +239,63 @@ func TestIngestCLIAppends(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(lines) != 1 || !strings.Contains(lines[0], "from the hook") {
 		t.Fatalf("unexpected feed: %s", data)
+	}
+}
+
+func TestIngestFailsOpenOnBadFlagsAndSource(t *testing.T) {
+	feed := t.TempDir() + "/session.jsonl"
+	payload := `{"hook_event_name":"beforeSubmitPrompt","prompt":"still recorded"}`
+	for _, args := range [][]string{
+		{"ingest", "--no-such-flag"},
+		{"ingest", "--source", "opencode-next", "--events", feed},
+		{"ingest", "--source"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := Main(args, bytes.NewBufferString(payload), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exited %d; hooks read 2 as block", args, code)
+		}
+		if stdout.Len() != 0 {
+			t.Fatalf("%v wrote stdout %q; hooks feed stdout to the agent", args, stdout.String())
+		}
+	}
+	data, err := os.ReadFile(feed)
+	if err != nil || !strings.Contains(string(data), "still recorded") {
+		t.Fatalf("unknown source should still ingest as auto: %v %s", err, data)
+	}
+}
+
+func TestIngestSwallowsACrash(t *testing.T) {
+	defer func(old func(io.Reader, string, string) error) { ingestFn = old }(ingestFn)
+	ingestFn = func(io.Reader, string, string) error { panic("boom") }
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"ingest", "--source", "cursor"}, strings.NewReader("{}"), &stdout, &stderr); code != 0 || stdout.Len() != 0 {
+		t.Fatalf("a panic must still exit 0 with no stdout: %d %q", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "rex: ingest crashed: boom") {
+		t.Fatalf("stderr %q", stderr.String())
+	}
+}
+
+func TestIngestNeverWritesStdout(t *testing.T) {
+	feed := t.TempDir() + "/session.jsonl"
+	var stdout bytes.Buffer
+	stdin := bytes.NewBufferString(`not json at all`)
+	if code := Main([]string{"ingest", "--events", feed}, stdin, &stdout, &bytes.Buffer{}); code != 0 || stdout.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q", code, stdout.String())
+	}
+}
+
+// A feed that can't be written is reported on stderr; the hook still exits
+// 0 with nothing on stdout.
+func TestIngestReportsAnUnwritableFeed(t *testing.T) {
+	dir := t.TempDir()
+	blocker := dir + "/not-a-dir"
+	os.WriteFile(blocker, []byte("x"), 0o600)
+	var stdout, stderr bytes.Buffer
+	payload := `{"hook_event_name":"beforeSubmitPrompt","prompt":"hi"}`
+	code := Main([]string{"ingest", "--source", "cursor", "--events", blocker + "/feed.jsonl"}, strings.NewReader(payload), &stdout, &stderr)
+	if code != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "rex: ") {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
 	}
 }

@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var CursorHookEvents = []string{
@@ -147,7 +149,8 @@ func toList(v any) []any {
 }
 
 func PayloadsFromRaw(raw string) []map[string]any {
-	stripped := strings.TrimSpace(raw)
+	// Cursor on Windows prefixes stdin with a UTF-8 BOM.
+	stripped := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "\uFEFF"))
 	if stripped == "" {
 		return nil
 	}
@@ -182,33 +185,107 @@ func PayloadsFromRaw(raw string) []map[string]any {
 }
 
 func IngestRaw(raw, source, path string) []Event {
+	written, _ := ingest(raw, source, path)
+	return written
+}
+
+// ingest is IngestRaw that also returns the first write error, so a hook
+// can report it on stderr. It keeps going after an error.
+func ingest(raw, source, path string) ([]Event, error) {
 	var written []Event
+	var first error
 	for _, payload := range PayloadsFromRaw(raw) {
 		event := MapPayload(payload, source)
 		if event == nil || strings.TrimSpace(event.Text) == "" {
 			continue
 		}
 		ok, err := AppendEvent(path, *event)
+		if err != nil && first == nil {
+			first = err
+		}
 		if err != nil || !ok {
 			continue
 		}
 		written = append(written, *event)
 	}
-	return written
+	return written, first
 }
 
-func RunIngest(stdin io.Reader, stdout io.Writer, source string, installCursorHook bool, eventsPath string) error {
-	if installCursorHook {
-		return InstallCursorHook(stdout)
-	}
+// RunIngest maps one hook payload from stdin into the feed. It runs inside
+// agent hooks, so it must never block or fail the agent: the caller exits 0
+// whatever happens here, and nothing is written to stdout.
+func RunIngest(stdin io.Reader, source string, eventsPath string) error {
 	path := eventsPath
 	if path == "" {
 		path = DefaultEventPath()
 	}
-	raw, err := io.ReadAll(stdin)
-	if err != nil {
-		return err
+	_, err := ingest(string(readPayload(stdin, stdinWait)), source, path)
+	return err
+}
+
+const (
+	stdinLimit = 16 << 20
+	stdinWait  = 2 * time.Second
+	stdinIdle  = 50 * time.Millisecond
+)
+
+// readPayload reads a hook payload without trusting the harness to close
+// stdin. It returns at EOF, shortly after a complete JSON value has
+// arrived, or after wait, whichever comes first.
+func readPayload(r io.Reader, wait time.Duration) []byte {
+	chunks := make(chan []byte)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer close(chunks)
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				select {
+				case chunks <- append([]byte(nil), buf[:n]...):
+				case <-done:
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	var data []byte
+	var idle <-chan time.Time
+	for {
+		select {
+		case chunk, ok := <-chunks:
+			if !ok {
+				return data
+			}
+			data = append(data, chunk...)
+			if len(data) >= stdinLimit {
+				return data[:stdinLimit]
+			}
+			idle = nil
+			if completeJSON(data) {
+				idle = time.After(stdinIdle)
+			}
+		case <-idle:
+			return data
+		case <-deadline.C:
+			return data
+		}
 	}
-	IngestRaw(string(raw), source, path)
-	return nil
+}
+
+func completeJSON(data []byte) bool {
+	trimmed := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(data), []byte("\uFEFF")))
+	if len(trimmed) == 0 {
+		return false
+	}
+	if last := trimmed[len(trimmed)-1]; last != '}' && last != ']' {
+		return false
+	}
+	return json.Valid(trimmed)
 }

@@ -348,3 +348,19 @@ func findRoot(t *testing.T) string {
 	t.Fatal("no go.mod")
 	return ""
 }
+
+func TestAppendOnlyFeedShowsOneGrowingReply(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	tail := watch.NewEventTail(feed, false)
+	var log []watch.Event
+	for _, text := range []string{"The bar", "The bar now spans", "The bar now spans all three rows."} {
+		if _, err := watch.AppendEvent(feed, watch.NewEvent("cursor", "text", text, nil)); err != nil {
+			t.Fatal(err)
+		}
+		ExtendLog(&log, tail.Poll())
+	}
+	view := viewText(BuildLogView(log, 48))
+	if strings.Count(view, "── reply") != 1 || !strings.Contains(view, "all three rows") {
+		t.Fatalf("want one merged reply\n%s", view)
+	}
+}

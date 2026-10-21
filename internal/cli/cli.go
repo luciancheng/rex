@@ -42,7 +42,7 @@ options:
   --events EVENTS  JSONL event feed (default: ~/.rex/session.jsonl)
 `
 
-const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex}] [--events EVENTS]
+const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex,opencode}] [--events EVENTS]
        rex ingest --install HARNESS | --uninstall HARNESS [--project]
 
 append an agent event to the watch feed
@@ -54,10 +54,10 @@ print to stdout.
 
 options:
   -h, --help              show this help message and exit
-  --source {auto,cursor,claude,codex}
+  --source {auto,cursor,claude,codex,opencode}
                           payload dialect (default: auto)
   --install HARNESS       wire an agent so it writes the feed: cursor, claude,
-                          codex, or auto for every one found on this machine
+                          codex, opencode, or auto for every one found here
   --project               with claude: wire only this git repo
                           (.claude/settings.local.json, kept out of git)
   --uninstall HARNESS     take Rex's hook back out of that agent's config
@@ -223,7 +223,7 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	switch *source {
-	case "auto", "cursor", "claude", "codex":
+	case "auto", "cursor", "claude", "codex", "opencode":
 	default:
 		fmt.Fprintf(stderr, "rex: invalid source '%s', reading as auto\n", *source)
 		*source = "auto"

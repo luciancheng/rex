@@ -25,7 +25,7 @@ REX is a watch-only sidecar. It does not run tools, approve them, or steer the a
 
 Plans live in the repo at `rex/plans/` as JSON named `<name>.rex.json`. Commit that folder; teammates open the same plan from git. A plan is a goal, hard scope edges, and a flat list of PR-sized tasks, with `parent` for outline and `depends_on` for order ([format v1](docs/plan-format.md)). New plans start as an empty v1 stub for your agent to fill.
 
-The install script wires Cursor. Claude Code is one opt-in command away (`rex ingest --install claude`, or add `--project` to wire just this repo). Codex too: `rex ingest --install codex`, then trust the hooks once in Codex's `/hooks`. Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once — after that it works from any folder.
+The install script wires Cursor. Claude Code is one opt-in command away (`rex ingest --install claude`, or add `--project` to wire just this repo). Codex too: `rex ingest --install codex`, then trust the hooks once in Codex's `/hooks`. OpenCode: `rex ingest --install opencode`. Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once — after that it works from any folder.
 
 ## Send off a project
 
@@ -68,6 +68,7 @@ rex ingest --install cursor       # (re)wire Cursor; --uninstall cursor takes it
 rex ingest --install claude       # wire Claude Code (~/.claude/settings.json, or $CLAUDE_CONFIG_DIR)
 rex ingest --install claude --project   # this repo only, git-excluded
 rex ingest --install codex        # wire Codex ($CODEX_HOME/hooks.json), then /hooks → trust
+rex ingest --install opencode     # an OpenCode plugin (~/.config/opencode/plugins/rex.js, or $XDG_CONFIG_HOME)
 rex --help
 ```
 

@@ -428,3 +428,19 @@ func TestNewFolderShowsWhereItGoes(t *testing.T) {
 		t.Fatalf("%s", v)
 	}
 }
+
+func TestOpenPlanHintNeverDangles(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, "rex", "plans")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "a.rex.json"), []byte("not json"), 0o644)
+	b := NewPlanBrowser(repo)
+	b.Current = filepath.Join(root, "a.rex.json")
+	b.Screen, b.Dir, b.fresh = ScreenBrowse, root, true
+	b.Rebuild()
+	for _, row := range b.Rows {
+		if row.Path == b.Current && row.Hint != "open" {
+			t.Fatalf("hint %q", row.Hint)
+		}
+	}
+}

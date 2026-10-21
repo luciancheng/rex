@@ -684,18 +684,14 @@ func (b *PlanBrowser) addHints() {
 			if hint := b.progressHint(row.Path); hint != "" {
 				row.Hint = strings.TrimSpace(row.Hint + " · " + hint)
 			}
-		case PlanRowRecent:
-			row.Hint = b.progressHint(row.Path)
+		case PlanRowPlan, PlanRowRecent:
+			// Find results and Browse rows read like recents: progress, and
+			// "open" on the plan that is open.
+			hint := b.progressHint(row.Path)
 			if row.Path == b.Current {
-				row.Hint = strings.TrimSuffix(strings.TrimSpace("open · "+row.Hint), " ·")
+				hint = strings.TrimSuffix("open · "+hint, " · ")
 			}
-		case PlanRowPlan:
-			if b.Screen == ScreenHome && b.Find != "" {
-				row.Hint = b.progressHint(row.Path) // a find result reads like a recent
-			}
-			if row.Path == b.Current {
-				row.Hint = strings.TrimSpace("open · " + row.Hint)
-			}
+			row.Hint = hint
 		}
 	}
 }

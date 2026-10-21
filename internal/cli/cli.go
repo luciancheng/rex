@@ -46,6 +46,9 @@ const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex}]
 
 append an agent event to the watch feed
 
+ingest always exits 0 and never writes stdout, so a hook cannot block or
+steer the agent. Problems go to stderr.
+
 options:
   -h, --help              show this help message and exit
   --source {auto,cursor,claude,codex}
@@ -138,6 +141,9 @@ func runStart(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return code
 }
 
+// runIngest exits 0 for anything that is not an install. Agent harnesses
+// read exit code 2 as "block" and some add stdout to the agent's context,
+// so a bad flag or source in a hook must fail open and stay silent.
 func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -145,17 +151,23 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	install := fs.Bool("install-cursor-hook", false, "install ~/.cursor/hooks.json")
 	events := fs.String("events", "", "JSONL event feed")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return 0
+	}
+	if *install {
+		if err := watch.InstallCursorHook(stdout); err != nil {
+			fmt.Fprintf(stderr, "rex: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 	switch *source {
 	case "auto", "cursor", "claude", "codex":
 	default:
-		fmt.Fprintf(stderr, "rex: invalid source '%s'\n", *source)
-		return 2
+		fmt.Fprintf(stderr, "rex: invalid source '%s', reading as auto\n", *source)
+		*source = "auto"
 	}
-	if err := watch.RunIngest(stdin, stdout, *source, *install, *events); err != nil {
+	if err := watch.RunIngest(stdin, io.Discard, *source, false, *events); err != nil {
 		fmt.Fprintf(stderr, "rex: %v\n", err)
-		return 1
 	}
 	return 0
 }

@@ -240,3 +240,35 @@ func TestIngestCLIAppends(t *testing.T) {
 		t.Fatalf("unexpected feed: %s", data)
 	}
 }
+
+func TestIngestFailsOpenOnBadFlagsAndSource(t *testing.T) {
+	feed := t.TempDir() + "/session.jsonl"
+	payload := `{"hook_event_name":"beforeSubmitPrompt","prompt":"still recorded"}`
+	for _, args := range [][]string{
+		{"ingest", "--no-such-flag"},
+		{"ingest", "--source", "opencode-next", "--events", feed},
+		{"ingest", "--source"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := Main(args, bytes.NewBufferString(payload), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exited %d; hooks read 2 as block", args, code)
+		}
+		if stdout.Len() != 0 {
+			t.Fatalf("%v wrote stdout %q; hooks feed stdout to the agent", args, stdout.String())
+		}
+	}
+	data, err := os.ReadFile(feed)
+	if err != nil || !strings.Contains(string(data), "still recorded") {
+		t.Fatalf("unknown source should still ingest as auto: %v %s", err, data)
+	}
+}
+
+func TestIngestNeverWritesStdout(t *testing.T) {
+	feed := t.TempDir() + "/session.jsonl"
+	var stdout bytes.Buffer
+	stdin := bytes.NewBufferString(`not json at all`)
+	if code := Main([]string{"ingest", "--events", feed}, stdin, &stdout, &bytes.Buffer{}); code != 0 || stdout.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q", code, stdout.String())
+	}
+}

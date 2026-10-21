@@ -1,10 +1,15 @@
 package watch
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 func TestCursorUserPrompt(t *testing.T) {
@@ -239,22 +244,115 @@ func TestEventTailKeepsIncompleteLine(t *testing.T) {
 	}
 }
 
-func TestAppendReplacesGrowingReply(t *testing.T) {
+func TestAppendKeepsGrowingReplyAppendOnly(t *testing.T) {
 	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	tail := NewEventTail(feed, false)
 	if _, err := AppendEvent(feed, NewEvent("cursor", "text", "Typing now means", nil)); err != nil {
 		t.Fatal(err)
 	}
+	first := tail.Poll()
 	ok, err := AppendEvent(feed, NewEvent("cursor", "text", "Typing now means the agent is writing.", nil))
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
+	second := tail.Poll()
 	data, _ := os.ReadFile(feed)
-	lines := nonempty(string(data))
-	if len(lines) != 1 {
-		t.Fatalf("lines=%d %s", len(lines), data)
+	if lines := nonempty(string(data)); len(lines) != 2 {
+		t.Fatalf("want both lines kept, got %d: %s", len(lines), data)
 	}
-	if !strings.Contains(lines[0], "the agent is writing") {
-		t.Fatalf("%s", lines[0])
+	if len(first) != 1 || len(second) != 1 || !strings.Contains(second[0].Text, "the agent is writing") {
+		t.Fatalf("tail lost the growing reply: %#v %#v", first, second)
+	}
+	if !IsGrowingText(first[0], second[0]) {
+		t.Fatal("second line should read as a growing reply")
+	}
+}
+
+func TestLastEventsReadsOnlyTheTail(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	filler := strings.Repeat("x", 1000)
+	f, err := os.Create(feed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		line, _ := NewEvent("cursor", "thought", fmt.Sprintf("%d %s", i, filler), nil).ToJSON()
+		f.WriteString(line + "\n")
+	}
+	f.Close()
+	got := LastEvents(feed, 3)
+	if len(got) != 3 || !strings.HasPrefix(got[2].Text, "199 ") || !strings.HasPrefix(got[0].Text, "197 ") {
+		t.Fatalf("%d events, last %q", len(got), got[len(got)-1].Text[:8])
+	}
+}
+
+func TestAppendCapsHugeText(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	huge := strings.Repeat("é", maxEventText)
+	if _, err := AppendEvent(feed, NewEvent("cursor", "text", huge, nil)); err != nil {
+		t.Fatal(err)
+	}
+	got := LastEvents(feed, 1)
+	if len(got) != 1 {
+		t.Fatal("capped event should still fit the tail window")
+	}
+	if len(got[0].Text) > maxEventText+len("…") || !utf8.ValidString(got[0].Text) || !strings.HasSuffix(got[0].Text, "…") {
+		t.Fatalf("len=%d", len(got[0].Text))
+	}
+}
+
+func TestFeedIsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	dir := filepath.Join(t.TempDir(), "rex")
+	feed := filepath.Join(dir, "session.jsonl")
+	if _, err := AppendEvent(feed, NewEvent("cursor", "user", "secret prompt", nil)); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{dir: 0o700, feed: 0o600} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
+			t.Fatalf("%s mode %o, want %o", path, info.Mode().Perm(), want)
+		}
+	}
+}
+
+func TestPayloadsFromRawStripsBOM(t *testing.T) {
+	got := PayloadsFromRaw("\uFEFF{\"hook_event_name\":\"beforeSubmitPrompt\",\"prompt\":\"hi\"}")
+	if len(got) != 1 || got[0]["prompt"] != "hi" {
+		t.Fatalf("%#v", got)
+	}
+}
+
+func TestReadPayloadDoesNotWaitForEOF(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	go w.Write([]byte(`{"hook_event_name":"stop"}`))
+	start := time.Now()
+	got := readPayload(r, 5*time.Second)
+	if string(got) != `{"hook_event_name":"stop"}` {
+		t.Fatalf("%q", got)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("waited %v for a stdin that never closed", elapsed)
+	}
+}
+
+func TestReadPayloadGivesUpAtDeadline(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	go w.Write([]byte(`{"hook_event_name":`))
+	start := time.Now()
+	got := readPayload(r, 150*time.Millisecond)
+	if string(got) != `{"hook_event_name":` {
+		t.Fatalf("%q", got)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("deadline ignored: %v", elapsed)
 	}
 }
 

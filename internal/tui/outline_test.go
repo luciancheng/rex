@@ -538,4 +538,9 @@ func TestNarrowRuleKeepsProgress(t *testing.T) {
 	if !strings.Contains(rule, "── A very") || !strings.Contains(rule, "· active · 1/3") {
 		t.Fatalf("%q", rule)
 	}
+	// a tab is painted as spaces, so it is measured as spaces
+	a, _, _ = openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Tabs\t\t\t\tin a long title"`, 1), 80, 24)
+	if rule := a.frameRows().Rows[2]; !strings.Contains(rule, "── Tabs") || !strings.Contains(rule, "· active · 1/3") {
+		t.Fatalf("%q", rule)
+	}
 }

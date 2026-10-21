@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/luciancheng/rex/internal/plan"
+	"github.com/luciancheng/rex/internal/watch"
 )
 
 // planDoc is the open plan file: the last good read, and what is on disk
@@ -364,7 +365,9 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 	g := p.Graph()
 	pin := g.Pin()
 	done, total := g.Progress()
-	title, tail := planTitle(p, d.path), " · "+string(p.Status)+" · "+fmt.Sprintf("%d/%d", done, total)
+	// measured as rule() paints it, so a tab or newline can't push out the tail
+	title = strings.ReplaceAll(watch.CleanText(planTitle(p, d.path)), "\n", " ")
+	tail := " · " + string(p.Status) + " · " + fmt.Sprintf("%d/%d", done, total)
 	// fit is the rule's label for room cells: when it is narrow, the title
 	// is cut and the status and progress stay.
 	fit := func(room int) string {

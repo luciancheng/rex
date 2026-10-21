@@ -153,15 +153,34 @@ func TestIngestCommandQuoting(t *testing.T) {
 		{"/Users/me/.local/bin/rex", "darwin", "'/Users/me/.local/bin/rex' ingest --source cursor"},
 		{"/home/o'brien/$HOME/rex", "linux", `'/home/o'\''brien/$HOME/rex' ingest --source cursor`},
 		{`C:\Users\me\.local\bin\rex.exe`, "windows", "C:/Users/me/.local/bin/rex.exe ingest --source cursor"},
-		{`C:\Users\Jane Doe\bin\rex.exe`, "windows", `"C:/Users/Jane Doe/bin/rex.exe" ingest --source cursor`},
+		{`C:\Users\Jane Doe\bin\rex.exe`, "windows", `& "C:/Users/Jane Doe/bin/rex.exe" ingest --source cursor`},
+		{`C:\Users\O'Neil\rex.exe`, "windows", `& "C:/Users/O'Neil/rex.exe" ingest --source cursor`},
 	}
 	for _, c := range cases {
 		if got := ingestCommand("cursor", c.exe, c.goos); got != c.want {
 			t.Fatalf("%s/%s: %q want %q", c.goos, c.exe, got, c.want)
 		}
 	}
-	if !isRexIngestCommand(`"/old/rex" ingest --source cursor`, "cursor") || !isRexIngestCommand(`'/new/rex' ingest --source cursor`, "cursor") {
-		t.Fatal("must recognise old and new rex commands")
+	ours := "'/new/rex' ingest --source cursor"
+	for _, cmd := range []string{
+		`"/old/rex" ingest --source cursor`, `'/new/rex' ingest --source cursor`, `/usr/local/bin/rex ingest --source cursor`,
+		`& "C:/Users/Jane Doe/bin/rex.exe" ingest --source cursor`, `C:/bin/rex.exe ingest --source cursor`,
+		`'/home/o'\''brien/rex' ingest --source cursor`,
+	} {
+		if !isRexIngestCommand(cmd, ours, "cursor") {
+			t.Errorf("should recognise %q", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		`rex ingest --source cursor && say done`, `/opt/myrex ingest --source cursor`,
+		`/bin/rex ingest --source claude`, `./guard.sh`, `bash -c "rex ingest --source cursor"`,
+	} {
+		if isRexIngestCommand(cmd, ours, "cursor") {
+			t.Errorf("must not delete the user's %q", cmd)
+		}
+	}
+	if !isRexIngestCommand("/tmp/x/rexbin ingest --source cursor", "/tmp/x/rexbin ingest --source cursor", "cursor") {
+		t.Fatal("our exact command always matches, whatever the binary is called")
 	}
 }
 
@@ -177,5 +196,132 @@ func TestUpdateJSONFileRefusesConcurrentWrite(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(path); string(data) != `{"a": 1, "b": "someone else"}` {
 		t.Fatalf("clobbered the other writer: %s", data)
+	}
+}
+
+func TestReinstallIsIdempotentWhateverTheBinaryIsCalled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	cmd := "'/opt/tools/REXBIN' ingest --source cursor"
+	install := func() []byte {
+		if _, err := UpdateJSONFile(path, []byte("{}"), func(d *jsonedit.Doc) ([]byte, error) { return mergeCursorHooks(d, cmd) }); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(path)
+		return data
+	}
+	first := install()
+	if second := install(); !bytes.Equal(first, second) {
+		t.Fatalf("second install changed the file:\n%s\n---\n%s", first, second)
+	}
+	if bytes.Count(first, []byte("REXBIN")) != len(CursorHookEvents) {
+		t.Fatalf("one entry per event:\n%s", first)
+	}
+}
+
+func TestInstallKeepsUserFieldsAndForeignCommands(t *testing.T) {
+	home := cursorHome(t)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	cmd := IngestCommand()
+	theirs := `{"version":1,"hooks":{"stop":[{"command":` + strconvQuote(cmd) + `,"timeout":5,"matcher":"Stop"},{"command":"rex ingest --source cursor && say done"}]}}`
+	os.WriteFile(path, []byte(theirs), 0o644)
+	if err := InstallCursorHook(io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	got := readHooks(t, path)
+	stop := got["hooks"].(map[string]any)["stop"].([]any)
+	if len(stop) != 2 {
+		t.Fatalf("%#v", stop)
+	}
+	mine := stop[0].(map[string]any)
+	if mine["matcher"] != "Stop" || mine["timeout"] != float64(cursorHookTimeout) {
+		t.Fatalf("user field dropped or timeout not set: %#v", mine)
+	}
+	if stop[1].(map[string]any)["command"] != "rex ingest --source cursor && say done" {
+		t.Fatal("a compound user command must be kept")
+	}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func TestFreshInstallIsReadable(t *testing.T) {
+	home := cursorHome(t)
+	if err := InstallCursorHook(io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, ".cursor", "hooks.json"))
+	for _, line := range strings.Split(string(data), "\n") {
+		if len(line) > 200 {
+			t.Fatalf("one-line hooks object:\n%s", data)
+		}
+	}
+}
+
+func TestInstallTreatsAnEmptyFileAsMissing(t *testing.T) {
+	home := cursorHome(t)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte("  \n"), 0o644)
+	if err := InstallCursorHook(io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := readHooks(t, path); got["hooks"] == nil {
+		t.Fatal("hooks missing")
+	}
+}
+
+func TestInstallRefusesNonListHookAndBrokenSymlink(t *testing.T) {
+	home := cursorHome(t)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(`{"version":1,"hooks":{"stop":{"command":"say done"}}}`), 0o644)
+	if err := InstallCursorHook(io.Discard); err == nil || !strings.Contains(err.Error(), "not a list") {
+		t.Fatalf("err %v", err)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `{"command":"say done"}`) {
+		t.Fatal("file must be untouched")
+	}
+	os.Remove(path)
+	if err := os.Symlink(filepath.Join(home, "nowhere.json"), path); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	if err := InstallCursorHook(io.Discard); err == nil || !strings.Contains(err.Error(), "broken symlink") {
+		t.Fatalf("err %v", err)
+	}
+	if info, _ := os.Lstat(path); info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced")
+	}
+}
+
+func TestRetiredSingleRexEntryIsRemoved(t *testing.T) {
+	home := cursorHome(t)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(`{"version":1,"hooks":{"beforeShellExecution":{"command":"'/old/rex' ingest --source cursor"},"stop":[]}}`), 0o644)
+	if err := InstallCursorHook(io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readHooks(t, path)["hooks"].(map[string]any)["beforeShellExecution"]; ok {
+		t.Fatal("retired rex entry should be gone")
+	}
+}
+
+func TestIdleTurnEndsAreNotDeduped(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	for i := 0; i < 2; i++ {
+		ok, err := AppendEvent(feed, NewEvent("cursor", "idle", "turn completed", nil))
+		if err != nil || !ok {
+			t.Fatalf("turn end %d dropped: %v", i, err)
+		}
+	}
+}
+
+func TestInterruptedToolEndsTheTurn(t *testing.T) {
+	ev := MapPayload(map[string]any{"hook_event_name": "postToolUseFailure", "tool_name": "Shell", "is_interrupt": true}, "cursor")
+	if ev == nil || ev.Kind != "idle" {
+		t.Fatalf("%#v", ev)
 	}
 }

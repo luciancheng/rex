@@ -362,7 +362,9 @@ func statusForTurn(turn Turn, lastKind string) string {
 		}
 		return "running"
 	default:
-		if s, ok := kindStatus[lastKind]; ok {
+		// Idle never claims work in flight: after a turn ends with no reply
+		// (Cursor stop), the last kind may still be a command or thought.
+		if s, ok := kindStatus[lastKind]; ok && s != "running" && s != "thinking" {
 			return s
 		}
 		return mascot.DefaultAnimation

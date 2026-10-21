@@ -364,3 +364,22 @@ func TestAppendOnlyFeedShowsOneGrowingReply(t *testing.T) {
 		t.Fatalf("want one merged reply\n%s", view)
 	}
 }
+
+func TestIdleHeaderNeverSaysRunning(t *testing.T) {
+	turn := ApplyTurn(TurnRunning, watch.Event{Source: "cursor", Kind: "idle", Text: "turn completed"})
+	if turn != TurnIdle {
+		t.Fatal("stop ends the turn")
+	}
+	if got := statusForTurn(turn, "command"); got != "idle" {
+		t.Fatalf("header says %q after the turn ended", got)
+	}
+	if got := statusForTurn(TurnIdle, "question"); got != "ask" {
+		t.Fatalf("a pending question still shows: %q", got)
+	}
+	if ApplyTurn(TurnRunning, watch.Event{Source: "cursor", Kind: "error", Text: "Write failed", Meta: map[string]any{"tool": "Write"}}) != TurnRunning {
+		t.Fatal("a failed tool call keeps the turn running")
+	}
+	if ApplyTurn(TurnRunning, watch.Event{Source: "cursor", Kind: "error", Text: "turn ended with an error"}) != TurnIdle {
+		t.Fatal("a turn-level error ends the turn")
+	}
+}

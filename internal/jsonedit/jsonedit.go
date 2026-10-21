@@ -74,10 +74,14 @@ func Parse(data []byte) (*Doc, error) {
 }
 
 type parser struct {
-	src  []byte
-	dec  *json.Decoder
-	last int
+	src   []byte
+	dec   *json.Decoder
+	last  int
+	depth int
 }
+
+// maxDepth bounds nesting so a hostile config can't exhaust the stack.
+const maxDepth = 512
 
 // next reads one token and returns where it starts. InputOffset is the
 // offset just past the token, so the start is found by skipping the
@@ -114,6 +118,10 @@ func (p *parser) value() (*Node, error) {
 func (p *parser) valueFrom(tok json.Token, start int) (*Node, error) {
 	switch t := tok.(type) {
 	case json.Delim:
+		if p.depth++; p.depth > maxDepth {
+			return nil, fmt.Errorf("JSON nested deeper than %d levels", maxDepth)
+		}
+		defer func() { p.depth-- }()
 		switch t {
 		case '{':
 			n := &Node{Kind: '{', Start: start}

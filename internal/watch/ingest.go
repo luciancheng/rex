@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -39,14 +40,15 @@ func IngestCommand() string {
 }
 
 // ingestCommand is the shell command a hook runs. Cursor runs hooks through
-// a shell, so the path is quoted for one: single quotes on POSIX, and on
-// Windows a forward-slash path (quoted only when it has spaces), which
-// cmd, PowerShell and Git Bash all accept.
+// a shell, so the path is quoted for one: single quotes on POSIX. On
+// Windows a plain forward-slash path works in cmd, PowerShell and Git Bash;
+// a path that needs quoting gets PowerShell's call operator (& "…"), which
+// is what Cursor uses to run hooks there.
 func ingestCommand(source, exe, goos string) string {
 	if goos == "windows" {
 		exe = strings.ReplaceAll(exe, `\`, "/")
-		if strings.ContainsAny(exe, " \t") {
-			exe = `"` + exe + `"`
+		if strings.ContainsAny(exe, " \t&'()^%!;,") {
+			return `& "` + exe + `" ingest --source ` + source
 		}
 		return exe + " ingest --source " + source
 	}
@@ -116,15 +118,22 @@ func mergeCursorHooks(d *jsonedit.Doc, command string) ([]byte, error) {
 			return nil, err
 		}
 	}
+	ours := map[string]any{"command": command, "timeout": cursorHookTimeout}
 	switch hooks := e.doc.Root().Member("hooks"); {
-	case hooks == nil:
-		if err := e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Set(d.Root(), "hooks", map[string]any{}) }); err != nil {
+	case hooks == nil || (hooks.Kind == '{' && len(hooks.Members) == 0):
+		// A fresh or empty hooks object is written whole, one event per
+		// line, instead of growing an inline {} one key at a time.
+		fresh := map[string]any{}
+		for _, name := range CursorHookEvents {
+			fresh[name] = []any{ours}
+		}
+		if err := e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Set(d.Root(), "hooks", fresh) }); err != nil {
 			return nil, err
 		}
+		return e.doc.Bytes(), nil
 	case hooks.Kind != '{':
 		return nil, fmt.Errorf(`"hooks" in hooks.json is not an object`)
 	}
-	ours := map[string]any{"command": command, "timeout": cursorHookTimeout}
 	for _, name := range CursorHookEvents {
 		if err := mergeHookList(e, name, ours, true); err != nil {
 			return nil, err
@@ -140,7 +149,8 @@ func mergeCursorHooks(d *jsonedit.Doc, command string) ([]byte, error) {
 
 // mergeHookList edits one event's entry list element by element, so the
 // user's other entries keep their exact bytes. Stale Rex entries are
-// removed; with want, exactly one copy of ours is kept or appended.
+// removed; with want, exactly one copy of ours is kept or appended. Fields
+// the user added to our entry (a matcher, say) are kept.
 func mergeHookList(e *editor, name string, ours map[string]any, want bool) error {
 	hooks := func(d *jsonedit.Doc) *jsonedit.Node { return d.Root().Member("hooks") }
 	node := hooks(e.doc).Member(name)
@@ -151,18 +161,14 @@ func mergeHookList(e *editor, name string, ours map[string]any, want bool) error
 		return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Set(hooks(d), name, []any{ours}) })
 	}
 	if node.Kind != '[' {
-		var existing any
-		if err := e.doc.Decode(node, &existing); err != nil {
-			return err
+		var single map[string]any
+		if !want && e.doc.Decode(node, &single) == nil && isRexIngestCommand(fmt.Sprint(single["command"]), ours["command"].(string), "cursor") {
+			return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Remove(hooks(d), name) })
 		}
-		next := []any{existing}
-		if m, ok := existing.(map[string]any); ok && isRexIngestCommand(fmt.Sprint(m["command"]), "cursor") {
-			next = nil
+		if !want {
+			return nil
 		}
-		if want {
-			next = append(next, ours)
-		}
-		return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Set(hooks(d), name, next) })
+		return fmt.Errorf(`"hooks.%s" in hooks.json is not a list; fix it by hand, rex did not change it`, name)
 	}
 	kept := false
 	for i := len(node.Elems) - 1; i >= 0; i-- {
@@ -171,14 +177,19 @@ func mergeHookList(e *editor, name string, ours map[string]any, want bool) error
 			continue
 		}
 		cmd := fmt.Sprint(entry["command"])
-		if !isRexIngestCommand(cmd, "cursor") {
+		if !isRexIngestCommand(cmd, ours["command"].(string), "cursor") {
 			continue
 		}
 		if want && !kept && cmd == ours["command"] {
 			kept = true
-			if !sameJSON(entry, ours) {
+			merged := map[string]any{}
+			for k, v := range entry {
+				merged[k] = v
+			}
+			merged["timeout"] = ours["timeout"]
+			if !sameJSON(entry, merged) {
 				if err := e.apply(func(d *jsonedit.Doc) ([]byte, error) {
-					return d.ReplaceElem(hooks(d).Member(name), i, ours)
+					return d.ReplaceElem(hooks(d).Member(name), i, merged)
 				}); err != nil {
 					return err
 				}
@@ -205,10 +216,26 @@ func sameJSON(a, b any) bool {
 	return aerr == nil && berr == nil && bytes.Equal(ab, bb)
 }
 
-// isRexIngestCommand recognizes Rex hook commands from any version: Go- or
-// shell-quoted paths, any install location.
-func isRexIngestCommand(command, source string) bool {
-	return strings.Contains(command, "rex") && strings.Contains(command, "ingest --source "+source)
+// rexCommand matches a whole hook command that only runs rex ingest: an
+// optional PowerShell "&", one path (bare, 'single' or "double" quoted)
+// whose file name starts with rex, then "ingest --source <source>".
+var rexCommand = regexp.MustCompile(`^\s*(?:&\s*)?(?:"([^"]+)"|'((?:[^']|'\\'')+)'|(\S+))\s+ingest\s+--source\s+(\S+)\s*$`)
+
+// isRexIngestCommand recognizes Rex's own hook command, from this install
+// (an exact match) or any earlier one. A user's compound command or a
+// different tool that happens to mention rex is never matched.
+func isRexIngestCommand(command, ours, source string) bool {
+	if command == ours {
+		return true
+	}
+	m := rexCommand.FindStringSubmatch(command)
+	if m == nil || m[4] != source {
+		return false
+	}
+	path := m[1] + strings.ReplaceAll(m[2], `'\''`, "'") + m[3]
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(path, `\`, "/")))
+	base = strings.TrimSuffix(base, ".exe")
+	return base == "rex" || strings.HasPrefix(base, "rex-") || strings.HasPrefix(base, "rex_")
 }
 
 func PayloadsFromRaw(raw string) []map[string]any {

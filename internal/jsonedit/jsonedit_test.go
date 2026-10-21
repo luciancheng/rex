@@ -220,3 +220,40 @@ func FuzzSplice(f *testing.F) {
 		}
 	})
 }
+
+func TestParseRefusesAbsurdNesting(t *testing.T) {
+	deep := strings.Repeat("[", 100000) + strings.Repeat("]", 100000)
+	if _, err := Parse([]byte(`{"a":` + deep + `}`)); err == nil || !strings.Contains(err.Error(), "nested") {
+		t.Fatalf("err %v", err)
+	}
+	ok := strings.Repeat("[", 100) + strings.Repeat("]", 100)
+	if _, err := Parse([]byte(`{"a":` + ok + `}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestArrayEdits(t *testing.T) {
+	d := mustParse(t, "{\n  \"a\": [\n    {\"x\": 1},\n    {\"x\": 2}\n  ]\n}")
+	arr := d.Root().Member("a")
+	out, err := d.Append(arr, map[string]int{"x": 3})
+	if err != nil || !strings.Contains(string(out), "  {\"x\": 2},\n    {\n      \"x\": 3\n    }\n  ]") {
+		t.Fatalf("append %v\n%s", err, out)
+	}
+	out, _ = d.RemoveElem(arr, 0)
+	if string(out) != "{\n  \"a\": [\n    {\"x\": 2}\n  ]\n}" {
+		t.Fatalf("remove first\n%s", out)
+	}
+	out, _ = d.RemoveElem(arr, 1)
+	if string(out) != "{\n  \"a\": [\n    {\"x\": 1}\n  ]\n}" {
+		t.Fatalf("remove last\n%s", out)
+	}
+	out, _ = d.ReplaceElem(arr, 1, map[string]int{"y": 9})
+	if !strings.Contains(string(out), "{\"x\": 1},\n    {\n      \"y\": 9\n    }") {
+		t.Fatalf("replace\n%s", out)
+	}
+	empty := mustParse(t, `{"a": []}`)
+	out, _ = empty.Append(empty.Root().Member("a"), 1)
+	if string(out) != `{"a": [1]}` {
+		t.Fatalf("%s", out)
+	}
+}

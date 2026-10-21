@@ -55,6 +55,9 @@ func IsDuplicate(event Event, recent []Event, window float64) bool {
 	if key == "" {
 		return true
 	}
+	if event.Kind == "idle" {
+		return false // two turns may end with the same words; each end counts
+	}
 	for i := len(recent) - 1; i >= 0; i-- {
 		prev := recent[i]
 		if prev.Kind != event.Kind {

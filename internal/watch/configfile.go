@@ -22,7 +22,11 @@ var ErrConfigChanged = errors.New("file changed while rex was editing it; nothin
 // result replaces the file atomically. When the file does not exist, empty
 // is used as the starting document. It reports whether anything changed.
 func UpdateJSONFile(path string, empty []byte, mutate func(*jsonedit.Doc) ([]byte, error)) (bool, error) {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return false, fmt.Errorf("%s is a broken symlink; fix it first, rex did not change it", path)
+		}
 		path = resolved
 	}
 	original, readErr := os.ReadFile(path)
@@ -31,8 +35,8 @@ func UpdateJSONFile(path string, empty []byte, mutate func(*jsonedit.Doc) ([]byt
 		return false, readErr
 	}
 	src := original
-	if !exists {
-		src = empty
+	if !exists || len(bytes.TrimSpace(original)) == 0 {
+		src = empty // a missing or empty file starts from scratch
 	}
 	doc, err := jsonedit.Parse(src)
 	if err != nil {
@@ -55,11 +59,6 @@ func UpdateJSONFile(path string, empty []byte, mutate func(*jsonedit.Doc) ([]byt
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, err
-	}
-	if exists {
-		if err := os.WriteFile(path+".bak", original, mode); err != nil {
-			return false, err
-		}
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".rex-*")
 	if err != nil {
@@ -88,8 +87,14 @@ func UpdateJSONFile(path string, empty []byte, mutate func(*jsonedit.Doc) ([]byt
 	case !exists && err == nil:
 		return false, ErrConfigChanged
 	}
+	if exists {
+		if err := os.WriteFile(path+".bak", original, mode); err != nil {
+			return false, err
+		}
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		// Windows refuses to replace a file another process holds open.
+		// Windows refuses to replace a file another process holds open; fall
+		// back to writing in place (not atomic, but the .bak is already saved).
 		if werr := os.WriteFile(path, out, mode); werr != nil {
 			return false, err
 		}

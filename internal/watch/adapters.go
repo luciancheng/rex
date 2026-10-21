@@ -369,6 +369,11 @@ func MapCursor(payload map[string]any) *Event {
 			}
 		}
 		if name == "postToolUseFailure" {
+			if interrupted, _ := payload["is_interrupt"].(bool); interrupted {
+				// The human stopped the turn; the agent is not carrying on.
+				ev := NewEvent("cursor", "idle", "turn interrupted", map[string]any{"status": "aborted"})
+				return &ev
+			}
 			text = tool + " failed"
 			if path != "" {
 				text += " · " + path

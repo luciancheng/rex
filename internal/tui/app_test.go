@@ -237,3 +237,16 @@ func TestAppKeysFromOneReadSettleInOrder(t *testing.T) {
 		t.Fatalf("opened %q", a.plans.Current)
 	}
 }
+
+func TestCtrlLDisarmsQuitAndResizeRepaints(t *testing.T) {
+	a := testApp(t)
+	press(a, CtrlC, "\x0c")
+	if a.quitPending || !a.repaint {
+		t.Fatal("Ctrl+L repaints and disarms quit like any other key")
+	}
+	a.repaint = false
+	a.settle(100, 30)
+	if !a.repaint {
+		t.Fatal("a resize asks for a full repaint")
+	}
+}

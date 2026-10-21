@@ -8,7 +8,7 @@ Install and user docs live in `README.md`. This file is how to change the code.
 
 ## Do not
 
-- Add palettes or a `--color` flag. Yellow from `assets/idle.png` is the only look.
+- Add palettes or a `--color` flag. Yellow from `assets/idle.png` is the only look. (On Terminal.app without truecolor the *same* palette is quantized to xterm-256 — `mascot.DetectDepth`; that is not a second palette.)
 - Add dependencies, frameworks, or a config system without a concrete need. Go 1.22+ stdlib plus `golang.org/x/sys` and `golang.org/x/term` for the TTY.
 - Scrape transcripts or use the Cursor SDK to watch the in-IDE agent. Hooks only.
 - Steer, inject prompts, or auto-approve tools unless the human asked for that this turn.
@@ -54,7 +54,7 @@ Breakdance is the 40×40 sheet `assets/breakdance.png` (left-to-right, top-to-bo
 
 If the README hero should match, rebuild `assets/rex.png` from `idle.png` with nearest-neighbor scale.
 
-Animation must stay slow. Never let it eat input or overwrite the log.
+Animation must stay slow. Never let it eat input or overwrite the log. The live loop never clears the screen per frame: `renderer` repaints only changed rows (each erased from column 1, then written whole and reset, never erased after the write, since that would wipe the last column; inside DEC 2026 sync, cursor hidden while painting) and does a full repaint only on the first frame, resize, Ctrl+L and SIGCONT. `TERM=dumb` gets the static card without color. Rendered mascot rows and the tape layout are cached.
 
 Unix live mode is cbreak (ECHO/ICANON/ISIG/IEXTEN off, IXON off so Ctrl+S can't freeze output) and **must keep OPOST**. Do not use `term.MakeRaw`. On Unix, input goes through `keyDecoder`: whole escape sequences, whole UTF-8 runes, Alt chords dropped (never Esc plus a key), bracketed paste as one token that never submits, even when it stalls. On Windows, `consoleKeys` maps key records (Esc, surrogate pairs), a burst with text after a newline (or 16+ characters) becomes one paste on a best-effort basis, bracketed paste stays off (the console has no markers), and `ENABLE_PROCESSED_INPUT` / VT input are cleared so Ctrl+C is a key. Keys from one read are applied one at a time (`app.keys`); the mascot ticks on the clock, not on empty reads. SIGTERM/SIGHUP/interrupt leave through the same restore path as Ctrl+C twice.
 

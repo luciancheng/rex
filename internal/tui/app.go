@@ -8,7 +8,8 @@ import (
 )
 
 // app is the live screen's state. RunLoop feeds it keys, hook events and
-// ticks and draws app.frame(); tests drive it the same way without a TTY.
+// ticks and paints app.frameRows() through the renderer; tests drive it
+// the same way without a TTY.
 type app struct {
 	color   string
 	enabled bool
@@ -27,6 +28,8 @@ type app struct {
 	chatDraft string
 
 	log      []watch.Event
+	logRev   int
+	view     logViewCache
 	scroll   int
 	turn     Turn
 	lastKind string
@@ -34,6 +37,15 @@ type app struct {
 	quitPending bool
 	quitTicks   int
 	quit        bool
+	repaint     bool // Ctrl+L asked for a full repaint
+}
+
+// logViewCache keeps the laid-out tape for one log revision and width; the
+// loop needs it several times per tick.
+type logViewCache struct {
+	rev, width int
+	lines      []LogLine
+	ok         bool
 }
 
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
@@ -67,6 +79,14 @@ func (a *app) syncTurn() {
 }
 
 func (a *app) frame() string {
+	return ComposeFrame(a.spriteName, a.color, a.composeOptions())
+}
+
+func (a *app) frameRows() Frame {
+	return composeRows(a.spriteName, a.color, a.composeOptions())
+}
+
+func (a *app) composeOptions() ComposeOptions {
 	meta := chatHeaderMeta(statusForTurn(a.turn, a.lastKind), a.plans.CurrentRel(), PaneTextWidth(a.columns))
 	if a.pane == PanePlans {
 		switch a.plans.Screen {
@@ -80,7 +100,7 @@ func (a *app) frame() string {
 			meta = "plans"
 		}
 	}
-	return ComposeFrame(a.spriteName, a.color, ComposeOptions{
+	opt := ComposeOptions{
 		Enabled:       a.enabled,
 		Columns:       a.columns,
 		Lines:         a.lines,
@@ -92,7 +112,18 @@ func (a *app) frame() string {
 		Scroll:        a.scroll,
 		Pane:          a.pane,
 		Plans:         a.plans,
-	})
+	}
+	if textW := PaneTextWidth(a.columns); textW > 0 {
+		opt.LogView = a.logView(textW)
+	}
+	return opt
+}
+
+func (a *app) logView(width int) []LogLine {
+	if !a.view.ok || a.view.rev != a.logRev || a.view.width != width {
+		a.view = logViewCache{rev: a.logRev, width: width, lines: BuildLogView(a.log, width), ok: true}
+	}
+	return a.view.lines
 }
 
 func (a *app) logLines() int {
@@ -100,7 +131,7 @@ func (a *app) logLines() int {
 	if textW <= 0 {
 		return 0
 	}
-	return len(BuildLogView(a.log, textW))
+	return len(a.logView(textW))
 }
 
 // ingest applies hook events: turn state for every event, the tape for the
@@ -118,7 +149,11 @@ func (a *app) ingest(fresh []watch.Event) bool {
 			a.lastKind = ev.Kind
 		}
 	}
+	n := len(a.log)
 	added := ExtendLog(&a.log, fresh)
+	if len(added) > 0 || len(a.log) != n {
+		a.logRev++ // a trim to MaxLog changes the tape too
+	}
 	if len(added) > 0 && a.scroll > 0 {
 		a.scroll += max(0, a.logLines()-before)
 	}
@@ -164,6 +199,10 @@ func (a *app) handleKey(key string) bool {
 	total := a.logLines()
 	maxScroll := ClampScroll(total, bodyH, total)
 	switch {
+	case key == "\x0c":
+		a.repaint = true
+		a.quitPending = false // like any other key, it disarms quit
+		return true
 	case key == CtrlC:
 		if a.quitPending {
 			a.quit = true
@@ -232,6 +271,7 @@ func (a *app) handleKey(key string) bool {
 			a.play(next)
 		}
 		a.log = append(a.log, watch.NewEvent("user", "text", text, nil))
+		a.logRev++
 		a.draft = ""
 		return true
 	case "\x7f", "\x08":
@@ -296,6 +336,7 @@ func (a *app) settle(columns, lines int) bool {
 	}
 	if columns != a.columns || lines != a.lines {
 		a.columns, a.lines = columns, lines
+		a.repaint = true // a resize repaints everything, whatever the frame shape
 		changed = true
 	}
 	total := a.logLines()

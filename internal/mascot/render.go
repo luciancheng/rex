@@ -42,13 +42,79 @@ func ColorEnabledWriter(isTTY bool) bool {
 	return isTTY
 }
 
+// Depth is how many colors the terminal can show.
+type Depth int
+
+const (
+	Truecolor Depth = iota
+	Color256
+)
+
+// ColorDepth is set once at startup. The palette never changes: on a
+// 256-color terminal (Terminal.app before macOS 26) the same yellow
+// palette is quantized to the nearest xterm-256 color.
+var ColorDepth = Truecolor
+
+// DetectDepth picks Color256 only for Terminal.app without truecolor;
+// everything else (including COLORTERM unset over SSH or tmux) keeps
+// truecolor, which is what every other supported terminal renders.
+func DetectDepth(getenv func(string) string) Depth {
+	ct := strings.ToLower(getenv("COLORTERM"))
+	if getenv("TERM_PROGRAM") == "Apple_Terminal" && ct != "truecolor" && ct != "24bit" {
+		return Color256
+	}
+	return Truecolor
+}
+
 func FG(rgb RGB) string {
+	if ColorDepth == Color256 {
+		return fmt.Sprintf("\033[38;5;%dm", Index256(rgb))
+	}
 	return fmt.Sprintf("\033[38;2;%d;%d;%dm", rgb[0], rgb[1], rgb[2])
 }
 
 func BG(rgb RGB) string {
+	if ColorDepth == Color256 {
+		return fmt.Sprintf("\033[48;5;%dm", Index256(rgb))
+	}
 	return fmt.Sprintf("\033[48;2;%d;%d;%dm", rgb[0], rgb[1], rgb[2])
 }
+
+var cubeLevels = [6]int{0, 95, 135, 175, 215, 255}
+
+// Index256 is the xterm-256 color closest to rgb: the 6x6x6 cube or the
+// 24-step gray ramp, whichever is nearer.
+func Index256(rgb RGB) int {
+	nearest := func(v int) int {
+		best, bestD := 0, 1<<30
+		for i, l := range cubeLevels {
+			if d := (v - l) * (v - l); d < bestD {
+				best, bestD = i, d
+			}
+		}
+		return best
+	}
+	r, g, b := nearest(rgb[0]), nearest(rgb[1]), nearest(rgb[2])
+	cube := 16 + 36*r + 6*g + b
+	cr, cg, cb := cubeLevels[r], cubeLevels[g], cubeLevels[b]
+	cubeD := sq(rgb[0]-cr) + sq(rgb[1]-cg) + sq(rgb[2]-cb)
+	avg := (rgb[0] + rgb[1] + rgb[2]) / 3
+	gi := (avg - 3) / 10 // the nearest gray step 8+10k
+	if gi < 0 {
+		gi = 0
+	}
+	if gi > 23 {
+		gi = 23
+	}
+	gv := 8 + 10*gi
+	grayD := sq(rgb[0]-gv) + sq(rgb[1]-gv) + sq(rgb[2]-gv)
+	if grayD < cubeD {
+		return 232 + gi
+	}
+	return cube
+}
+
+func sq(v int) int { return v * v }
 
 func Paint(text string, rgb RGB, enabled bool) string {
 	if !enabled {

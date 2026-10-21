@@ -415,6 +415,25 @@ func TestProjectInstallsAreClaudeOnly(t *testing.T) {
 	}
 }
 
+func TestInstallSkillWithoutAHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"ingest", "--install-skill"}, strings.NewReader(""), &stdout, &stderr); code != 1 {
+		t.Fatalf("no HOME and no CLAUDE_CONFIG_DIR is an error, never a cwd-relative folder: %d %s", code, stdout.String())
+	}
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	stdout.Reset()
+	if code := Main([]string{"ingest", "--install-skill"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("%d %s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "skills", "rex-plan", "SKILL.md")); err != nil || !strings.Contains(stdout.String(), "only Claude Code reads") {
+		t.Fatalf("%v %q", err, stdout.String())
+	}
+}
+
 func TestInstallSkillCLI(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

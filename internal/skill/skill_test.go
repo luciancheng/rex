@@ -114,3 +114,17 @@ func TestInstallLeavesAnUnreadableSkillAlone(t *testing.T) {
 		t.Fatal("it is untouched")
 	}
 }
+
+func TestTheSkillsExampleIsAValidPlan(t *testing.T) {
+	s := strings.ReplaceAll(string(RexPlan), "\r\n", "\n")
+	start := strings.Index(s, "```json\n")
+	if start < 0 {
+		t.Fatal("the skill has a JSON example")
+	}
+	body := s[start+len("```json\n"):]
+	body = body[:strings.Index(body, "\n```")]
+	p, err := plan.Parse([]byte(body))
+	if err != nil || len(p.Problems) != 0 || p.Graph().Pin() == nil {
+		t.Fatalf("%v %+v", err, p)
+	}
+}

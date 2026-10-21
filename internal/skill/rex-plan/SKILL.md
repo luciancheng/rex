@@ -65,7 +65,7 @@ Task fields: `id`, `title`, `parent`, `status`, `scope`, `needs`, `does`, `descr
 - **`needs` vs `does`.** `needs` is what must already be true ("the pick colors exist"); `does` is what will be true when the task is done ("the bar spans all three rows"). Keep them apart; merged, nobody can tell "we still lack X" from "we will ship X".
 - **`verify`** is how a stranger would check it: commands or observations. **`files`** are the paths or globs the task will edit. They are not a lock, but Rex reads them: an edit outside every folder the pinned task lists shows as drift, so list each folder the task really touches.
 - **`scope.out`** is the hard edge: what this work must not touch. Rex matches its entries against prompts and edited paths, so write short nouns or path words ("extra palettes", "web UI", "internal/jsonedit/**"), not sentences ("do not change the public API of …").
-- **`status`** is one of `pending`, `active`, `done`, `blocked`, `skipped`. At most one task is `active`: that is the pin. Write status down; do not leave it to be inferred.
+- **`status`** is one of `pending`, `active`, `done`, `blocked`, `skipped`. At most one leaf task (one that is nobody's `parent`) is `active`: that is the pin. A parent marked `active` is only a label. Write status down; do not leave it to be inferred.
 
 ## Never in a plan
 
@@ -96,4 +96,4 @@ Usually the person marks the task done in Rex (`d⏎`), which writes `"status": 
 - `verified_how`: how you actually checked it;
 - `completed_notes`: anything the next send-off should know.
 
-Edit only that task's object, keep every other byte of the file as it is, and never mark a task done that you did not finish. If it was the last task that wasn't `done` or `skipped`, also set the plan's own top-level `status` to `done`.
+Edit only that task's object, keep every other byte of the file as it is, and never mark a task done that you did not finish. If every leaf task is now `done` or `skipped`, also set the plan's own top-level `status` to `done`; parent tasks don't need a status of their own.

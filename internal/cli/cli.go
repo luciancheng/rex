@@ -217,6 +217,9 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		dir := skill.Dir(home, repo, *project)
 		if *installSkill {
 			err = skill.Install(dir, stdout)
+			if err == nil && !*project && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+				fmt.Fprintln(stdout, "that is $CLAUDE_CONFIG_DIR, which only Claude Code reads; Cursor and OpenCode read ~/.claude/skills (or use --project)")
+			}
 		} else {
 			err = skill.Uninstall(dir, stdout)
 		}

@@ -69,6 +69,10 @@ New harness = adapter + a `Harness` registered in `internal/watch/harness.go` (P
 
 Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`. Rex's own local kind `note` (source `rex`) never comes from the feed.
 
+## Plan files
+
+`internal/plan` reads the v1 format in `docs/plan-format.md`. Rex writes a plan only when the human acts in Rex, and only through `plan.Edit`: `status` and the four completion fields, spliced into that task's own object with `internal/jsonedit`. Every write re-reads the file, re-runs the `Op` against what is on disk (abort if the task is gone or its status moved), checks the result against the expected tree, and renames a temp file into place. Never marshal a plan back out of a struct or a `map`. What Rex remembers between runs (last plan per repo, pin start times) goes in `~/.rex/state.json`, never in the repo.
+
 ## TUI
 
 The target loop, key map and screen states are in `docs/ux.md`. TUI changes cite the section they implement.

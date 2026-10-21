@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -85,6 +87,40 @@ func TestShortTerminalComposer(t *testing.T) {
 	if a.draft != "" {
 		t.Fatal("under 7 rows printable keys are ignored")
 	}
+	// A draft typed before the terminal shrank is neither edited nor
+	// submitted blind.
+	b := testApp(t)
+	press(b, "\r")
+	typeText(b, "blind")
+	b.settle(100, 6)
+	press(b, "\x7f", "\r")
+	if b.draft != "blind" || b.plans.Current != "" {
+		t.Fatalf("draft %q current %q", b.draft, b.plans.Current)
+	}
+	press(b, CtrlC, "x")
+	if b.quitPending {
+		t.Fatal("a swallowed key still disarms quit")
+	}
+	// The one-row composer leaves the cursor on screen.
+	f := composeRows("idle", "yellow", ComposeOptions{Pane: PaneChat, Columns: 100, Lines: 12, Draft: strings.Repeat("x", 200)})
+	if f.CursorCol > 100 {
+		t.Fatalf("cursor at column %d of 100", f.CursorCol)
+	}
+}
+
+func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
+	b := NewPlanBrowser(t.TempDir())
+	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[1] != "⏎ create" {
+		t.Fatalf("%q", segs)
+	}
+}
+
+func TestExitLineIsCleaned(t *testing.T) {
+	a := testApp(t)
+	a.plans.Current = filepath.Join(a.plans.Root, "evil\x1b]52;c;eA==\x07.rex.json")
+	if got := a.exitLine(); strings.ContainsAny(got, "\x1b\x07") || got != "rex: rex/plans/evil.rex.json" {
+		t.Fatalf("%q", got)
+	}
 }
 
 func TestHeaderOnEveryScreen(t *testing.T) {
@@ -124,12 +160,22 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 		opt  ComposeOptions
 		must []string
 	}
+	repo := t.TempDir()
+	os.MkdirAll(filepath.Join(repo, "rex", "plans"), 0o755)
+	os.WriteFile(filepath.Join(repo, "rex", "plans", "a.rex.json"), []byte("{}"), 0o644)
+	withPlans := NewPlanBrowser(repo)
+	for i, row := range withPlans.Rows {
+		if row.Kind == PlanRowLatest {
+			withPlans.Cursor = i
+		}
+	}
 	browse := *b
 	browse.Screen = ScreenBrowse
 	create := *b
 	create.Screen = ScreenCreate
 	screens := []screen{
-		{"home", ComposeOptions{Pane: PanePlans, Plans: b}, []string{"plans", "⏎ open", "tab tape"}},
+		{"home (no plans)", ComposeOptions{Pane: PanePlans, Plans: b}, []string{"plans", "⏎ create", "tab tape"}},
+		{"home", ComposeOptions{Pane: PanePlans, Plans: withPlans}, []string{"plans", "⏎ open", "tab tape"}},
 		{"browse", ComposeOptions{Pane: PanePlans, Plans: &browse}, []string{"open", "⏎ open", "esc back", "tab tape"}},
 		{"create", ComposeOptions{Pane: PanePlans, Plans: &create}, []string{"new plan", "⏎ create", "esc cancel"}},
 		{"tape", ComposeOptions{Pane: PaneChat}, []string{"tape", "tab plan", "↑↓ scroll"}},

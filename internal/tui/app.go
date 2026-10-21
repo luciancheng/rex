@@ -117,7 +117,9 @@ func (a *app) statusLine() StatusLine {
 // exitLine is printed once the screen is restored, so the terminal keeps a
 // trace of where you were.
 func (a *app) exitLine() string {
-	if rel := a.plans.CurrentRel(); rel != "" {
+	// Printed after the terminal is restored: a plan's file name must not
+	// reach it raw.
+	if rel := strings.TrimSpace(strings.ReplaceAll(watch.CleanText(a.plans.CurrentRel()), "\n", " ")); rel != "" {
 		return "rex: " + rel
 	}
 	return "rex: no plan open"
@@ -189,11 +191,15 @@ func (a *app) keys(pressed []string) bool {
 // handleKey applies one key. It sets a.quit on the second Ctrl+C.
 func (a *app) handleKey(key string) bool {
 	if l := layoutFor(a.columns, a.lines); !l.typing && key != CtrlC && key != "\x0c" {
-		if l.locked {
-			return false // the UI isn't visible; nothing may act on it
-		}
-		if _, paste := IsPaste(key); paste || isPrintableKey(key) {
-			return false // no composer on screen to type into
+		_, paste := IsPaste(key)
+		edits := paste || isPrintableKey(key) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
+		submits := (key == "\r" || key == "\n") && a.draft != ""
+		if l.locked || edits || submits {
+			// The UI isn't visible (locked), or the draft isn't: nothing
+			// may act on it blind. A swallowed key still disarms quit.
+			armed := a.quitPending
+			a.quitPending = false
+			return armed
 		}
 	}
 	if text, ok := IsPaste(key); ok {

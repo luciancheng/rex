@@ -590,6 +590,9 @@ func composeRows(spriteName, color string, opt ComposeOptions) Frame {
 		for i := 1; i < lines; i++ {
 			rows[i] = strings.Repeat(" ", columns)
 		}
+		if opt.QuitPending && lines > 1 {
+			rows[1] = mascot.Paint(clip("ctrl+c again to quit", columns), mascot.UI["error"], opt.Enabled)
+		}
 		return Frame{Rows: rows}
 	}
 	if opt.Status == "" {

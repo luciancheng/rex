@@ -135,6 +135,18 @@ func fitFooter(segments []string, width int) string {
 	return clip(segments[0], width)
 }
 
+// homeCreates reports that ⏎ on Library Home creates a plan: there are
+// none yet, or the cursor is on Create. It reads the rows, not the disk.
+func homeCreates(b *PlanBrowser) bool {
+	none := true
+	for _, row := range b.Rows {
+		if row.Kind == PlanRowLatest && row.Path != "" {
+			none = false
+		}
+	}
+	return none || (b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowNew)
+}
+
 // footerSegments is the footer for the current screen, highest rank first
 // (docs/ux.md §4): where you can go, not what you can type.
 func footerSegments(opt ComposeOptions, scroll int) ([]string, string) {
@@ -149,6 +161,9 @@ func footerSegments(opt ComposeOptions, scroll int) ([]string, string) {
 			return []string{"new folder", "⏎ create", "esc cancel", "tab tape"}, "muted"
 		case ScreenBrowse:
 			return []string{"open", "⏎ open", "esc back", "tab tape", "type to filter"}, "muted"
+		}
+		if homeCreates(opt.Plans) {
+			return []string{"plans", "⏎ create", "tab tape", "ctrl+c×2 quit"}, "muted"
 		}
 		return []string{"plans", "⏎ open", "tab tape", "ctrl+c×2 quit"}, "muted"
 	}

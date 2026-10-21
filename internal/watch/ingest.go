@@ -293,6 +293,7 @@ func ingest(raw, source, path string) ([]Event, error) {
 		if event == nil || strings.TrimSpace(event.Text) == "" {
 			continue
 		}
+		stampOrigin(event, payload)
 		ok, err := AppendEvent(path, *event)
 		if err != nil && first == nil {
 			first = err

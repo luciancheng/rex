@@ -442,7 +442,7 @@ If the pin lists no files, only the `scope.out` rule applies.
 - **Text cleanup.** Agent text is cleaned before layout:
   - Control characters and escape/OSC sequences are removed, so agent output cannot recolor the screen, retitle the window or write the clipboard.
   - Tabs are expanded.
-- **Scope.** Paths are shown relative to the repo. Events from other repos' agents (same machine, same feed) are hidden, and the count appears under Help. Events with no known working directory are shown.
+- **Scope.** Paths in tool lines are shown relative to the repo; replies, thoughts and prompts are shown as written. Where an event came from (its working directory or workspace roots) decides whose it is, so another repo's agent reading a file here stays hidden. Events from other repos' agents (same machine, same feed) are hidden, and the count appears under Help. An event with no working directory or roots is judged by the file it names; with nothing to go on at all, it is shown.
 - **Starting mid-turn.** If the newest feed event is under 2 minutes old, the turn state is restored, so the dino is already typing. The last ~20 events from this repo are drawn under a muted `── before rex started ──` rule.
 - **Feed health** replaces the bare "Ready. Watching…":
 

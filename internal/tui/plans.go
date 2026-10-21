@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -474,11 +475,10 @@ func (b *PlanBrowser) CommitCreate(name string) PlanAction {
 		b.Err = err.Error()
 		return PlanStay
 	}
-	if _, err := os.Stat(path); err == nil {
-		b.Err = b.relName(path) + " already exists"
-		return PlanStay
-	}
-	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+	if err := writeNew(path, plan.Stub(planStem(filepath.Base(path)))); err != nil {
+		if os.IsExist(err) {
+			err = errors.New(b.relName(path) + " already exists")
+		}
 		b.Err = err.Error()
 		return PlanStay
 	}
@@ -489,6 +489,29 @@ func (b *PlanBrowser) CommitCreate(name string) PlanAction {
 	b.fresh = true
 	b.Rebuild()
 	return b.open(path)
+}
+
+// writeNew creates path with data and fails if it already exists, so two
+// Rex windows creating the same name cannot overwrite each other.
+func writeNew(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	return f.Close()
+}
+
+// planStem is a plan file name without .rex.json.
+func planStem(name string) string {
+	if IsPlanFile(name) {
+		return name[:len(name)-len(".rex.json")]
+	}
+	return name
 }
 
 // planName is a typed name as a slash path under the folder it is created

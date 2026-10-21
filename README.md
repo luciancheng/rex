@@ -23,7 +23,7 @@
 
 REX is a watch-only sidecar. It does not run tools, approve them, or steer the agent. You talk to Cursor or Claude Code as usual. Rex holds the plan you are sending off, and the pane next to the dino shows thoughts, edits, shell, questions, and your prompts as they happen.
 
-Plans live in the repo at `rex/plans/` as JSON named `<name>.rex.json`. Commit that folder. Teammates pick the same plan and watch the same send-off. The file format is not finalized yet — new plans start as `{}`.
+Plans live in the repo at `rex/plans/` as JSON named `<name>.rex.json`. Commit that folder; teammates open the same plan from git. A plan is a goal, hard scope edges, and a flat list of PR-sized tasks, with `parent` for outline and `depends_on` for order ([format v1](docs/plan-format.md)). New plans start as an empty v1 stub for your agent to fill.
 
 The install script wires Cursor. Claude Code is one opt-in command away (`rex ingest --install claude`, or add `--project` to wire just this repo). Codex has a mapper but no hooks yet. Works in Terminal.app, iTerm, Windows Terminal, and VS Code. Install a `rex` binary once — after that it works from any folder.
 

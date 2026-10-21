@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/luciancheng/rex/internal/plan"
 )
 
 func TestPlanFileName(t *testing.T) {
@@ -299,6 +301,26 @@ func TestPlanCreateWarnsOnDuplicate(t *testing.T) {
 	}
 	if !strings.Contains(again.Err, "already exists") {
 		t.Fatalf("err %q", again.Err)
+	}
+}
+
+func TestPlanCreateWritesTheV1Stub(t *testing.T) {
+	repo := t.TempDir()
+	b := NewPlanBrowser(repo)
+	b.Screen = ScreenCreate
+	if b.CommitCreate("Auth Flow") != PlanOpenChat {
+		t.Fatal(b.Err)
+	}
+	p, err := plan.Load(b.Current)
+	if err != nil || p.Version != plan.Version || p.ID != "auth-flow" || len(p.Problems) != 0 {
+		t.Fatalf("%v %+v", err, p)
+	}
+	before, _ := os.ReadFile(b.Current)
+	again := NewPlanBrowser(repo)
+	again.Screen = ScreenCreate
+	again.CommitCreate("Auth Flow")
+	if after, _ := os.ReadFile(b.Current); string(after) != string(before) {
+		t.Fatal("a duplicate create must not touch the file")
 	}
 }
 

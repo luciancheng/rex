@@ -92,7 +92,7 @@ After sprite or TUI changes, restart a running `rex start`. Tests do not replace
 - Tests go in a `*_test.go` file in the same package. Use `t.TempDir()` for any repo, plans dir or feed file, and never touch the real `~` or `~/.rex`. Assert on rendered text with `viewText(BuildLogView(...))` / `viewText(BuildPlanView(...))`, and use `NO_COLOR`-style `Enabled: false` frames when you need plain text.
 - `LogLine.Kind` picks the color. It is looked up in `mascot.UI`, then in `kindColor`. A new UI role goes in `mascot.UI`, not in a new palette.
 - Pane width math uses `runeLen` / `clip` / `padRight`, never `len()`.
-- Vendor names live only in `internal/watch` (the adapters and installers) and in the `--source` list and help text in `internal/cli`. Adding a harness touches both. The TUI paints event kinds and never branches on a vendor.
+- Vendor names live in `internal/watch` (adapters, installers), in the `rex ingest` flags, `--source` list and help in `internal/cli`, and in `scripts/install.*`. Adding a harness touches all three. The TUI paints event kinds and never branches on a vendor.
 - Keep stdout clean in `rex ingest`. Hooks treat stdout as agent input, and exit code 2 as "block".
 
 ### Go 1.22 floor
@@ -100,7 +100,7 @@ After sprite or TUI changes, restart a running `rex start`. Tests do not replace
 `go.mod` says `go 1.22` and CI runs Go 1.22. Code built with a newer toolchain can still break the 1.22 floor:
 
 - **The compiler** rejects newer language features, such as range-over-func, because `go.mod` sets `-lang`.
-- **`go vet`** on Go 1.23+ flags any standard-library API newer than `go.mod` through its `stdversion` check. So does `go test`, which runs vet. Run vet with a new toolchain, not only with 1.22. Examples it catches:
+- **`go vet`** on Go 1.23+ flags any standard-library API newer than `go.mod` through its `stdversion` check. `go test` runs that check only on the newest toolchains (not on 1.23 or 1.24), so always run `go vet` explicitly, with a new toolchain. Examples it catches:
   - 1.23: `iter`, `maps.Keys/Values`, `slices.Collect/Sorted/Chunk`, `unique`
   - 1.24: `os.Root`, `t.Chdir`, `t.Context`, `b.Loop`, `strings.Lines/SplitSeq/FieldsSeq`, `bytes.Lines`
   - 1.25+: `testing/synctest`, `sync.WaitGroup.Go`, `t.Output`, `errors.AsType` (1.26), `encoding/json/v2` (1.27)
@@ -125,7 +125,7 @@ git push --force-with-lease origin <each moved branch>
 
 ```bash
 test -z "$(gofmt -l .)"
-go vet ./... && GOOS=windows go vet ./... && GOOS=linux go vet ./...
+for os in darwin linux windows; do GOOS=$os go vet ./... || exit 1; done
 staticcheck ./...                           # honnef.co/go/tools/cmd/staticcheck@2026.2.2
 go test -race ./...
 GOTOOLCHAIN=local go1.22.12 test ./...      # golang.org/dl/go1.22.12, then: go1.22.12 download
@@ -144,6 +144,6 @@ git diff --exit-code <base-branch> -- go.mod go.sum   # no new deps, no toolchai
 ## Definition of done
 
 - Follows this file and any PNG the human attached.
-- The pre-PR gate in Workflow passes (at minimum `go test ./...`).
+- The pre-PR gate in Workflow passes.
 - Terminal state restores on quit / Ctrl+C.
 - No speculative product, extra commands, or architecture for a feature that was not requested.

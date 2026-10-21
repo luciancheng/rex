@@ -15,6 +15,7 @@ type briefView struct {
 	task     string // the pin the send-off is for
 	text     string
 	status   string // what copying did: "copied (pbcopy)", "sent (OSC 52) · may be blocked", …
+	refused  bool   // status says why the plan can't be sent off right now
 }
 
 // copyText copies a brief and says honestly what happened. Without a
@@ -81,12 +82,12 @@ func (a *app) refreshBriefs() {
 			continue
 		}
 		if why := a.stale(v); why != "" {
-			v.status = why
+			v.status, v.refused = why, true
 			continue
 		}
 		before := v.text
-		if a.build(v) == nil && v.text != before {
-			v.status = "plan changed · c⏎ copies this one"
+		if a.build(v) == nil && (v.text != before || v.refused) {
+			v.status, v.refused = "plan changed · c⏎ copies this one", false
 		}
 	}
 }
@@ -140,7 +141,7 @@ func (a *app) briefKey() bool {
 	a.draft = ""
 	if a.doc != nil && v.path == a.doc.path && (text == "c" || text == "copy" || text == "o" || text == "open" || text == "print") {
 		if why := a.stale(v); why != "" {
-			v.status = why // never the last good copy
+			v.status, v.refused = why, true // never the last good copy
 			a.flash(why, "error")
 			return true
 		}

@@ -185,6 +185,12 @@ func TestOpenSendoffRefusesOnceThePlanBreaks(t *testing.T) {
 		if len(copied) != 1 || a.plainOut != "" {
 			t.Fatalf("%s: c⏎ and o⏎ never hand off the last good copy (%d copies, plain %q)", name, len(copied), a.plainOut)
 		}
+		os.WriteFile(path, []byte(demoPlan), 0o644) // put back as it was
+		later(a, c)
+		later(a, c)
+		if v := a.briefs[PanePlans]; v.status != "plan changed · c⏎ copies this one" {
+			t.Fatalf("%s: once the plan reads again the refusal goes: %q", name, v.status)
+		}
 	}
 }
 

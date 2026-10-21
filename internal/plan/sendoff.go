@@ -31,7 +31,8 @@ func Sendoff(p *Plan, rel string) (string, error) {
 	}
 	// Fullest first. Finished tasks leave the task list before their Done
 	// entries go (what the last agent actually did matters more), then the
-	// list of open tasks is shortened; the pin's Next section always stays.
+	// list of open tasks is shortened; the pin's Next section stays when it fits,
+	// and the closing instructions and fingerprint always do.
 	var s string
 	for _, limit := range []int{-1, 6, 3, 0} {
 		for _, open := range []int{-1, -2, 12, 4} {

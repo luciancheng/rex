@@ -149,14 +149,14 @@ func TestEmojiSequencesMeasureAsDrawn(t *testing.T) {
 // zero-width, and what follows counts in full. A tail never starts on a
 // modifier.
 func TestZWJJoinsOnlyPictographs(t *testing.T) {
-	if cellLen("a‍b") != 2 || cellLen(strings.Repeat("‍中", 4)) != 8 {
-		t.Fatalf("a‍b %d, ‍中×4 %d", cellLen("a‍b"), cellLen(strings.Repeat("‍中", 4)))
+	if cellLen("a\u200db") != 2 || cellLen(strings.Repeat("\u200d中", 4)) != 8 {
+		t.Fatalf("a\u200db %d, \u200d中×4 %d", cellLen("a\u200db"), cellLen(strings.Repeat("\u200d中", 4)))
 	}
-	if got := clip(strings.Repeat("‍中", 4), 5); cellLen(got) != 5 || !strings.Contains(got, "…") {
+	if got := clip(strings.Repeat("\u200d中", 4), 5); cellLen(got) != 5 || !strings.Contains(got, "…") {
 		t.Fatalf("%q", got)
 	}
-	for _, s := range []string{"ab⚠️", "x1️⃣"} {
-		if got := tailCells(s, 1); strings.ContainsAny(got, "️⃣") {
+	for _, s := range []string{"ab⚠\ufe0f", "x1\ufe0f\u20e3"} {
+		if got := tailCells(s, 1); strings.ContainsAny(got, "\ufe0f\u20e3") {
 			t.Errorf("tailCells(%q, 1) starts on a modifier: %q", s, got)
 		}
 	}

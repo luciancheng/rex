@@ -164,7 +164,10 @@ func (t *EventTail) Poll() []Event {
 	}
 	size := info.Size()
 	if size < t.offset {
+		// The feed was truncated or replaced: start over and drop the
+		// partial line, or it would glue onto the next event.
 		t.offset = 0
+		t.pending = ""
 	}
 	if size == t.offset {
 		return nil

@@ -484,3 +484,21 @@ func splitLines(s string) []string {
 	}
 	return lines
 }
+
+func TestEventTailDropsPartialLineAfterTruncate(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"aaaaaaaaaaaaaaaaaaaaaaaa"}`+"\n"+`{"source":"cursor","kind":"user","te`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tail := NewEventTail(feed, false)
+	if got := tail.Poll(); len(got) != 1 {
+		t.Fatalf("first poll %#v", got)
+	}
+	if err := os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"b"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := tail.Poll()
+	if len(got) != 1 || got[0].Text != "b" {
+		t.Fatalf("event after truncation lost: %#v", got)
+	}
+}

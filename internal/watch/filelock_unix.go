@@ -24,7 +24,9 @@ func withFeedLock(path string, fn func() error) error {
 		if err == nil {
 			break
 		}
-		if time.Now().After(deadline) {
+		// Only a held lock is worth waiting for; a filesystem without
+		// flock fails the same way every time.
+		if (err != unix.EWOULDBLOCK && err != unix.EINTR) || time.Now().After(deadline) {
 			return fn()
 		}
 		time.Sleep(lockPoll)

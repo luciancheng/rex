@@ -203,10 +203,7 @@ func IngestRaw(raw, source, path string) []Event {
 // RunIngest maps one hook payload from stdin into the feed. It runs inside
 // agent hooks, so it must never block or fail the agent: the caller exits 0
 // whatever happens here, and nothing is written to stdout.
-func RunIngest(stdin io.Reader, stdout io.Writer, source string, installCursorHook bool, eventsPath string) error {
-	if installCursorHook {
-		return InstallCursorHook(stdout)
-	}
+func RunIngest(stdin io.Reader, source string, eventsPath string) error {
 	path := eventsPath
 	if path == "" {
 		path = DefaultEventPath()

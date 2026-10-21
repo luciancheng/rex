@@ -64,10 +64,10 @@ func TestStartNoninteractivePrintsCard(t *testing.T) {
 	}
 }
 
-func TestUnknownCommandIsError(t *testing.T) {
+func TestUnknownCommandIsErrorButNotBlock(t *testing.T) {
 	var stderr bytes.Buffer
 	code := Main([]string{"demo"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
-	if code != 2 {
+	if code != 1 { // 2 would read as "block" to an agent hook
 		t.Fatalf("code=%d", code)
 	}
 }

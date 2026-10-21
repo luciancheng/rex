@@ -46,8 +46,9 @@ const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex}]
 
 append an agent event to the watch feed
 
-ingest always exits 0 and never writes stdout, so a hook cannot block or
-steer the agent. Problems go to stderr.
+When run from a hook, ingest always exits 0 and writes nothing to stdout,
+so it cannot block or steer the agent; problems go to stderr. Only
+-h/--help, --version and --install-cursor-hook print to stdout.
 
 options:
   -h, --help              show this help message and exit
@@ -86,8 +87,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return runIngest(rest, stdin, stdout, stderr)
 	default:
+		// Not 2: a hook pointing at a subcommand this binary doesn't have
+		// must not read as "block" to the agent.
 		fmt.Fprintf(stderr, "rex: unknown command '%s'\n", cmd)
-		return 2
+		return 1
 	}
 }
 
@@ -166,7 +169,7 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "rex: invalid source '%s', reading as auto\n", *source)
 		*source = "auto"
 	}
-	if err := watch.RunIngest(stdin, io.Discard, *source, false, *events); err != nil {
+	if err := watch.RunIngest(stdin, *source, *events); err != nil {
 		fmt.Fprintf(stderr, "rex: %v\n", err)
 	}
 	return 0

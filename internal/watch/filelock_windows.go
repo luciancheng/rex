@@ -27,7 +27,8 @@ func withFeedLock(path string, fn func() error) error {
 		if err == nil {
 			break
 		}
-		if time.Now().After(deadline) {
+		// Only a held lock is worth waiting for.
+		if err != windows.ERROR_LOCK_VIOLATION || time.Now().After(deadline) {
 			return fn()
 		}
 		time.Sleep(lockPoll)

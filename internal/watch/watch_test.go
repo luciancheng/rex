@@ -502,3 +502,62 @@ func TestEventTailDropsPartialLineAfterTruncate(t *testing.T) {
 		t.Fatalf("event after truncation lost: %#v", got)
 	}
 }
+
+func TestLastEventsKeepsALineStartingExactlyAtTheWindow(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	first, _ := NewEvent("cursor", "user", "first", nil).ToJSON()
+	filler, _ := NewEvent("cursor", "thought", strings.Repeat("x", 100), nil).ToJSON()
+	window := first + "\n"
+	for len(window)+len(filler)+1 <= tailBytes {
+		window += filler + "\n"
+	}
+	window += strings.Repeat("q", tailBytes-len(window)-1) + "\n" // a junk line pads to exactly tailBytes
+	if len(window) != tailBytes {
+		t.Fatalf("setup: window is %d bytes", len(window))
+	}
+	content := `{"source":"cursor","kind":"user","text":"before"}` + "\n" + window
+	if err := os.WriteFile(feed, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := LastEvents(feed, 10000)
+	if len(got) == 0 || got[0].Text != "first" {
+		t.Fatalf("the line starting exactly at the window was dropped: first=%q", got[0].Text)
+	}
+}
+
+func TestFeedPermissionsTightenOnOldInstalls(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".rex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	feed := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(feed, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AppendEvent(feed, NewEvent("cursor", "user", "private", nil)); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{dir: 0o700, feed: 0o600} {
+		if info, _ := os.Stat(path); info.Mode().Perm() != want {
+			t.Fatalf("%s mode %o, want %o", path, info.Mode().Perm(), want)
+		}
+	}
+}
+
+func TestEventTailDropsPartialLineAfterDeleteAndRecreate(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"a"}`+"\n"+`{"source":"cursor","kind":"us`), 0o600)
+	tail := NewEventTail(feed, false)
+	tail.Poll()
+	os.Remove(feed)
+	tail.Poll()
+	os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"b"}`+"\n"), 0o600)
+	if got := tail.Poll(); len(got) != 1 || got[0].Text != "b" {
+		t.Fatalf("%#v", got)
+	}
+}

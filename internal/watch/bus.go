@@ -71,7 +71,9 @@ func readTail(path string, limit int64) []byte {
 	if err != nil {
 		return nil
 	}
-	start := info.Size() - limit
+	// Read one byte before the window: if it is a newline, the window
+	// already starts on a line boundary and its first line is whole.
+	start := info.Size() - limit - 1
 	if start < 0 {
 		start = 0
 	}
@@ -82,11 +84,11 @@ func readTail(path string, limit int64) []byte {
 	}
 	buf = buf[:n]
 	if start > 0 {
-		if i := strings.IndexByte(string(buf), '\n'); i >= 0 {
-			buf = buf[i+1:]
-		} else {
+		i := strings.IndexByte(string(buf), '\n')
+		if i < 0 {
 			return nil
 		}
+		buf = buf[i+1:]
 	}
 	return buf
 }
@@ -95,7 +97,7 @@ func readTail(path string, limit int64) []byte {
 // that grows is written again in full and ExtendLog merges it on screen, so
 // a tail never reads a line that was rewritten under it.
 func AppendEvent(path string, event Event) (bool, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := ensureFeedDir(path); err != nil {
 		return false, err
 	}
 	event.Text = capText(event.Text, maxEventText)
@@ -113,6 +115,7 @@ func AppendEvent(path string, event Event) (bool, error) {
 		if err != nil {
 			return err
 		}
+		privatize(f)
 		_, err = f.WriteString(line + "\n")
 		cerr := f.Close()
 		if err != nil {
@@ -127,8 +130,31 @@ func AppendEvent(path string, event Event) (bool, error) {
 	return wrote, err
 }
 
-// capText keeps event text under limit bytes, cut on a rune boundary, so a
-// single line always fits in the tail window LastEvents reads.
+// The feed holds prompts and commands, so it is private to the user:
+// 0600 for the file and 0700 for ~/.rex, tightened on older installs too.
+func ensureFeedDir(path string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(dir) == filepath.Join(home, ".rex") {
+		if info, err := os.Stat(dir); err == nil && info.Mode().Perm()&0o077 != 0 {
+			_ = os.Chmod(dir, 0o700)
+		}
+	}
+	return nil
+}
+
+func privatize(f *os.File) {
+	if info, err := f.Stat(); err == nil && info.Mode().Perm()&0o077 != 0 {
+		_ = f.Chmod(0o600)
+	}
+}
+
+// capText keeps event text under limit bytes, cut on a rune boundary. With
+// the 32KB cap a line fits the 64KB tail window LastEvents reads unless the
+// text is mostly characters JSON must escape; such a line is only missed
+// by duplicate detection, never lost from the feed.
 func capText(text string, limit int) string {
 	if len(text) <= limit {
 		return text
@@ -160,6 +186,7 @@ func (t *EventTail) Poll() []Event {
 	info, err := os.Stat(t.Path)
 	if err != nil {
 		t.offset = 0
+		t.pending = ""
 		return nil
 	}
 	size := info.Size()

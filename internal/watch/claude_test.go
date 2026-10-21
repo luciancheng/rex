@@ -29,7 +29,15 @@ func TestMapClaudeEvents(t *testing.T) {
 		{`{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/r/a.go","old_string":"x","new_string":"y"}}`, "command", "Edit /r/a.go"},
 		{`{"hook_event_name":"PreToolUse","tool_name":"WebFetch","tool_input":{"url":"https://go.dev","prompt":"summarize"}}`, "command", "WebFetch https://go.dev"},
 		{`{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which plan?"},{"question":"Ship it?"}]}}`, "question", "Which plan? · Ship it?"},
-		{`{"hook_event_name":"PreToolUse","tool_name":"TaskCreate","tool_input":{"subject":"x"}}`, "command", ""},
+		{`{"hook_event_name":"PreToolUse","tool_name":"TaskCreate","tool_input":{"subject":"wire the outline","description":"SECRET BODY"}}`, "command", "TaskCreate wire the outline"},
+		{`{"hook_event_name":"PreToolUse","tool_name":"NotebookEdit","tool_input":{"notebook_path":"/r/a.ipynb","cell_id":"c1","new_source":"SECRET BODY","edit_mode":"replace"}}`, "command", "NotebookEdit /r/a.ipynb"},
+		{`{"hook_event_name":"PreToolUse","tool_name":"ExitPlanMode","tool_input":{"plan":"# Plan\n\nSECRET BODY","planFilePath":"/r/plan.md"}}`, "command", "plan ready /r/plan.md"},
+		{`{"hook_event_name":"PreToolUse","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"SECRET BODY","status":"completed"},{"content":"write the tests","status":"in_progress"}]}}`, "command", "todo: write the tests"},
+		{`{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"find the mapper","prompt":"SECRET BODY\nlong prompt","subagent_type":"Explore"}}`, "command", "Agent find the mapper"},
+		{`{"hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"rex-plan"}}`, "command", "Skill rex-plan"},
+		{`{"hook_event_name":"PreToolUse","tool_name":"mcp__github__get_issue","tool_input":{"owner":"x","body":"SECRET BODY"}}`, "command", "github.get_issue"},
+		{`{"hook_event_name":"PreToolUse","tool_name":"mcp__ui__ask_user","tool_input":{"question":"Ship it?"}}`, "question", "Ship it?"},
+		{`{"hook_event_name":"SessionStart","source":"startup"}`, "idle", "session started"},
 		{`{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"/r/a.go"},"tool_response":{"filePath":"/r/a.go"}}`, "result", "wrote /r/a.go"},
 		{`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"go test ./..."},"tool_response":{"stdout":"ok"}}`, "result", "ran go test ./..."},
 		{`{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"go test ./..."},"error":"Exit code 1\nFAIL"}`, "error", "Bash failed · go test ./...: Exit code 1"},
@@ -167,8 +175,105 @@ func TestInstallClaudeProjectStaysOutOfGit(t *testing.T) {
 	}
 	InstallClaudeProject(repo, io.Discard)
 	ex2, _ := os.ReadFile(filepath.Join(repo, ".git", "info", "exclude"))
-	if strings.Count(string(ex2), "settings.local.json") != 1 {
-		t.Fatal("exclude line added once")
+	if strings.Count(string(ex2), ".claude/settings.local.json\n") != 1 || strings.Count(string(ex2), ".claude/settings.local.json.bak\n") != 1 {
+		t.Fatalf("each exclude line added once, the .bak too:\n%s", ex2)
+	}
+}
+
+func TestInstallClaudeProjectInWorktreesAndSubmodules(t *testing.T) {
+	claudeHome(t)
+	// A worktree: .git is a file pointing at main/.git/worktrees/wt, whose
+	// commondir leads back to main/.git, where info/exclude lives.
+	main := t.TempDir()
+	wtGit := filepath.Join(main, ".git", "worktrees", "wt")
+	os.MkdirAll(wtGit, 0o755)
+	os.WriteFile(filepath.Join(wtGit, "commondir"), []byte("../..\n"), 0o644)
+	wt := t.TempDir()
+	os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+wtGit+"\n"), 0o644)
+	if err := InstallClaudeProject(wt, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if ex, _ := os.ReadFile(filepath.Join(main, ".git", "info", "exclude")); !strings.Contains(string(ex), ".claude/settings.local.json") {
+		t.Fatalf("worktree exclude %q", ex)
+	}
+	// A submodule: a relative gitdir with no commondir.
+	super := t.TempDir()
+	mod := filepath.Join(super, ".git", "modules", "sub")
+	os.MkdirAll(mod, 0o755)
+	sub := filepath.Join(super, "sub")
+	os.MkdirAll(sub, 0o755)
+	os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: ../.git/modules/sub\n"), 0o644)
+	if err := InstallClaudeProject(sub, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if ex, _ := os.ReadFile(filepath.Join(mod, "info", "exclude")); !strings.Contains(string(ex), ".claude/settings.local.json") {
+		t.Fatalf("submodule exclude %q", ex)
+	}
+	// Outside git nothing is written.
+	plain := t.TempDir()
+	if err := InstallClaudeProject(plain, io.Discard); err == nil || !strings.Contains(err.Error(), "needs a git repo") {
+		t.Fatalf("outside git: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(plain, ".claude")); err == nil {
+		t.Fatal("nothing is written outside a repo")
+	}
+}
+
+func TestClaudeKeepsTheUsersHandlersByteForByte(t *testing.T) {
+	claudeHome(t)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	ours := claudeHandler(rexExecutable(), runtimeGOOS)
+	cmd, _ := json.Marshal(ours["command"])
+	user := `{"type":"command","command":"say done",   "timeout":   10.0}`
+	body := `{
+  "hooks": {
+    "Stop": [
+      {"hooks": [` + user + `, {"type":"command","command":` + string(cmd) + `}]}
+    ]
+  }
+}
+`
+	os.WriteFile(path, []byte(body), 0o644)
+	if err := uninstallClaude(path, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if !strings.Contains(string(got), user) || strings.Contains(string(got), "ingest --source claude") {
+		t.Fatalf("the user's handler must keep its bytes and Rex's must go:\n%s", got)
+	}
+}
+
+func TestClaudeReinstallKeepsRexsGroupInPlace(t *testing.T) {
+	claudeHome(t)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := installClaude(path, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Count(string(data), "\n") < 10 {
+		t.Fatalf("a new settings file is written one entry per line:\n%s", data)
+	}
+	// The user lengthens Rex's timeout and adds a group after it.
+	tweaked := strings.Replace(string(data), `"timeout": 5`, `"timeout": 30`, 1)
+	tweaked = strings.Replace(tweaked, `"Stop": [`, `"Stop": [{"matcher":"x","hooks":[{"type":"command","command":"say hi"}]},`, 1)
+	os.WriteFile(path, []byte(tweaked), 0o644)
+	if err := installClaude(path, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.ReadFile(path); string(again) != tweaked {
+		t.Fatalf("reinstall rewrote an installed hook:\n%s", again)
+	}
+	if err := uninstallClaude(path, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := os.ReadFile(path); strings.Contains(string(out), "ingest --source claude") || !strings.Contains(string(out), "say hi") {
+		t.Fatalf("uninstall:\n%s", out)
+	}
+	fresh := filepath.Join(t.TempDir(), "settings.json")
+	installClaude(fresh, io.Discard)
+	uninstallClaude(fresh, io.Discard)
+	if out, _ := os.ReadFile(fresh); strings.Contains(string(out), "hooks") {
+		t.Fatalf("uninstall leaves no empty hooks object:\n%s", out)
 	}
 }
 

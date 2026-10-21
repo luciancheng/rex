@@ -43,7 +43,7 @@ options:
 `
 
 const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex}] [--events EVENTS]
-       rex ingest --install HARNESS | --uninstall HARNESS
+       rex ingest --install HARNESS | --uninstall HARNESS [--project]
 
 append an agent event to the watch feed
 
@@ -58,7 +58,7 @@ options:
                           payload dialect (default: auto)
   --install HARNESS       wire an agent so it writes the feed: cursor, claude,
                           or auto for every one found on this machine
-  --project               with claude: wire only this repo
+  --project               with claude: wire only this git repo
                           (.claude/settings.local.json, kept out of git)
   --uninstall HARNESS     take Rex's hook back out of that agent's config
   --install-cursor-hook   same as --install cursor
@@ -188,7 +188,13 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		*install = "cursor"
 	}
 	// Installing is interactive, so it may fail loudly; ingest never does.
-	if *project && (*install == "claude" || *uninstall == "claude") {
+	if *project && *install != "claude" && *uninstall != "claude" {
+		// Only Claude Code has a per-repo hook file; never fall through to
+		// the machine-wide config the user just asked to avoid.
+		fmt.Fprintln(stderr, "rex: --project works with claude only; nothing changed")
+		return 1
+	}
+	if *project {
 		repo := tui.FindRepoRoot("")
 		var err error
 		if *install != "" {

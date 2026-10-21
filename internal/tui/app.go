@@ -117,7 +117,8 @@ func (a *app) composeOptions() ComposeOptions {
 	if textW > 0 {
 		opt.LogView = a.logView(textW)
 		if len(a.log) == 0 {
-			opt.LogView = a.health.lines(textW, a.hidden, time.Now())
+			a.health.refresh(time.Now())
+			opt.LogView = a.health.lines(textW, a.hidden, time.Now(), true)
 		}
 	}
 	if a.overlay[a.pane] == overlayHelp {
@@ -214,16 +215,24 @@ func (a *app) logLines() int {
 // ones worth drawing. A scrolled-up view keeps showing the same lines while
 // new ones arrive below (until MaxLog trims the oldest).
 func (a *app) ingest(fresh []watch.Event) bool {
+	for _, ev := range fresh {
+		a.health.saw(ev)
+	}
+	hidden := a.hidden
 	fresh = a.own(fromFeed(fresh))
 	if len(fresh) == 0 {
-		return false
+		// A hidden event still changes the count the empty tape shows.
+		return a.hidden != hidden && len(a.log) == 0
 	}
 	before := a.logLines()
 	prevTurn := a.turn
 	for _, ev := range fresh {
 		a.turn = ApplyTurn(a.turn, ev)
-		if watch.KeepInPane(ev) || ev.Kind == "idle" { // a turn end clears an old error
+		switch {
+		case watch.KeepInPane(ev) || ev.Kind == "idle": // a turn end clears an old error
 			a.lastKind = ev.Kind
+		case ev.Kind == "result" && a.lastKind == "question":
+			a.lastKind = "command" // the question was answered: back to work
 		}
 	}
 	n := len(a.log)
@@ -665,7 +674,8 @@ func (a *app) overlayKey(key string) bool {
 // helpBody is the Help overlay's lines at width.
 func (a *app) helpBody(width int) []LogLine {
 	help := append(helpLines(width), LogLine{Kind: "gap"})
-	return append(help, a.health.lines(width, a.hidden, time.Now())...)
+	a.health.refresh(time.Now())
+	return append(help, a.health.lines(width, a.hidden, time.Now(), false)...)
 }
 
 // syncPlanInput hands the plan draft to the screen that reads it: Browse

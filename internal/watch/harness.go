@@ -26,6 +26,9 @@ type Harness struct {
 	Present func(home string) bool
 	// Wired reports whether Rex's hook is in its config.
 	Wired func(home string) bool
+	// WiredHere, if set, reports whether one repo's own config runs Rex
+	// (Claude Code's --project install).
+	WiredHere func(repo string) bool
 	// Install merges Rex's hook into its config and says what it did.
 	Install func(home string, out io.Writer) error
 	// Uninstall removes only Rex's hook.
@@ -109,16 +112,23 @@ type HarnessStatus struct {
 	Name, Label string
 	Present     bool
 	Wired       bool
+	Here        bool // wired for this repo only
 }
 
-func HarnessStatuses() []HarnessStatus {
+func HarnessStatuses() []HarnessStatus { return HarnessStatusesFor("") }
+
+// HarnessStatusesFor is HarnessStatuses, plus whether repo's own config
+// wires each harness.
+func HarnessStatusesFor(repo string) []HarnessStatus {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
 	var out []HarnessStatus
 	for _, h := range Harnesses() {
-		out = append(out, HarnessStatus{Name: h.Name, Label: h.Label, Present: h.Present(home), Wired: h.Wired(home)})
+		st := HarnessStatus{Name: h.Name, Label: h.Label, Present: h.Present(home), Wired: h.Wired(home)}
+		st.Here = repo != "" && h.WiredHere != nil && h.WiredHere(repo)
+		out = append(out, st)
 	}
 	return out
 }

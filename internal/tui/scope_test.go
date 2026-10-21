@@ -27,8 +27,8 @@ func TestOtherReposAreHiddenAndCounted(t *testing.T) {
 	}
 	typeText(a, "?")
 	press(a, "\r")
-	if !strings.Contains(a.frame(), "1 event from other folders hidden") {
-		t.Fatal("help shows the hidden count")
+	if !strings.Contains(viewText(a.helpBody(78)), "1 event from other folders hidden") {
+		t.Fatalf("help shows the hidden count\n%s", viewText(a.helpBody(78)))
 	}
 }
 

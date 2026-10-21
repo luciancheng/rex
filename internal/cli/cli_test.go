@@ -395,3 +395,22 @@ func TestInstallFlagsRefuseMixedOrEmptyNames(t *testing.T) {
 		t.Fatal("a refused command wrote hooks")
 	}
 }
+
+func TestProjectInstallsAreClaudeOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	os.MkdirAll(filepath.Join(home, ".cursor"), 0o755)
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	for _, name := range []string{"auto", "cursor"} {
+		var stdout, stderr bytes.Buffer
+		if code := Main([]string{"ingest", "--install", name, "--project"}, bytes.NewReader(nil), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "claude only") {
+			t.Fatalf("%s --project: code=%d %q", name, code, stderr.String())
+		}
+	}
+	for _, f := range []string{filepath.Join(home, ".cursor", "hooks.json"), filepath.Join(home, ".claude", "settings.json")} {
+		if _, err := os.Stat(f); err == nil {
+			t.Fatalf("--project fell through to the machine-wide %s", f)
+		}
+	}
+}

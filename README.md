@@ -65,7 +65,7 @@ rex start
 rex start                         # plans, then the live tape
 rex start --static                # print one frame and exit
 rex ingest --install cursor       # (re)wire Cursor; --uninstall cursor takes it out
-rex ingest --install claude       # wire Claude Code (~/.claude/settings.json)
+rex ingest --install claude       # wire Claude Code (~/.claude/settings.json, or $CLAUDE_CONFIG_DIR)
 rex ingest --install claude --project   # this repo only, git-excluded
 rex --help
 ```

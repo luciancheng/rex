@@ -53,6 +53,8 @@ var skipToolKeys = map[string]bool{
 	"oldString":  true,
 	"newString":  true,
 	"patchText":  true,
+	"new_source": true, // NotebookEdit's cell body
+	"old_source": true,
 }
 
 func asDict(value any) map[string]any {
@@ -138,10 +140,15 @@ func DetectSource(payload map[string]any, hint string) string {
 }
 
 // toolKind says whether a tool call asks the human something. "Task" and
-// its friends contain "ask" but are agent work, not questions.
+// its friends contain "ask" but are agent work, not questions; an MCP
+// tool (server__ask_user) is judged by its own name.
 func toolKind(tool string) string {
 	lowered := strings.ToLower(tool)
-	if strings.HasPrefix(lowered, "ask") || strings.Contains(lowered, "question") {
+	name := lowered
+	if i := strings.LastIndex(name, "__"); i >= 0 {
+		name = name[i+2:]
+	}
+	if strings.HasPrefix(name, "ask") || strings.Contains(lowered, "question") {
 		return "question"
 	}
 	return "command"
@@ -188,7 +195,7 @@ func payloadPath(payload map[string]any) string {
 		input = payload["toolInput"]
 	}
 	data := asDict(input)
-	for _, key := range []string{"file_path", "filePath", "path"} {
+	for _, key := range []string{"file_path", "filePath", "path", "notebook_path"} {
 		if p := strField(data, key); p != "" {
 			return p
 		}
@@ -281,22 +288,26 @@ func toolText(tool string, rawInput any) string {
 			return strings.Join(parts, " · ")
 		}
 	}
-	if u := strField(data, "url"); u != "" {
-		return tool + " " + u
+	_, hasCommand := data["command"]
+	if _, ok := data["cmd"]; ok {
+		hasCommand = true
+	}
+	if u := strField(data, "url"); u != "" && !hasCommand {
+		return tool + " " + u // WebFetch: the page, not its prompt
 	}
 	if p := strField(data, "prompt"); p != "" {
 		return p
 	}
-	if _, ok := data["command"]; ok {
-		return asCommand(data)
-	}
-	if _, ok := data["cmd"]; ok {
+	if hasCommand {
 		return asCommand(data)
 	}
 	if p := strField(data, "file_path"); p != "" {
 		return tool + " " + p
 	}
 	if p := strField(data, "path"); p != "" {
+		return tool + " " + p
+	}
+	if p := strField(data, "notebook_path"); p != "" {
 		return tool + " " + p
 	}
 	if q := strField(data, "query"); q != "" {
@@ -471,7 +482,7 @@ func MapClaude(payload map[string]any) *Event {
 		return &ev
 	case "PreToolUse":
 		tool, input := claudeTool(payload)
-		text := strings.TrimSpace(toolText(tool, input))
+		text := strings.TrimSpace(claudeToolText(tool, input))
 		if text == "" {
 			return nil
 		}
@@ -549,11 +560,65 @@ func MapClaude(payload map[string]any) *Event {
 		}
 		ev := NewEvent("claude", "error", text, nil)
 		return &ev
+	case "SessionStart":
+		ev := NewEvent("claude", "idle", "session started", nil)
+		return &ev
 	case "SessionEnd":
 		ev := NewEvent("claude", "idle", "session ended", nil)
 		return &ev
 	}
 	return nil
+}
+
+// claudeToolText is a short line for one of Claude Code's own tools: a
+// plan, a todo list or a subagent prompt is never flattened onto the tape,
+// and nothing falls back to a JSON dump of the input.
+func claudeToolText(tool string, input any) string {
+	data := asDict(input)
+	first := func(keys ...string) string {
+		for _, k := range keys {
+			if v := firstLine(strField(data, k)); v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	labelled := func(label, detail string) string {
+		if detail == "" {
+			return label
+		}
+		return label + " " + detail
+	}
+	switch tool {
+	case "ExitPlanMode":
+		return labelled("plan ready", first("planFilePath"))
+	case "TodoWrite":
+		todos, _ := data["todos"].([]any)
+		for _, item := range todos {
+			if t := asDict(item); strField(t, "status") == "in_progress" {
+				return labelled("todo:", firstLine(strField(t, "content")))
+			}
+		}
+		return "todo list updated"
+	case "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop":
+		return labelled(tool, first("subject", "description", "taskId", "task_id"))
+	case "Task", "Agent":
+		return labelled(tool, first("description", "subagent_type"))
+	case "Skill":
+		return labelled(tool, first("skill"))
+	}
+	if strings.HasPrefix(tool, "mcp__") {
+		if q := first("question"); q != "" {
+			return q // an MCP tool that asks the human
+		}
+		name := strings.ReplaceAll(strings.TrimPrefix(tool, "mcp__"), "__", ".")
+		return labelled(name, first("query", "url", "path", "file_path", "title", "name"))
+	}
+	text := toolText(tool, input)
+	if t := strings.TrimSpace(text); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+		return tool // an input with nothing to show by name: just the tool
+	}
+	return text
 }
 
 func MapCodex(payload map[string]any) *Event {

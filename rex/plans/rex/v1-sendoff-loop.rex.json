@@ -380,9 +380,7 @@
         "internal/tui/library_test.go",
         "internal/tui/outline.go",
         "internal/tui/outline_test.go",
-        "internal/tui/testdata/sendoff-demo.rex.json",
-        "internal/watch/adapters.go",
-        "internal/watch/claude_test.go"
+        "internal/tui/testdata/sendoff-demo.rex.json"
       ]
     }
   ]

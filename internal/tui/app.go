@@ -57,6 +57,8 @@ type app struct {
 	toastUntil time.Time
 	now        func() time.Time
 	statePath  string
+	pinAsk     [2]pinAsk            // per place, while Pin confirm is open
+	pinSeen    map[string]time.Time // when this session first saw each pin
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -69,7 +71,7 @@ type logViewCache struct {
 
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
 	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
-		now: time.Now, statePath: plan.StatePath()}
+		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}}
 	if plans.Current == "" {
 		// The Continue card offers the plan last opened in this repo.
 		if last := plan.LoadState(a.statePath).Repos[plans.Repo].Plan; last != "" && IsPlanFile(last) {
@@ -146,6 +148,9 @@ func (a *app) composeOptions() ComposeOptions {
 		l := layoutFor(a.columns, a.lines)
 		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
 		opt.PlanFooter = a.planFooter()
+	}
+	if a.overlay[a.pane] == overlayPin {
+		opt.Overlay = &Overlay{Lines: pinConfirmLines(a.pinAsk[a.pane], textW), Footer: []string{"pin", "p⏎ move pin", "esc cancel"}}
 	}
 	if a.overlay[a.pane] == overlayHelp {
 		other := "tab tape"
@@ -252,6 +257,11 @@ func (a *app) preview() string {
 		return ""
 	}
 	if verb, arg, ok := parseVerb(text); ok && a.offers(verb) {
+		if verb == "pin" && arg == "" && a.overlay[a.pane] == overlayNone {
+			if t := a.pinCandidate(); t != nil {
+				arg = t.ID
+			}
+		}
 		if arg != "" {
 			return "⏎ " + verb + " " + arg
 		}
@@ -295,9 +305,16 @@ const toastFor = 3 * time.Second
 // exitLine is printed once the screen is restored, so the terminal keeps a
 // trace of where you were.
 func (a *app) exitLine() string {
-	// Printed after the terminal is restored: a plan's file name must not
-	// reach it raw.
-	if rel := strings.TrimSpace(strings.ReplaceAll(watch.CleanText(a.plans.CurrentRel()), "\n", " ")); rel != "" {
+	// Printed after the terminal is restored: plan text must not reach it raw.
+	clean := func(s string) string { return strings.TrimSpace(strings.ReplaceAll(watch.CleanText(s), "\n", " ")) }
+	if rel := clean(a.plans.CurrentRel()); rel != "" {
+		if a.doc != nil && a.doc.plan != nil {
+			if pin := a.doc.plan.Graph().Pin(); pin != nil && pin.Status == plan.Active {
+				return "rex: " + rel + " · pinned " + clean(pin.ID)
+			} else if pin != nil {
+				return "rex: " + rel + " · next up " + clean(pin.ID)
+			}
+		}
 		return "rex: " + rel
 	}
 	return "rex: no plan open"
@@ -560,14 +577,16 @@ func (a *app) submit(text string) bool {
 // done, pin) arrive with their features.
 func (a *app) offers(verb string) bool {
 	switch verb {
-	case "help", "breakdance":
+	case "help", "breakdance", "pin":
 		return true
 	}
 	return false
 }
 
-func (a *app) runVerb(verb, _ string) {
+func (a *app) runVerb(verb, arg string) {
 	switch verb {
+	case "pin":
+		a.pinVerb(arg)
 	case "help":
 		a.overlay[a.pane] = overlayHelp
 		a.overlayScroll[a.pane] = 0
@@ -755,6 +774,7 @@ func (a *app) openedPlan() {
 	// debounce and its selection.
 	a.at = atOutline
 	a.draft = ""
+	a.notePin()
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
 		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
 	})
@@ -876,14 +896,10 @@ func (a *app) pollDoc() bool {
 	if a.at != atTaskDetail {
 		a.outline.keepSel(a.doc.plan)
 	}
+	a.notePin()
 	if summary != "" {
 		a.flash("plan updated · "+summary, "accent")
-		before := a.logLines()
-		a.log = append(a.log, watch.NewEvent("rex", "plan", summary, nil))
-		a.logRev++
-		if a.scroll > 0 {
-			a.scroll += max(0, a.logLines()-before)
-		}
+		a.tapeLine("plan", summary)
 	}
 	return true
 }
@@ -909,6 +925,9 @@ func (a *app) overlayKey(key string) bool {
 		a.overlayScroll[a.pane] = next
 		return changed
 	case "\r", "\n":
+		if a.overlay[a.pane] == overlayPin {
+			return a.confirmPin()
+		}
 		// Only the overlay's own inputs work in it; Help has none, so a
 		// typed word is dropped, never run underneath.
 		if strings.TrimSpace(a.draft) != "" {
@@ -924,6 +943,135 @@ func (a *app) helpBody(width int) []LogLine {
 	help := append(helpLines(width), LogLine{Kind: "gap"})
 	a.health.refresh(time.Now())
 	return append(help, a.health.lines(width, a.hidden, time.Now(), false)...)
+}
+
+// pinCandidate is the task a bare p⏎ would pin here: the selected task on
+// the outline or its detail, else the next-up task.
+func (a *app) pinCandidate() *plan.Task {
+	if a.doc == nil || a.doc.plan == nil {
+		return nil
+	}
+	p := a.doc.plan
+	if a.pane == PanePlans && (a.at == atOutline || a.at == atTaskDetail) && a.outline.sel != "" {
+		if t := findTask(p, a.outline.sel); t != nil {
+			return t
+		}
+	}
+	return p.Graph().Pin()
+}
+
+// pinVerb is p⏎ / pin <id>⏎ (docs/ux.md §7). A pin that is blocked,
+// waits on unfinished work, or moves the pin off another task asks first.
+func (a *app) pinVerb(arg string) {
+	if a.doc == nil {
+		a.flash("no plan open · tab to plan and open one", "error")
+		return
+	}
+	if why := a.doc.writable(); why != "" {
+		a.flash("can't pin: "+why, "error")
+		return
+	}
+	g := a.doc.plan.Graph()
+	var t *plan.Task
+	if arg != "" {
+		if t = g.Task(arg); t == nil {
+			for i := range a.doc.plan.Tasks {
+				if strings.EqualFold(a.doc.plan.Tasks[i].ID, arg) {
+					t = &a.doc.plan.Tasks[i]
+					break
+				}
+			}
+		}
+		if t == nil {
+			a.flash("no task "+arg+" in this plan", "error")
+			return
+		}
+	} else if t = a.pinCandidate(); t == nil {
+		a.flash("nothing to pin · "+strings.TrimPrefix(pinStatus(a.doc.plan).Text, "no pin · "), "muted")
+		return
+	}
+	target, err := g.PinTarget(t)
+	if err != nil {
+		a.flash("can't pin: "+err.Error(), "error")
+		return
+	}
+	warnings := g.PinWarnings(target)
+	if target.Status == plan.Active && len(warnings) == 0 {
+		a.flash("▸ "+target.ID+" is already pinned", "muted")
+		return
+	}
+	if len(warnings) > 0 {
+		a.pinAsk[a.pane] = pinAsk{id: target.ID, title: target.Title, seen: target.Status, warnings: warnings}
+		a.overlay[a.pane] = overlayPin
+		return
+	}
+	a.writePin(target.ID, target.Status)
+}
+
+// confirmPin is ⏎ in Pin confirm: p⏎ writes, a bare ⏎ does nothing, and
+// any other submitted text cancels.
+func (a *app) confirmPin() bool {
+	text := strings.TrimSpace(a.draft)
+	if text == "" {
+		return false
+	}
+	ask := a.pinAsk[a.pane]
+	a.overlay[a.pane] = overlayNone
+	a.draft = ""
+	if verb, arg, ok := parseVerb(text); ok && verb == "pin" && (arg == "" || arg == ask.id) {
+		a.writePin(ask.id, ask.seen)
+		return true
+	}
+	a.flash("pin cancelled · nothing written", "muted")
+	return true
+}
+
+// writePin writes the pin to the plan file and remembers when it started.
+func (a *app) writePin(id string, seen plan.Status) {
+	saved, err := plan.Edit(a.doc.path, plan.PinOp(id, seen))
+	if err != nil {
+		a.flash("can't pin: "+err.Error(), "error")
+		return
+	}
+	a.doc.took(saved)
+	now := a.now()
+	key := plan.PinKey(a.doc.path, id)
+	a.pinSeen[key] = now
+	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) { s.Pins[key] = float64(now.Unix()) })
+	word := "pinned"
+	if seen == plan.Done {
+		word = "reopened and pinned"
+	}
+	a.flash("▸ "+id+" "+word, "accent")
+	a.tapeLine("plan", word+" "+id)
+	if a.at == atOutline || a.at == atTaskDetail {
+		a.outline.sel = id
+	}
+}
+
+// notePin remembers when this session first saw the current pin, for
+// completion evidence when Rex didn't see the pin start.
+func (a *app) notePin() {
+	if a.doc == nil || a.doc.plan == nil {
+		return
+	}
+	if pin := a.doc.plan.Graph().Pin(); pin != nil {
+		key := plan.PinKey(a.doc.path, pin.ID)
+		if _, ok := a.pinSeen[key]; !ok {
+			a.pinSeen[key] = a.now()
+		}
+	}
+}
+
+// tapeLine adds one local line to the tape. It is never written to the
+// feed and never sent anywhere.
+func (a *app) tapeLine(kind, text string) {
+	before := a.logLines()
+	a.log = append(a.log, watch.NewEvent("rex", kind, text, nil))
+	a.logRev++
+	if a.scroll > 0 {
+		a.scroll += max(0, a.logLines()-before)
+	}
 }
 
 // syncPlanInput hands the plan draft to the screen that reads it: Browse

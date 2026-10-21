@@ -466,7 +466,7 @@ func TestDependingOnAParentWaitsForItsLeaves(t *testing.T) {
 	if unmet := g.Unmet(p.Task("next")); len(unmet) != 0 {
 		t.Fatalf("every leaf under ui is finished, so next can start: %v", unmet)
 	}
-	if pin := pinOf(p, g); pin == nil || pin.ID != "next" {
+	if pin := g.Pin(); pin == nil || pin.ID != "next" {
 		t.Fatalf("pin %v", pin)
 	}
 }

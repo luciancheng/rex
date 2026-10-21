@@ -1,11 +1,41 @@
 package tui
 
+import "github.com/luciancheng/rex/internal/plan"
+
 type overlayKind int
 
 const (
 	overlayNone overlayKind = iota
 	overlayHelp
+	overlayPin
 )
+
+// pinAsk is a pin waiting for its confirm: the task, the status the user
+// saw, and why it needs asking.
+type pinAsk struct {
+	id       string
+	title    string
+	seen     plan.Status
+	warnings []string
+}
+
+func pinConfirmLines(ask pinAsk, width int) []LogLine {
+	lines := []LogLine{{Kind: "command", Text: rule("pin "+ask.id, width)}}
+	if ask.title != "" {
+		lines = append(lines, LogLine{Kind: "title", Text: "  " + clip(ask.title, width-2)})
+	}
+	lines = append(lines, LogLine{Kind: "gap"})
+	for _, w := range ask.warnings {
+		for i, row := range wrap(w, width-4) {
+			prefix := "    "
+			if i == 0 {
+				prefix = "  ! "
+			}
+			lines = append(lines, LogLine{Kind: "error", Text: prefix + clip(row, width-4)})
+		}
+	}
+	return append(lines, LogLine{Kind: "gap"}, LogLine{Kind: "text", Text: "  " + clip("p⏎ pins it anyway · esc cancels, nothing written", width-2)})
+}
 
 // Overlay covers the body of the current place (docs/ux.md §1). Tab leaves
 // it open there; Esc closes it.
@@ -59,6 +89,7 @@ func helpLines(width int) []LogLine {
 		LogLine{Kind: "gap"},
 		head("type a word, then ⏎"),
 		row("? help", "this screen"),
+		row("p  pin [id]", "pin the selected task, or next up, or that id"),
 		row("breakdance", "one dance"),
 		row("/word", "in plans, where typing finds or names, a verb starts with /"),
 		row("anything else", "on the tape, a note: local, never sent"),

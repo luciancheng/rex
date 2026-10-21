@@ -152,8 +152,8 @@ This row is blank today. It becomes a one-line status shared by both places. It 
 2. A toast, which expires after about 3 s:
    - `plan updated · plans-ui → done · +1 task`
    - `✓ card-highlight done · next up load-outline · p⏎ pins it`
-3. `drift · hard: README.md is outside card-highlight files` (§9a)
-4. `drift · soft: internal/tui/live_view.go is not listed for card-highlight`
+3. `drift · hard: README.md · outside card-highlight files` (§9a)
+4. `drift · soft: internal/tui/live_view.go · next to live.go`
 5. `2 active: card-highlight, load-outline · pinned card-highlight`
 6. `▸ card-highlight  Selected plan card is one block (active)`, or `▸ load-outline  Outline view (next up · p⏎ pins it)` when the pin is computed rather than written.
 7. `no pin · all tasks done` or `no pin · nothing unblocked`.
@@ -413,23 +413,25 @@ Drift means the session is wandering off the pin. Rex only shows it. It never se
 | Level | Meaning | Examples |
 |---|---|---|
 | none | on the pin | a listed file, a glob or folder it lists, its `_test` sibling |
-| **soft** | probably fine, worth a glance | a file next to a listed one; a file another task lists; a long prompt that shares no words with the pin |
+| **soft** | probably fine, worth a glance | a file next to a listed one, or in a folder under one (`testdata/`, a subpackage); a file another task lists; a prompt that names another task (not the pin's parent or what it waits on); a long prompt that shares no words with the pin |
 | **hard** | clearly off the pin | an edit or prompt that hits `scope.out`; an edit outside every folder the pin lists |
+
+**Hitting `scope.out`.** A prompt hits an entry when it holds every word of it (short ones too: `web UI` needs both); a path hits it when it holds the entry's last word (`extra palettes` → `palettes/`) or all of its words, or matches it as a glob (`internal/mascot/**`). A compound task id (`load-outline`) in a prompt is a name, not words. A pasted send-off or planning brief never drifts.
 
 If the pin lists no files, only the `scope.out` rule applies.
 
 **Display.**
-- **Row 1** shows the latest drift: `drift · hard: README.md is outside card-highlight files`.
+- **Row 1** shows the last hard drift not yet resolved, else the last soft one: `drift · hard: README.md · outside card-highlight files`. When the plan changes (it was widened), row 1 is judged again.
 - **The tape** gets one `── drift ──` block per pin, updated in place:
 
 ```
 ── drift · card-highlight ─────────────
-  hard  README.md (outside listed files)
+  hard  README.md (outside card-highlight files)
   soft  internal/tui/live_view.go (next to live.go)
 ```
 
 - Each path or prompt is listed once per pin.
-- Changing the pin clears row 1 and starts a new block. An on-pin edit clears a soft notice from row 1, though not from the block.
+- Changing the pin (or opening another plan) clears row 1 and starts a new block, even when the pin comes back to a task that had one. An on-pin edit clears a soft notice from row 1, and a hard one about that same file, though not from the block.
 - Your options are yours: repin (`p⏎`), widen the plan (edit the JSON; Rex reloads it), or send off to a fresh chat (`s⏎`).
 
 ---

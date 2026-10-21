@@ -42,8 +42,8 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 		t.Fatal("an on-pin edit clears a soft notice, not a hard one")
 	}
 	a.ingest([]watch.Event{edit(a, c, 5*time.Second, "internal/tui/live_extra.go"), edit(a, c, 6*time.Second, "internal/tui/live.go")})
-	if strings.HasPrefix(a.statusLine().Text, "drift") {
-		t.Fatalf("back on the pin clears a soft notice: %q", a.statusLine().Text)
+	if got := a.statusLine().Text; got != "drift · hard: README.md · outside card-highlight files" {
+		t.Fatalf("back on the pin clears the soft notice; the unresolved hard one shows again: %q", got)
 	}
 	a.ingest([]watch.Event{at(c, 7*time.Second, watch.Event{Source: "claude", Kind: "user", Text: "now add three extra palettes for dark mode"})})
 	if got := a.statusLine().Text; got != "drift · hard: now add three extra palettes for dark mode · asks for extra palettes, which is out of scope" {
@@ -87,5 +87,47 @@ func TestDriftNeedsAPinAndLiveEvents(t *testing.T) {
 	b.ingest([]watch.Event{at(c2, time.Second, watch.Event{Source: "claude", Kind: "result", Text: "Write failed", Meta: map[string]any{"tool": "Write", "path": filepath.Join(b.plans.Repo, "README.md"), "ok": false}})})
 	if len(b.drift.items) != 0 {
 		t.Fatal("a denied write didn't happen")
+	}
+}
+
+func TestDriftBelongsToItsPlanAndStint(t *testing.T) {
+	a, c, path := openDemo(t, driftDemo, 120, 32)
+	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
+	// Another plan whose pin has the same id: none of the first plan's drift.
+	other := strings.Replace(path, "demo.rex.json", "other.rex.json", 1)
+	os.WriteFile(other, []byte(driftDemo), 0o644)
+	a.plans.Current = other
+	a.openedPlan()
+	if strings.HasPrefix(a.statusLine().Text, "drift") {
+		t.Fatalf("another plan doesn't inherit drift: %q", a.statusLine().Text)
+	}
+	if !a.ingest([]watch.Event{edit(a, c, 2*time.Second, "go.mod")}) {
+		t.Fatal("a drifting edit repaints at once")
+	}
+	if n := strings.Count(viewText(BuildLogView(a.log, 78)), "── drift ·"); n != 2 {
+		t.Fatalf("the second plan's drift gets its own block, %d blocks", n)
+	}
+}
+
+func TestDriftClearsWhenThePlanIsWidened(t *testing.T) {
+	a, c, path := openDemo(t, driftDemo, 120, 32)
+	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
+	os.WriteFile(path, []byte(strings.Replace(driftDemo, `"files": ["internal/tui/plans.go"`, `"files": ["README.md", "internal/tui/plans.go"`, 1)), 0o644)
+	later(a, c)
+	if s, ok := a.driftStatus(); ok {
+		t.Fatalf("README.md is listed now: %q", s.Text)
+	}
+}
+
+func TestDriftBlockSitsBelowWhatItJudges(t *testing.T) {
+	a, c, _ := openDemo(t, driftDemo, 120, 32)
+	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "now add three extra palettes for dark mode", Meta: map[string]any{"cwd": a.plans.Repo}})})
+	view := viewText(BuildLogView(a.log, 78))
+	if p, d := strings.Index(view, "extra palettes for dark"), strings.Index(view, "── drift"); p < 0 || d < p {
+		t.Fatalf("the drift block comes after the prompt it is about\n%s", view)
+	}
+	a.settle(70, 24)
+	if !strings.Contains(a.statusLine().Short, "asks for extra palettes") {
+		t.Fatalf("the short row 1 keeps the reason for a prompt: %q", a.statusLine().Short)
 	}
 }

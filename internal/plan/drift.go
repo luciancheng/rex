@@ -49,7 +49,7 @@ func CheckEdit(p *Plan, pin *Task, rel string, fold bool) Drift {
 			return d
 		}
 	}
-	if w := outWord(p, pin, pathWords(target)); w != "" {
+	if w := outPath(p, pin, target); w != "" {
 		d.Level, d.Reason = Hard, "touches "+w+", which is out of scope"
 		return d
 	}
@@ -74,8 +74,13 @@ func CheckEdit(p *Plan, pin *Task, rel string, fold bool) Drift {
 		if globDir(fdir) {
 			continue
 		}
-		if fdir == dir {
+		switch {
+		case fdir == dir:
 			d.Level, d.Reason = Soft, "next to "+path.Base(f)
+			return d
+		case fdir != "." && strings.HasPrefix(dir, fdir+"/"):
+			// testdata/, __tests__/, a subpackage: related, not unrelated.
+			d.Level, d.Reason = Soft, "under the folder of "+path.Base(f)
 			return d
 		}
 	}
@@ -88,28 +93,50 @@ func CheckEdit(p *Plan, pin *Task, rel string, fold bool) Drift {
 // short prompts never drift.
 func CheckPrompt(p *Plan, pin *Task, prompt string) Drift {
 	d := Drift{Subject: excerpt(prompt)}
-	if p == nil || pin == nil || strings.Contains(prompt, "rex-sendoff: ") {
+	// A brief pasted back (the send-off's fingerprint, or Rex's planning
+	// brief) is about the plan itself.
+	if p == nil || pin == nil || strings.Contains(prompt, "rex-sendoff: ") || strings.HasPrefix(strings.TrimSpace(prompt), "Planning brief: ") {
 		return d
 	}
 	words := significant(prompt)
-	// A task id like load-outline is a name, not words that can hit scope.out.
-	bare := strings.ToLower(prompt)
+	idChar := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' }
+	ids := map[string]bool{}
 	for i := range p.Tasks {
-		if id := strings.ToLower(p.Tasks[i].ID); id != "" {
-			bare = strings.ReplaceAll(bare, id, " ")
+		if id := strings.ToLower(p.Tasks[i].ID); strings.ContainsAny(id, "-_0123456789") {
+			ids[id] = true
 		}
 	}
-	if w := outPhrase(p, pin, significant(bare)); w != "" {
+	// A compound id like load-outline is a name, not words that can hit
+	// scope.out; it is dropped as a whole word ("build" stays whole). A
+	// one-word id ("ui") is a word like any other.
+	var bare []string
+	set := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(prompt), func(r rune) bool { return !idChar(r) }) {
+		w = strings.Trim(w, "-_")
+		set[w] = true
+		if !ids[w] {
+			bare = append(bare, w)
+		}
+	}
+	if w := outPhrase(p, pin, bare); w != "" {
 		d.Level, d.Reason = Hard, "asks for "+w+", which is out of scope"
 		return d
 	}
-	set := map[string]bool{}
-	idChar := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' }
-	for _, w := range strings.FieldsFunc(strings.ToLower(prompt), func(r rune) bool { return !idChar(r) }) {
-		set[strings.Trim(w, "-_")] = true
+	related := map[string]bool{} // the pin's parents and what it waits on are not "another task"
+	for _, dep := range pin.DependsOn {
+		related[dep] = true
+	}
+	seen := map[string]bool{}
+	for parent := pin.Parent; parent != "" && !seen[parent]; {
+		seen[parent], related[parent] = true, true
+		next := p.Task(parent)
+		if next == nil {
+			break
+		}
+		parent = next.Parent
 	}
 	for i := range p.Tasks {
-		if t := &p.Tasks[i]; t != pin && t.ID != "" && set[strings.ToLower(t.ID)] {
+		if t := &p.Tasks[i]; t != pin && t.ID != "" && !related[t.ID] && set[strings.ToLower(t.ID)] {
 			d.Level, d.Reason = Soft, "names "+t.ID+", not the pin"
 			return d
 		}
@@ -134,7 +161,9 @@ func CheckPrompt(p *Plan, pin *Task, prompt string) Drift {
 
 // matchPath reports whether pattern names rel: the same path, a folder
 // that holds it, or a glob ("*" within a segment, "**" across segments).
+// A leading "./" or "/" is the repo root.
 func matchPath(pattern, rel string) bool {
+	pattern = strings.TrimPrefix(strings.TrimPrefix(pattern, "./"), "/")
 	if pattern == "" || pattern == "." {
 		return false
 	}
@@ -145,36 +174,58 @@ func matchPath(pattern, rel string) bool {
 	if !strings.ContainsAny(pattern, "*?[") {
 		return false
 	}
-	return globMatch(strings.Split(pattern, "/"), strings.Split(rel, "/"))
+	var pat []string
+	for _, seg := range strings.Split(pattern, "/") {
+		if seg == "**" && len(pat) > 0 && pat[len(pat)-1] == "**" {
+			continue // a run of ** is one **
+		}
+		pat = append(pat, seg)
+	}
+	return globMatch(pat, strings.Split(rel, "/"), map[[2]int]bool{})
 }
 
-func globMatch(pat, segs []string) bool {
-	for len(pat) > 0 {
-		if pat[0] == "**" {
-			for i := 0; i <= len(segs); i++ {
-				if globMatch(pat[1:], segs[i:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if len(segs) == 0 {
-			return false
-		}
-		if ok, err := path.Match(pat[0], segs[0]); err != nil || !ok {
-			return false
-		}
-		pat, segs = pat[1:], segs[1:]
+// globMatch matches pattern segments against path segments; tried
+// remembers dead ends, so a plan's glob can't cost more than
+// len(pat)×len(segs) steps on the UI goroutine.
+func globMatch(pat, segs []string, tried map[[2]int]bool) bool {
+	key := [2]int{len(pat), len(segs)}
+	if tried[key] {
+		return false
 	}
-	return len(segs) == 0
+	ok := func() bool {
+		for len(pat) > 0 {
+			if pat[0] == "**" {
+				for i := 0; i <= len(segs); i++ {
+					if globMatch(pat[1:], segs[i:], tried) {
+						return true
+					}
+				}
+				return false
+			}
+			if len(segs) == 0 {
+				return false
+			}
+			if ok, err := path.Match(pat[0], segs[0]); err != nil || !ok {
+				return false
+			}
+			pat, segs = pat[1:], segs[1:]
+		}
+		return len(segs) == 0
+	}()
+	if !ok {
+		tried[key] = true
+	}
+	return ok
 }
 
 func globDir(dir string) bool { return strings.ContainsAny(dir, "*?[") }
 
 // testSibling is a test file for a listed source file: foo_test.go,
-// foo.test.ts, foo.spec.js, test_foo.py next to foo.*.
+// foo.test.ts, foo.spec.js, test_foo.py next to foo.*, or in test/,
+// tests/ or __tests__/ beside it.
 func testSibling(listed, rel string) bool {
-	if path.Dir(listed) != path.Dir(rel) && path.Dir(rel) != path.Join(path.Dir(listed), "test") && path.Dir(rel) != path.Join(path.Dir(listed), "tests") {
+	ld, rd := path.Dir(listed), path.Dir(rel)
+	if rd != ld && rd != path.Join(ld, "test") && rd != path.Join(ld, "tests") && rd != path.Join(ld, "__tests__") {
 		return false
 	}
 	base := strings.TrimSuffix(path.Base(listed), path.Ext(listed))
@@ -192,48 +243,78 @@ func pathWords(rel string) []string {
 	return strings.FieldsFunc(rel, func(r rune) bool { return r == '/' || r == '.' || r == '_' || r == '-' })
 }
 
-// outWord is the first word of rel's path that names something in the
-// plan's or the pin's scope.out.
-func outWord(p *Plan, pin *Task, segs []string) string {
-	words := map[string]string{}
-	for _, entry := range append(append([]string(nil), p.Scope.Out...), pin.Scope.Out...) {
-		for _, w := range significant(entry) {
-			words[stem(w)] = w
-		}
+// outPath is what of the plan's or the pin's scope.out rel touches, or
+// "". A path-like entry ("internal/mascot/**") matches as a path. Else a
+// path touches an entry when its segments hold all of the entry's words,
+// or the entry's last word, its head ("extra palettes" → palettes): a
+// path names one thing, and that is the thing an entry is about.
+func outPath(p *Plan, pin *Task, rel string) string {
+	have := map[string]bool{}
+	for _, s := range pathWords(rel) {
+		have[stem(strings.ToLower(s))] = true
 	}
-	for _, s := range segs {
-		if w, ok := words[stem(strings.ToLower(s))]; ok {
-			return w
+	for _, entry := range append(append([]string(nil), p.Scope.Out...), pin.Scope.Out...) {
+		entry = strings.TrimSpace(entry)
+		if strings.ContainsAny(entry, "/*") && !strings.Contains(entry, " ") {
+			if matchPath(strings.ToLower(entry), rel) {
+				return entry
+			}
+			continue
+		}
+		words := phraseWords(entry)
+		if len(words) == 0 {
+			continue
+		}
+		if head := words[len(words)-1]; len(head) >= 4 && !stopWords[head] && have[stem(head)] {
+			return head
+		}
+		if all(words, have) {
+			return entry
 		}
 	}
 	return ""
 }
 
-// outPhrase is a scope.out entry whose significant words all appear in
-// the prompt.
+// outPhrase is a scope.out entry whose words all appear in the prompt
+// words given ("web UI" needs both web and UI; "agent auto-loads the
+// plan" needs all four, not just "loads").
 func outPhrase(p *Plan, pin *Task, prompt []string) string {
 	have := map[string]bool{}
 	for _, w := range prompt {
-		have[stem(w)] = true
+		for _, part := range strings.FieldsFunc(w, notWord) {
+			have[stem(part)] = true
+		}
 	}
 	for _, entry := range append(append([]string(nil), p.Scope.Out...), pin.Scope.Out...) {
-		words := significant(entry)
-		if len(words) == 0 {
-			continue
-		}
-		all := true
-		for _, w := range words {
-			if !have[stem(w)] {
-				all = false
-				break
-			}
-		}
-		if all {
+		if words := phraseWords(entry); len(words) > 0 && all(words, have) {
 			return strings.TrimSpace(entry)
 		}
 	}
 	return ""
 }
+
+// phraseWords is every word of a scope.out entry but the articles, short
+// ones included, so an entry like "web UI" or "CI" can match.
+func phraseWords(entry string) []string {
+	var out []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(entry), notWord) {
+		if !articles[w] {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func all(words []string, have map[string]bool) bool {
+	for _, w := range words {
+		if !have[stem(w)] {
+			return false
+		}
+	}
+	return true
+}
+
+var articles = map[string]bool{"a": true, "an": true, "the": true, "of": true, "to": true, "and": true, "or": true, "in": true, "on": true, "for": true, "any": true, "no": true}
 
 // significant is the words in s that carry meaning: lowercase, four
 // letters or more, and not on the stop list.

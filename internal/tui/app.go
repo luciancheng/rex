@@ -66,6 +66,8 @@ type app struct {
 	seen       []watch.Event                  // raw events from this repo, for completion evidence
 	briefs     [2]*briefView                  // per place, while the Send-off overlay is open
 	drift      driftState                     // drift from the current pin, shown only
+	driftGen   int                            // numbers each pin stint's drift block
+	driftQueue []watch.Event                  // live events to judge once their batch is on the tape
 	copy       func(string) <-chan copyResult // copies a brief off the UI goroutine; nil = no clipboard
 	oscOut     string                         // an OSC 52 copy for the loop to write between frames
 	copying    []pendingCopy                  // copies still running
@@ -336,7 +338,7 @@ func (a *app) preview() string {
 }
 
 // statusLine picks row 1, the first of these that applies (docs/ux.md
-// §4): the plan file can't be read, a toast, the pin.
+// §4): the plan file can't be read, a toast, drift, the pin.
 func (a *app) statusLine() StatusLine {
 	if s, ok := docStatus(a.doc); ok {
 		return s
@@ -426,11 +428,12 @@ func (a *app) ingest(fresh []watch.Event) bool {
 	if len(added) > 0 && a.scroll > 0 {
 		a.scroll += max(0, a.logLines()-before)
 	}
+	drifted := a.applyDrift() // after the batch, so its block sits below what it judges
 	if len(added) > 0 || a.turn != prevTurn {
 		a.syncTurn()
 		return true
 	}
-	return false
+	return drifted
 }
 
 // keys applies one read's keys in order, settling after each one, so a
@@ -989,6 +992,7 @@ func (a *app) pollDoc() bool {
 		a.outline.keepSel(a.doc.plan)
 	}
 	a.notePin()
+	a.rejudgeDrift()
 	a.refreshBriefs()
 	if summary != "" {
 		a.flash("plan updated · "+summary, "accent")
@@ -1183,6 +1187,7 @@ func (a *app) notePin() {
 			a.pinSeen[key] = a.now()
 		}
 	}
+	a.syncDrift()
 	// Per plan file: opening another plan, or coming back to this one,
 	// is not the pin moving.
 	if last, looked := a.lastPin[a.doc.path]; key != last {

@@ -1,6 +1,10 @@
 package plan
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 const driftPlan = `{
   "goal": "Selected plan cards read as one block",
@@ -14,7 +18,7 @@ const driftPlan = `{
   ]
 }`
 
-// The CUJ H table (docs/ux.md §9a).
+// The CUJ H step's cases (docs/ux.md §9a's levels).
 func TestCheckEdit(t *testing.T) {
 	p := mustParse(t, driftPlan)
 	pin := p.Graph().Pin()
@@ -94,5 +98,60 @@ func TestMatchPath(t *testing.T) {
 		if got := matchPath(c.pattern, c.rel); got != c.want {
 			t.Errorf("%s %s: %v", c.pattern, c.rel, got)
 		}
+	}
+}
+
+func TestDriftMatchesWholeEntriesAndWords(t *testing.T) {
+	p := mustParse(t, `{"scope": {"out": ["mobile build", "agent auto-loads the plan", "web UI", "extra palettes", "internal/mascot/**"]},
+		"tasks": [{"id": "ui"}, {"id": "card", "parent": "ui", "depends_on": ["base"], "files": ["internal/tui/plans.go"]}, {"id": "base"}, {"id": "other"}]}`)
+	pin := p.Task("card")
+	prompt := func(s string) Drift { return CheckPrompt(p, pin, s) }
+	for _, c := range []struct {
+		prompt string
+		level  DriftLevel
+	}{
+		{"fix the mobile build please, it fails on ci", Hard},      // the id "ui" doesn't eat "build"
+		{"load the selected card faster on every open now", OnPin}, // not "agent auto-loads the plan"
+		{"now build a web UI that shows the plans", Hard},
+		{"finish this before ui and base are touched again", OnPin}, // its parent and what it waits on
+		{"also do other after this", Soft},
+		{"Planning brief: rex/plans/x.rex.json\n\nTasks now: 4 (ui, card, base, other)", OnPin},
+	} {
+		if got := prompt(c.prompt); got.Level != c.level {
+			t.Errorf("%q: %v (%s), want %v", c.prompt, got.Level, got.Reason, c.level)
+		}
+	}
+	edit := func(rel string) Drift { return CheckEdit(p, pin, rel, false) }
+	for _, c := range []struct {
+		rel   string
+		level DriftLevel
+	}{
+		{"internal/mascot/palettes.go", Hard},
+		{"assets/palettes/dark.png", Hard}, // the entry's head word
+		{"internal/extra/stuff.go", Hard},  // outside the pin's folders, not scope.out
+		{"internal/tui/testdata/a.golden", Soft},
+		{"internal/tui/__tests__/plans.test.ts", OnPin}, // a test for a listed file
+		{"internal/tui/plans_test.go", OnPin},
+	} {
+		if got := edit(c.rel); got.Level != c.level {
+			t.Errorf("%s: %v (%s), want %v", c.rel, got.Level, got.Reason, c.level)
+		}
+	}
+	if got := edit("internal/extra/stuff.go"); strings.Contains(got.Reason, "scope") {
+		t.Fatalf("one word of a two-word entry isn't the entry: %s", got.Reason)
+	}
+}
+
+func TestDriftGlobsStayCheap(t *testing.T) {
+	p := mustParse(t, `{"tasks": [{"id": "a", "files": ["**/**/**/**/**/**/**/**/**/**/**/**/x/**/y/**/z"]}]}`)
+	done := make(chan struct{})
+	go func() {
+		CheckEdit(p, p.Task("a"), strings.Repeat("d/", 40)+"q.go", false)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a glob in a plan stalled the UI goroutine")
 	}
 }

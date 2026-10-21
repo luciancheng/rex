@@ -33,7 +33,7 @@ var kindColor = map[string]string{
 	"done":     "muted", // a verb's record line, like the rest
 	"sendoff":  "muted",
 	"brief":    "muted",
-	"drift":    "error",
+	"drift":    "accent", // each row says hard or soft; row 1 is red for hard
 	"thought":  "muted",
 	"command":  "accent",
 	"question": "error",

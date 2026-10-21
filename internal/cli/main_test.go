@@ -16,6 +16,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("USERPROFILE", home)
 	os.Unsetenv("REX_EVENTS")        // a feed set in the shell is never written by a test
 	os.Unsetenv("CLAUDE_CONFIG_DIR") // nor a Claude config
+	os.Unsetenv("CODEX_HOME")        // nor a Codex home
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)

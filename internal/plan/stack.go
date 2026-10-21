@@ -237,7 +237,8 @@ func (g *Graph) later(t, dep *Task) *Task {
 }
 
 // stackLines are the send-off's Stack part, inside For the next chat,
-// which is never trimmed: where the pin's PR goes, from the file alone.
+// which is kept whole unless it alone overflows the cap (keepTail): where
+// the pin's PR goes, from the file alone.
 func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task) {
 	use, why := g.branches()
 	trunk, trunkArg := ref(p.Base), ref(p.Base)

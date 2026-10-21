@@ -47,9 +47,11 @@ func Sendoff(p *Plan, rel string) (string, error) {
 }
 
 // keepTail cuts s to n bytes. The closing instructions and the
-// fingerprint always stay, since the tape and the completion form rely on
-// them; the pin's Next section stays when it fits in most of what is left,
-// and the task list is what gives way.
+// fingerprint stay, since the tape and the completion form rely on them;
+// the pin's Next section stays when it fits in most of what is left, and
+// the task list is what gives way. Only when the footer alone doesn't fit
+// does the Stack part give way from its end, before the trailer request
+// and the fingerprint.
 func keepTail(s string, n int) string {
 	const cut = "\n… (see plan file)"
 	var foot string

@@ -168,27 +168,33 @@ func footerSegments(opt ComposeOptions, scroll int) ([]string, string) {
 		case ScreenBrowse:
 			return []string{"open", "⏎ open", "esc back", "tab tape", "type to filter"}, "muted"
 		}
+		if opt.Preview != "" {
+			return []string{"plans", opt.Preview}, "muted"
+		}
 		if homeCreates(opt.Plans) {
 			return []string{"plans", "⏎ create", "tab tape", "ctrl+c×2 quit"}, "muted"
 		}
 		return []string{"plans", "⏎ open", "tab tape", "ctrl+c×2 quit"}, "muted"
 	}
-	if strings.TrimSpace(opt.Draft) != "" {
-		return []string{"tape", "⏎ note (local, not sent)"}, "muted"
+	if strings.TrimSpace(opt.Draft) != "" && opt.Preview != "" {
+		return []string{"tape", opt.Preview}, "muted"
 	}
 	if scroll > 0 {
 		return []string{"tape", fmt.Sprintf("%d↑", scroll), "end live", "tab plan"}, "muted"
 	}
-	return []string{"tape", "tab plan", "↑↓ scroll", "ctrl+c×2 quit"}, "muted"
+	return []string{"tape", "tab plan", "↑↓ scroll", "?⏎ help", "ctrl+c×2 quit"}, "muted"
 }
 
 // composerRows draws the composer: a box when there is room, a bare row on
 // short terminals.
-func composerRows(l layout, draft, prefix string, enabled bool) []string {
+func composerRows(l layout, draft, prefix, placeholder string, enabled bool) []string {
 	switch l.composer {
 	case InputRows:
-		return inputBox(draft, l.textW, enabled, prefix)
+		return inputBox(draft, l.textW, enabled, prefix, placeholder)
 	case 1:
+		if draft == "" && placeholder != "" {
+			return []string{mascot.Paint(prefix, mascot.UI["text"], enabled) + mascot.Paint(clip(placeholder, max(0, l.textW-cellLen(prefix))), mascot.UI["border"], enabled)}
+		}
 		line := clip(prefix+visibleDraft(draft, l.textW-cellLen(prefix)), l.textW)
 		return []string{mascot.Paint(line, mascot.UI["text"], enabled)}
 	}

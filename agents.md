@@ -66,7 +66,7 @@ Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`. Adapte
 
 New harness = adapter (+ installer). Do not special-case vendors in `live.go`. Installers edit the harness's config through `watch.UpdateJSONFile` + `internal/jsonedit`: splice only what Rex owns, keep every other byte, refuse a file that does not parse, keep a `.bak`, write atomically. Never round-trip a user's config through a `map`.
 
-Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`.
+Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`. Rex's own local kind `note` (source `rex`) never comes from the feed.
 
 ## TUI
 
@@ -76,8 +76,9 @@ The target loop, key map and screen states are in `docs/ux.md`. TUI changes cite
 - The header (row 0) on **every** screen shows `REX plan|tape`, the turn state **and** the open plan as a repo-relative path (`thinking · rex/plans/foo.rex.json`), shortened only when it doesn't fit: drop `rex/plans/`, then `.rex.json`, then clip with `…` from the left (docs/ux.md §4). Row 1 is the status line. The footer is ranked segments that drop whole, never mid-word.
 - User prompts: no `YOU` rule. Invisible column, at most half the pane, **right-aligned as a box**, **left-aligned text inside**. Color `UI["you"]`.
 - Markdown → headings, lists, stripped emphasis, fenced code as `│ ` lines.
-- Start opens the **plans** home: Create, Open, Open latest (cards), then recents. Open browses `rex/plans/` like a file picker: cyan `▌` selection, orange folders, green `[ + New folder ]` / `[ + New plan ]`, white plans. Duplicate names warn and do not overwrite. Starting Rex never deletes or creates files: `rex/plans/` (with `.gitkeep`) is made on the first Create or New folder; a file (or dangling link) named `rex` at the root turns plans off with a notice instead of being removed; outside git, Home says where plans would go; an old `rex-plans/` folder is only reported, never moved. Tab switches to chat. Opening a plan is a no-op load.
-- Chat keys: ↑↓, page, Home / Ctrl+A (oldest), End / Ctrl+E (live). Composer does not send to the agent.
+- Start opens the **plans** home: Create, Open, Open latest (cards), then recents. Open browses `rex/plans/` like a file picker: cyan `▌` selection, orange folders, green `[ + New folder ]` / `[ + New plan ]`, white plans. Duplicate names warn and do not overwrite. Starting Rex never deletes or creates files: `rex/plans/` (with `.gitkeep`) is made on the first Create or New folder; a file (or dangling link) named `rex` at the root turns plans off with a notice instead of being removed; outside git, Home says where plans would go; an old `rex-plans/` folder is only reported, never moved. Opening a plan is a no-op load.
+- Two places, PLAN and TAPE; **Tab** toggles them and keeps each place's screen, draft, scroll and overlay. **Nothing fires without ⏎**: typed words are verbs (`?`/`help`, `breakdance`, later `sendoff`/`done`/`pin`/`brief`); anything else on the tape is a local `note` (muted, in memory only, never written to the feed, never a turn change). In the Library, text is a find/filter/name unless it starts with `/` (a lone `?` is help everywhere). **Esc** clears the draft, then climbs one level, never switches place; Backspace only deletes; Ctrl+U/Ctrl+W clear line/word; the first Ctrl+C clears the draft and arms quit.
+- Tape keys: ↑↓, page, Home / Ctrl+A (oldest), End / Ctrl+E (live). Composer does not send to the agent. Prompt boxes cap at 6 rows.
 - Fit text by terminal **cells**: `cellLen` / `clip` / `padRight` / `wrap` (East Asian wide and emoji = 2, combining = 0, ambiguous = 1; hand-kept table in `width.go`). `clip` is the choke point: it also runs `watch.CleanText`, so agent or plan text can never paint escape sequences. Crop from the bottom; keep the mascot top-left.
 
 ## Commands and tests

@@ -22,10 +22,13 @@ type app struct {
 
 	columns, lines int
 
-	pane      PaneKind
-	plans     *PlanBrowser
-	draft     string
-	chatDraft string
+	pane   PaneKind
+	plans  *PlanBrowser
+	draft  string // the current place's draft
+	parked string // the other place's draft, kept across Tab
+
+	overlay       [2]overlayKind // per place
+	overlayScroll [2]int
 
 	log      []watch.Event
 	logRev   int
@@ -38,6 +41,7 @@ type app struct {
 	quitTicks   int
 	quit        bool
 	repaint     bool // Ctrl+L asked for a full repaint
+	feed        string
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -88,6 +92,8 @@ func (a *app) frameRows() Frame {
 
 func (a *app) composeOptions() ComposeOptions {
 	opt := ComposeOptions{
+		Placeholder:   a.placeholder(),
+		Preview:       a.preview(),
 		Enabled:       a.enabled,
 		Columns:       a.columns,
 		Lines:         a.lines,
@@ -102,10 +108,55 @@ func (a *app) composeOptions() ComposeOptions {
 		PlanRel:       a.plans.CurrentRel(),
 		Line:          a.statusLine(),
 	}
-	if textW := PaneTextWidth(a.columns); textW > 0 {
+	textW := PaneTextWidth(a.columns)
+	if textW > 0 {
 		opt.LogView = a.logView(textW)
 	}
+	if a.overlay[a.pane] == overlayHelp {
+		other := "tab tape"
+		if a.pane == PaneChat {
+			other = "tab plan"
+		}
+		opt.Overlay = &Overlay{Lines: helpLines(textW, a.feed), Footer: []string{"help", "esc close", other}, Scroll: a.overlayScroll[a.pane]}
+	}
 	return opt
+}
+
+// placeholder is the dim hint in an empty composer: what you can type here.
+func (a *app) placeholder() string {
+	if a.pane == PaneChat {
+		return "note (not sent) · ?⏎ help"
+	}
+	switch a.plans.Screen {
+	case ScreenBrowse:
+		return "type to filter"
+	case ScreenCreate:
+		return "plan name"
+	case ScreenFolder:
+		return "folder name"
+	}
+	return "?⏎ help"
+}
+
+// preview says what ⏎ will do with the current draft, for the footer.
+func (a *app) preview() string {
+	text := strings.TrimSpace(a.draft)
+	if text == "" {
+		return ""
+	}
+	if a.pane == PanePlans && a.overlay[a.pane] == overlayNone && !forcedVerb(text) {
+		return ""
+	}
+	if verb, arg, ok := parseVerb(text); ok && a.offers(verb) {
+		if arg != "" {
+			return "⏎ " + verb + " " + arg
+		}
+		return "⏎ " + verb
+	}
+	if a.pane == PaneChat {
+		return "⏎ note (local, not sent)"
+	}
+	return ""
 }
 
 // statusLine picks row 1. It is empty until the plan slices add the pin,
@@ -202,60 +253,108 @@ func (a *app) handleKey(key string) bool {
 			return armed
 		}
 	}
-	if text, ok := IsPaste(key); ok {
-		// A paste is typed into the draft as one line; it never submits.
-		armed := a.quitPending
-		a.quitPending = false
-		next := capDraft(a.draft + text)
-		if next == a.draft {
-			return armed // a disarmed quit still redraws the footer
-		}
-		a.draft = next
-		return true
-	}
-	bodyH := PaneBodyHeight(a.lines)
-	total := a.logLines()
-	maxScroll := ClampScroll(total, bodyH, total)
-	switch {
-	case key == "\x0c":
+	switch key {
+	case "\x0c":
 		a.repaint = true
 		a.quitPending = false // like any other key, it disarms quit
 		return true
-	case key == CtrlC:
+	case CtrlC:
 		if a.quitPending {
 			a.quit = true
 			return false
 		}
+		// The first Ctrl+C clears the draft or closes the overlay, and arms quit.
+		if a.overlay[a.pane] != overlayNone {
+			a.overlay[a.pane] = overlayNone
+		} else {
+			a.draft = ""
+		}
 		a.quitPending = true
 		a.quitTicks = QuitWindowTicks
 		return true
-	case key == "\t":
+	case "\t":
 		a.quitPending = false
+		a.draft, a.parked = a.parked, a.draft
 		if a.pane == PanePlans {
-			if a.plans.Browsing() {
-				a.plans.Filter = a.draft
-			}
 			a.pane = PaneChat
-			a.draft = a.chatDraft
 		} else {
-			a.chatDraft = a.draft
 			a.pane = PanePlans
-			a.draft = ""
-			if a.plans.Browsing() {
-				a.draft = a.plans.Filter
-			}
 			a.plans.Rebuild()
 		}
 		return true
-	case a.pane == PanePlans:
-		a.quitPending = false
-		changed, openChat := handlePlanKey(a.plans, &a.draft, key, bodyH)
-		if openChat {
-			a.pane = PaneChat
-			a.draft = a.chatDraft
-		}
+	}
+	a.quitPending = false
+	if text, ok := IsPaste(key); ok {
+		// A paste is typed into the draft as one line; it never submits.
+		next := capDraft(a.draft + text)
+		changed := next != a.draft
+		a.draft = next
 		return changed
 	}
+	switch key {
+	case "\x15":
+		a.draft = ""
+		return true
+	case "\x17":
+		a.draft = deleteWord(a.draft)
+		return true
+	case "\x7f", "\x08":
+		next := backspace(a.draft)
+		changed := next != a.draft
+		a.draft = next
+		return changed
+	}
+	if isPrintableKey(key) {
+		if runeLen(a.draft) >= draftCap {
+			return false
+		}
+		a.draft += key
+		return true
+	}
+	if a.overlay[a.pane] != overlayNone {
+		return a.overlayKey(key)
+	}
+	if a.pane == PanePlans {
+		return a.planKey(key)
+	}
+	return a.tapeKey(key)
+}
+
+// submit runs the draft as a verb if it is one this build offers.
+func (a *app) submit(text string) bool {
+	verb, arg, ok := parseVerb(text)
+	if !ok || !a.offers(verb) {
+		return false
+	}
+	a.draft = ""
+	a.runVerb(verb, arg)
+	return true
+}
+
+// offers reports which verbs exist yet. The plan verbs (sendoff, brief,
+// done, pin) arrive with their features.
+func (a *app) offers(verb string) bool {
+	switch verb {
+	case "help", "breakdance":
+		return true
+	}
+	return false
+}
+
+func (a *app) runVerb(verb, _ string) {
+	switch verb {
+	case "help":
+		a.overlay[a.pane] = overlayHelp
+		a.overlayScroll[a.pane] = 0
+	case "breakdance":
+		a.play("breakdance")
+	}
+}
+
+func (a *app) tapeKey(key string) bool {
+	bodyH := PaneBodyHeight(a.lines)
+	total := a.logLines()
+	maxScroll := ClampScroll(total, bodyH, total)
 	switch key {
 	case "up":
 		a.scroll = min(maxScroll, a.scroll+1)
@@ -275,43 +374,162 @@ func (a *app) handleKey(key string) bool {
 	case "end":
 		a.scroll = 0
 		return true
+	case "esc":
+		if a.draft == "" {
+			return false
+		}
+		a.draft = ""
+		return true
 	case "\r", "\n":
-		a.quitPending = false
 		text := strings.TrimSpace(a.draft)
 		if text == "" {
 			return false
 		}
-		next := ComposerAnimation(text, a.sequence.Name)
-		if next != a.sequence.Name {
-			if next == mascot.DefaultAnimation {
-				a.turn = TurnIdle
-			}
-			a.play(next)
+		if a.submit(text) {
+			return true
 		}
-		a.log = append(a.log, watch.NewEvent("user", "text", text, nil))
+		// Anything else is a local note: drawn muted on the tape, kept in
+		// memory only, never written to the feed or sent to the agent.
+		a.log = append(a.log, watch.NewEvent("rex", "note", text, nil))
 		a.logRev++
 		a.draft = ""
-		return true
-	case "\x7f", "\x08":
-		a.quitPending = false
-		if a.draft == "" {
-			return false
-		}
-		r := []rune(a.draft)
-		a.draft = string(r[:len(r)-1])
+		a.scroll = 0
 		return true
 	}
-	if isPrintableKey(key) {
-		a.quitPending = false
-		if runeLen(a.draft) < draftCap {
-			a.draft += key
+	return false
+}
+
+func (a *app) planKey(key string) bool {
+	b := a.plans
+	bodyH := PaneBodyHeight(a.lines)
+	switch key {
+	case "up":
+		b.Move(-1)
+		return true
+	case "down":
+		b.Move(1)
+		return true
+	case "pageup":
+		b.Move(-max(1, bodyH))
+		return true
+	case "pagedown":
+		b.Move(max(1, bodyH))
+		return true
+	case "home":
+		b.Cursor = 0
+		return true
+	case "end":
+		if n := len(b.Rows); n > 0 {
+			b.Cursor = n - 1
+		}
+		return true
+	case "esc":
+		// Esc clears first, then climbs one level, and never leaves PLAN.
+		if a.draft != "" {
+			a.draft = ""
+			return true
+		}
+		return a.planBack()
+	case "left":
+		if a.draft != "" || b.Prompting() {
+			return false
+		}
+		return a.planBack()
+	case "right":
+		if b.Browsing() && b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowDir {
+			b.Activate()
+			a.draft = ""
 			return true
 		}
 		return false
+	case "\r", "\n":
+		if forcedVerb(a.draft) && a.submit(a.draft) {
+			return true
+		}
+		return a.planEnter()
 	}
-	if a.quitPending {
-		a.quitPending = false
+	return false
+}
+
+// planBack goes up one level inside PLAN: cancel a name prompt, leave a
+// folder, leave Browse for Home. At Home it does nothing.
+func (a *app) planBack() bool {
+	b := a.plans
+	switch {
+	case b.Prompting():
+		b.CancelPrompt()
+		a.draft = ""
 		return true
+	case b.Browsing():
+		b.Up()
+		a.draft = ""
+		return true
+	}
+	return false
+}
+
+func (a *app) planEnter() bool {
+	b := a.plans
+	switch b.Screen {
+	case ScreenCreate:
+		if b.CommitCreate(a.draft) == PlanOpenChat {
+			a.draft = ""
+			a.openedPlan()
+		}
+		return true
+	case ScreenFolder:
+		_ = b.CommitFolder(a.draft)
+		a.draft = ""
+		return true
+	}
+	switch b.Activate() {
+	case PlanStartCreate:
+		b.Screen = ScreenCreate
+		a.draft = ""
+	case PlanStartFolder:
+		b.Screen = ScreenFolder
+		a.draft = ""
+	case PlanStartBrowse:
+		a.draft = ""
+	case PlanOpenChat:
+		a.openedPlan()
+	}
+	return true
+}
+
+// openedPlan runs after a plan is opened or created. Until the outline
+// exists (docs/ux.md §6) Rex moves to the tape, as it always has.
+func (a *app) openedPlan() {
+	a.draft, a.parked = a.parked, ""
+	a.pane = PaneChat
+}
+
+// overlayKey handles keys while an overlay covers the current place.
+func (a *app) overlayKey(key string) bool {
+	switch key {
+	case "esc":
+		if a.draft != "" {
+			a.draft = ""
+			return true
+		}
+		a.overlay[a.pane] = overlayNone
+		return true
+	case "up":
+		a.overlayScroll[a.pane] = max(0, a.overlayScroll[a.pane]-1)
+		return true
+	case "down":
+		a.overlayScroll[a.pane]++
+		return true
+	case "pageup":
+		a.overlayScroll[a.pane] = max(0, a.overlayScroll[a.pane]-PaneBodyHeight(a.lines))
+		return true
+	case "pagedown":
+		a.overlayScroll[a.pane] += PaneBodyHeight(a.lines)
+		return true
+	case "\r", "\n":
+		if strings.TrimSpace(a.draft) != "" {
+			return a.submit(a.draft)
+		}
 	}
 	return false
 }

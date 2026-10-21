@@ -87,7 +87,7 @@ go test ./...
 go run ./cmd/rex start
 ```
 
-CI: GitHub Actions, Ubuntu/macOS/Windows, Go 1.22 and 1.24: gofmt (one cell), `go vet`, `go test`, then `go build -o dist/rex ./cmd/rex` (never `-o rex`; `rex/` is the plans directory).
+CI: GitHub Actions, Ubuntu/macOS/Windows, Go 1.22 and 1.24: gofmt (its own job), `go vet`, `go test`, then `go build -o dist/rex ./cmd/rex` (never `-o rex`; `rex/` is the plans directory).
 
 After sprite or TUI changes, restart a running `rex start`. Tests do not replace looking at the terminal.
 

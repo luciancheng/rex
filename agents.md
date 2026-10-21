@@ -78,7 +78,7 @@ The target loop, key map and screen states are in `docs/ux.md`. TUI changes cite
 - Markdown → headings, lists, stripped emphasis, fenced code as `│ ` lines.
 - Start opens the **plans** home: Create, Open, Open latest (cards), then recents. Open browses `rex/plans/` like a file picker: cyan `▌` selection, orange folders, green `[ + New folder ]` / `[ + New plan ]`, white plans. Duplicate names warn and do not overwrite. Starting Rex never deletes or creates files: `rex/plans/` (with `.gitkeep`) is made on the first Create or New folder; a file (or dangling link) named `rex` at the root turns plans off with a notice instead of being removed; outside git, Home says where plans would go; an old `rex-plans/` folder is only reported, never moved. Tab switches to chat. Opening a plan is a no-op load.
 - Chat keys: ↑↓, page, Home / Ctrl+A (oldest), End / Ctrl+E (live). Composer does not send to the agent.
-- Clip ANSI by cells (runes), not `len()` bytes. Crop from the bottom; keep the mascot top-left.
+- Fit text by terminal **cells**: `cellLen` / `clip` / `padRight` / `wrap` (East Asian wide and emoji = 2, combining = 0, ambiguous = 1; hand-kept table in `width.go`). `clip` is the choke point: it also runs `watch.CleanText`, so agent or plan text can never paint escape sequences. Crop from the bottom; keep the mascot top-left.
 
 ## Commands and tests
 
@@ -96,7 +96,7 @@ After sprite or TUI changes, restart a running `rex start`. Tests do not replace
 - Match the code around you. Comments are rare and say *why*. Names are short (`b` for a browser, `ev` for an event, `opt` for compose options).
 - Tests go in a `*_test.go` file in the same package. Use `t.TempDir()` for any repo, plans dir or feed file, and never touch the real `~` or `~/.rex`. Assert on rendered text with `viewText(BuildLogView(...))` / `viewText(BuildPlanView(...))`, and use `NO_COLOR`-style `Enabled: false` frames when you need plain text.
 - `LogLine.Kind` picks the color. It is looked up in `mascot.UI`, then in `kindColor`. A new UI role goes in `mascot.UI`, not in a new palette.
-- Pane width math uses `runeLen` / `clip` / `padRight`, never `len()`.
+- Pane width math uses `cellLen` / `clip` / `padRight`, never `len()` or rune counts (`runeLen` is only for the draft cap).
 - Vendor names live in `internal/watch` (adapters, installers), in the `rex ingest` flags, `--source` list and help in `internal/cli`, and in `scripts/install.*`. Adding a harness touches all three. The TUI paints event kinds and never branches on a vendor.
 - Keep stdout clean in `rex ingest`. Hooks treat stdout as agent input, and exit code 2 as "block".
 

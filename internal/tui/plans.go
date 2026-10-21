@@ -764,10 +764,10 @@ func planCard(row PlanRow, selected bool, width int) []LogLine {
 		mark = "▌ "
 	}
 	top := "╭ " + title + " "
-	if runeLen(top) >= inner {
+	if cellLen(top) >= inner {
 		top = clip(top, inner-1) + "╮"
 	} else {
-		top += strings.Repeat("─", inner-runeLen(top)-1) + "╮"
+		top += strings.Repeat("─", inner-cellLen(top)-1) + "╮"
 	}
 	mid := "│ " + clip(sub, inner-3)
 	mid = padRight(mid, inner-1) + "│"

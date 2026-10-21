@@ -73,7 +73,7 @@ Task fields: `id`, `title`, `parent`, `status`, `scope`, `needs`, `does`, `descr
 
 Rex never runs git or opens a PR. A plan can still be shaped so each task lands as one PR in a stack, and the send-off then tells whoever works the pinned task where its PR goes.
 
-- **Opt in with `base`**: the branch the stack lands on, the trunk this repo starts work from (its agents.md or CONTRIBUTING says; else `git symbolic-ref --short refs/remotes/origin/HEAD` minus `origin/`). A plan that builds on another unmerged stack names that stack's top branch.
+- **Opt in with `base`**: the branch the stack lands on, the trunk this repo starts work from (its AGENTS.md or CONTRIBUTING says; else `git symbolic-ref --short refs/remotes/origin/HEAD` minus `origin/`). A plan that builds on another unmerged stack names that stack's top branch.
 - **One leaf task, one PR.** Parents are headings, never PRs, and get no `branch`. `skipped` tasks have no PR.
 - **The stack is file order.** The first leaf's PR targets `base`; each next leaf's targets the branch of the leaf before it. Each task builds and passes its tests on the tasks before it alone, and `depends_on` names only earlier tasks; Rex reports one that points later.
 - **One plan, one stack.** Tasks that need none of each other's code still stack, in the order they should land. Work that must merge on its own goes in its own plan.

@@ -9,7 +9,7 @@
 coverage.out
 # plans keep any name, even one these patterns match
 !/rex/plans/**
-# the pre-PR gate script (agents.md, Workflow)
+# the pre-PR gate script (AGENTS.md, Workflow)
 /gate.sh
 # editors and OS
 .DS_Store

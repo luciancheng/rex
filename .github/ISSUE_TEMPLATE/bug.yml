@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in Rex doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Security issues go through SECURITY.md (a private report), not here.
+  - type: input
+    id: version
+    attributes:
+      label: rex --version
+    validations:
+      required: true
+  - type: input
+    id: go
+    attributes:
+      label: go version
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15, Ubuntu 24.04, Windows 11, …
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal app and $TERM
+      placeholder: iTerm2, xterm-256color
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options: [Cursor, Claude Code, Codex, OpenCode, none]
+    validations:
+      required: true
+  - type: textarea
+    id: feed
+    attributes:
+      label: Feed health
+      description: Type ?⏎ in Rex and paste the feed block (it shows the feed path, the last event and which agents are wired).
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: A terminal capture helps (tmux capture-pane -p, or copy the text).
+    validations:
+      required: true

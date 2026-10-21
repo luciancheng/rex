@@ -4,7 +4,7 @@ This is the target design for the REX CLI loop:
 
 create → pin → watch → complete → send off → see drift → quit
 
-It records each decision, the friction it removes, and which slice of work owns it. TUI changes cite the section they implement. `agents.md` is still the contributor contract. Where this spec changes an `agents.md` rule, the change that ships it updates `agents.md` too.
+It records each decision, the friction it removes, and which slice of work owns it. TUI changes cite the section they implement. `AGENTS.md` is still the contributor contract. Where this spec changes an `AGENTS.md` rule, the change that ships it updates `AGENTS.md` too.
 
 Everything here keeps the product rules:
 - watch-only;

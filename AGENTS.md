@@ -29,6 +29,7 @@ Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. 
 | Live UI / keys | `internal/tui/` |
 | Event feed | `internal/watch/` |
 | Plan files | `internal/plan/` · format in `docs/plan-format.md` |
+| Byte-preserving JSON edits | `internal/jsonedit/` (installers and plan writes) |
 | Agent skill | `internal/skill/rex-plan/SKILL.md` (embedded; installed only by `rex ingest --install-skill [--project]`) |
 | Idle PNG | `assets/idle.png` |
 | Breakdance sheet | `assets/breakdance.png` (40×40 cells) |
@@ -48,7 +49,17 @@ To change idle: replace `assets/idle.png`, then:
 go run ./cmd/importsprite --apply assets/idle.png
 ```
 
-That writes the idle `Pixels(...)` grid and the yellow palette 1:1. **Leave blink, glance, and squat as transforms** on `IdleRows` (`PaintPixels` / `ShiftBody`). Do not hand-edit a second grid that drifts from the PNG.
+That writes the idle `Pixels(...)` grid into `internal/mascot/sprites.go` and the sampled RGB values into the yellow palette, 1:1; restart `rex start` after it. The grid's letters are palette roles:
+
+| Letter | Role | Letter | Role |
+| --- | --- | --- | --- |
+| `k` | outline | `n` | mid |
+| `y` | body | `a` | accent |
+| `Y` | highlight | `b` | belly |
+| `o` | shade | `p` | blush |
+| `d` | dark | `s` | shadow |
+
+**Leave blink, glance, and squat as transforms** on `IdleRows` (`PaintPixels` / `ShiftBody`). Do not hand-edit a second grid that drifts from the PNG.
 
 Blink drops the top eye pixel (the face `k` at column 25, rows 13–14 on the current sprite). Squat is `ShiftBody(..., dy=1, keepBottom=7)` so the shadow stays planted.
 

@@ -983,12 +983,17 @@ func (a *app) pollDoc() bool {
 	if a.doc == nil {
 		return false
 	}
+	hadTasks := a.doc.plan != nil && len(a.doc.plan.Tasks) > 0
 	changed, summary := a.doc.poll(a.now())
 	if !changed {
 		return false
 	}
 	if a.at != atTaskDetail {
 		a.outline.keepSel(a.doc.plan)
+	}
+	if p := a.doc.plan; !hadTasks && p != nil && len(p.Tasks) > 0 && a.outline.sel == "" {
+		// An agent just filled an empty plan: land on its pin, as an open does.
+		a.outline.sel = defaultSel(p)
 	}
 	a.notePin()
 	a.rejudgeDrift()

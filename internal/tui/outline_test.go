@@ -519,3 +519,15 @@ func TestATaskNeverWaitsOnItselfThroughItsParent(t *testing.T) {
 		t.Fatalf("card waits only on ui's other leaves, which are done: %v", unmet)
 	}
 }
+
+func TestFilledPlanSelectsItsPin(t *testing.T) {
+	a, c, path := openDemo(t, string(plan.Stub("demo")), 120, 32)
+	if a.outline.sel != "" {
+		t.Fatal("an empty plan has only the title")
+	}
+	os.WriteFile(path, []byte(demoPlan), 0o644)
+	later(a, c)
+	if a.outline.sel != "card-highlight" {
+		t.Fatalf("when an agent fills the plan the cursor goes to the pin, got %q", a.outline.sel)
+	}
+}

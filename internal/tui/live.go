@@ -477,6 +477,9 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	}
 	if height > 2 {
 		segs, kind := footerSegments(opt, scroll)
+		if !l.typing {
+			segs = withoutEnter(segs)
+		}
 		rows[len(rows)-1] = mascot.Paint(clip(fitFooter(segs, width), width), mascot.UI[kind], enabled)
 	}
 	return rows

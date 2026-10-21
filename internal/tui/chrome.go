@@ -135,16 +135,22 @@ func fitFooter(segments []string, width int) string {
 	return clip(segments[0], width)
 }
 
-// homeCreates reports that ⏎ on Library Home creates a plan: there are
-// none yet, or the cursor is on Create. It reads the rows, not the disk.
+// homeCreates reports that ⏎ on Library Home creates a plan: the cursor
+// is on Create. It reads the rows, not the disk.
 func homeCreates(b *PlanBrowser) bool {
-	none := true
-	for _, row := range b.Rows {
-		if row.Kind == PlanRowLatest && row.Path != "" {
-			none = false
+	return b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowNew
+}
+
+// withoutEnter drops the ⏎ segments from a footer, for screens too short
+// to show the composer (⏎ does nothing there).
+func withoutEnter(segs []string) []string {
+	var out []string
+	for _, s := range segs {
+		if !strings.Contains(s, "⏎") {
+			out = append(out, s)
 		}
 	}
-	return none || (b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowNew)
+	return out
 }
 
 // footerSegments is the footer for the current screen, highest rank first

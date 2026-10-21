@@ -110,8 +110,28 @@ func TestShortTerminalComposer(t *testing.T) {
 
 func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
 	b := NewPlanBrowser(t.TempDir())
+	for i, row := range b.Rows {
+		if row.Kind == PlanRowNew {
+			b.Cursor = i
+		}
+	}
 	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[1] != "⏎ create" {
-		t.Fatalf("%q", segs)
+		t.Fatalf("on Create: %q", segs)
+	}
+	for i, row := range b.Rows {
+		if row.Kind == PlanRowOpen {
+			b.Cursor = i
+		}
+	}
+	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[1] == "⏎ create" {
+		t.Fatalf("on Open a plan: %q", segs)
+	}
+}
+
+func TestShortTerminalFooterOffersNoEnter(t *testing.T) {
+	rows := frameAt(t, 100, 6, ComposeOptions{Pane: PaneChat})
+	if strings.Contains(rows[len(rows)-1], "⏎") {
+		t.Fatalf("no composer, no ⏎: %q", rows[len(rows)-1])
 	}
 }
 

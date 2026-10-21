@@ -54,7 +54,7 @@ Letters always type into the composer. What the text means depends on the screen
 - Verbs run on the Outline, Plan / Task detail, and the Tape.
 - In the Library composers (Home find, Browse filter, Name prompt), text is taken literally, so `d⏎` there finds or names "d". A leading `/` forces a verb: `/help⏎`, `/breakdance⏎`, and, once a plan is open, `/sendoff⏎`, `/brief⏎`, `/done⏎`.
 - Inside an overlay only that overlay's own inputs work (below); close it first for anything else.
-- A lone `?⏎` opens Help everywhere.
+- A lone `?⏎` opens Help from any screen. Inside an overlay it is that overlay's input like any other text (Pin confirm: cancels).
 
 Keys that act without ⏎: the arrows, PgUp/PgDn, Home/End, Esc, Tab, Ctrl keys. Everything else waits for ⏎. Paste arrives as one token, and newlines and tabs inside it become spaces. **A paste never submits.** Scroll-wheel noise or a pasted blob therefore cannot write a plan file.
 
@@ -75,7 +75,7 @@ Rules:
 - While you type, the footer shows what ⏎ will do: `⏎ sendoff card-highlight` or `⏎ note (local, not sent)`. A typo is visible before you press ⏎.
 - On the tape, any other text becomes a **note**:
   - It is labelled `── note · local ──` and drawn muted.
-  - It exists only in Rex's memory. It is never written to the feed and never reaches the agent. The same holds for every block Rex adds itself: `note`, `plan`, `drift`, `sendoff`, `done` and `before rex started`.
+  - It exists only in Rex's memory. It is never written to the feed and never reaches the agent. The same holds for every block Rex adds itself: `note`, `plan`, `drift`, `sendoff`, `brief`, `done` and `before rex started`.
   - It does not start or end a turn.
 - In the outline, any other text shows `not a verb · ?⏎ for help`.
 
@@ -98,7 +98,7 @@ Rules:
 | Home / End | first / last | first / last | – | first / last | top / bottom | oldest / live | – |
 | Ctrl+A / Ctrl+E | – | – | – | – | – | oldest / live | – |
 | ⏎, empty draft | open the selected card or recent | open the plan or enter the folder | "type a name first" | title row → Plan detail; task row → Task detail | – | – | Completion: save; others: nothing |
-| ⏎, with draft | open the selected match, or create from `+ Create 'x'` | open the selected match | create, then go to its outline | run the verb | run the verb | run the verb, or add a note | save |
+| ⏎, with draft | open the selected match, or create from `+ Create 'x'` | open the selected match | create, then open its outline (plan) or enter it (folder) | run the verb | run the verb | run the verb, or add a note | Completion: save · Send-off: `c` copies, `o` prints plain · Pin confirm: `p` writes, anything else cancels · Help: nothing |
 | → | – | enter the folder | – | Task detail | – | – | – |
 | Esc | clear the find text, else nothing | clear the filter, else up one folder, else to Home | clear the name, else cancel (nothing written) | clear the draft, else to Library (cursor on **Continue**) | clear the draft, else back to Outline | clear the draft | close, nothing written |
 | ← (empty draft only) | – | up one folder, else to Home | – | to Library | back to Outline | – | – |
@@ -186,7 +186,7 @@ The footer is built from **ranked segments**:
 | Completion | `done · ⏎ save · esc cancel · ↑↓ field` \| |
 | Send-off / brief | `sendoff · esc close · c⏎ copy` \| `· o⏎ print plain` |
 | Pin confirm | `pin · p⏎ move pin · esc cancel` \| |
-| Help | `help · esc close · tab tape` \| |
+| Help | `help · esc close · tab <other place>` \| |
 | Quit armed | `ctrl+c again to quit` (replaces the footer) |
 
 The copy status (`copied (pbcopy)` or `sent (OSC 52) · may be blocked`) lives in the overlay's title rule, not in the footer.
@@ -205,8 +205,8 @@ The copy status (`copied (pbcopy)` or `sent (OSC 52) · may be blocked`) lives i
 | Glyph | Meaning |
 |---|---|
 | `▸` | pinned (active, or next up) |
-| `○` | ready: pending, and all deps done |
-| `·` | waiting on deps; the row also shows `after <id>` while a dep is unmet |
+| `○` | ready: pending, and all deps done or skipped |
+| `·` | waiting on deps; the row also shows `after <id>` while a dep is unmet (not done or skipped) |
 | `✓` | done (the row is muted as well) |
 | `–` | skipped |
 | `!` | blocked (status `blocked`) |
@@ -303,10 +303,10 @@ Reload behaviour:
   - A bare ⏎ does nothing.
   - Tab leaves it open.
 - **Reopening.** Pinning a `done` task reopens it. The status becomes `active`, and the retrospective is kept.
-- **Pin start time.** It is recorded in `~/.rex/state.json` when you pin with `p⏎`. It powers the completion evidence. The JSON gets no timestamps.
-  - When Rex didn't see the pin start (the agent or a teammate set `active`, the pin is computed, or Rex wasn't running), the window is "since Rex saw it as the pin this session". That time lives in memory only and resets when Rex restarts, so `~/.rex/state.json` is still written only on your own `p⏎`. The panel says `seen since 14:02 (this session)`.
+- **Pin start time.** It is recorded in `~/.rex/state.json` when you pin with `p⏎`. It powers the completion evidence. The JSON gets no timestamps. `~/.rex/state.json` is written only on your own actions, never on events: `p⏎` records the pin start, and opening a plan records it as the repo's Continue plan.
+  - When Rex didn't see the pin start (the agent or a teammate set `active`, the pin is computed, or Rex wasn't running), the window is "since Rex saw it as the pin this session". That time lives in memory only and resets when Rex restarts, so the pin start in `~/.rex/state.json` still comes only from your own `p⏎`. The panel says `seen since 14:02 (this session)`.
   - When nothing was seen, the panel says `not seen on this machine` and lists no files.
-- **`~/.rex/state.json`** is outside the repo and never committed. It is keyed by repo root. Each write happens under a lock, re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries.
+- **`~/.rex/state.json`** is outside the repo and never committed. It holds the last plan opened per repo root and the pin start times. Each write re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries (two writes in the same instant can still drop one; that costs a Continue card or a start time, never plan data).
 - **After `done`, nothing is auto-claimed.**
   - The cursor moves to the first newly ready task.
   - Row 1 says `▸ <id> <title> (next up · p⏎ pins it)`.
@@ -488,6 +488,8 @@ If the pin lists no files, only the `scope.out` rule applies.
   - `rex/plans/` is created on the first Create.
   - A file named `rex` at the repo root shows `rex/ is a file here · plans off` instead of being removed.
   - Outside a git repo, Home says `not in a git repo · plans go to <cwd>/rex/plans`.
+  - Plans left in an old `rex-plans/` folder are reported (`rex-plans/ has 2 old plan(s) · move them into rex/plans`), never moved.
+  - `rex/plans/` is created on the first Create or New folder.
 
 ---
 
@@ -627,7 +629,7 @@ These `agents.md` and README lines change when the slice that implements them sh
 | `fix/plans_dir_safety` | TUI: after "Duplicate names warn and do not overwrite.", add "Starting Rex never deletes or creates files…" |
 | `fix/cursor_installer` | Mascot: "`text` / `error` → idle" → a tool `error` keeps the turn running and `stop` is `idle` (never text). Watch feed: installers splice with `internal/jsonedit` |
 | `fix/key_input` | "Unix live mode is cbreak (ECHO/ICANON/ISIG off) and must keep OPOST" → also IXON and IEXTEN off |
-| `fix/text_sanitize` | "Clip ANSI by cells (runes)" and Code conventions "Pane width math uses `runeLen` / `clip` / `padRight`" → clip by cell width (`clipCells`); agent text is cleaned first |
+| `fix/text_sanitize` | "Clip ANSI by cells (runes)" and Code conventions "Pane width math uses `runeLen` / `clip` / `padRight`" → clip by cell width (`clip`); agent text is cleaned first |
 | `fix/render_flicker` | "Yellow from assets/idle.png is the only look" → plus the 256-color quantization of that palette for Terminal.app |
 | `feature/ux_chrome` | "Left ~40 columns: mascot" → layout tiers. "Chat header always shows turn state and the open plan" → the header on every screen, with path shortening when narrow |
 | `feature/ux_input` | Kinds: + local-only `note`. "Tab switches to chat" → two places. "chat" → "tape" (agents.md TUI keys and README:71 "Tab switches plans ↔ chat"). agents.md:53 and README:71 "type `breakdance` in the composer / chat box" → type it on the outline or tape, `/breakdance` in the Library. Tape blocks: + Rex's own local blocks |

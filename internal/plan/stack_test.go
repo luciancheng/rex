@@ -107,13 +107,15 @@ func TestSendoffStack(t *testing.T) {
 			"gh pr create --base feature/plans_ui --head feature/card_highlight",
 			"gh stack link --base dev feature/plans_ui feature/card_highlight, leaving out any whose PR merged",
 			"if it isn't on the base yet, rebase it onto the base and retarget its PR",
-			"(copy it out of the repo, git checkout -- rex/plans/demo.rex.json, switch, copy it back)",
+			"cp rex/plans/demo.rex.json /tmp/rex-plan.json && { git checkout HEAD -- rex/plans/demo.rex.json 2>/dev/null || rm rex/plans/demo.rex.json; } && <the switch or rebase>; mkdir -p rex/plans && cp /tmp/rex-plan.json rex/plans/demo.rex.json",
 		}, []string{"Below it", "PRs above it"}},
 		// third up: --base names the bottom's base, so the whole done chain is listed
 		{"third in the stack", plan("done", "done", "active"), []string{"- Base: feature/card_highlight (card-highlight, done)", "gh stack link --base dev feature/plans_ui feature/card_highlight feature/load_outline,"}, []string{"gh stack link --base dev feature/card_highlight feature/load_outline"}},
 		{"bottom", plan("pending", "pending", "pending"), []string{"- Base: dev (the bottom of the stack)\n", "gh pr create --base dev --head feature/plans_ui"}, []string{"gh stack link", "the PR it sits on"}},
-		{"fix a lower PR", plan("active", "done", "done"), []string{"PRs above it, already done: feature/card_highlight, feature/load_outline.", "git rebase --autostash --update-refs feature/plans_ui", "retarget the PR of feature/card_highlight to feature/plans_ui"}, nil},
+		{"fix a lower PR", plan("active", "done", "done"), []string{"PRs above it, already done: feature/card_highlight, feature/load_outline.", "git rebase --update-refs feature/plans_ui", "retarget the PR of feature/card_highlight to feature/plans_ui"}, nil},
 		{"out of order", plan("done", "blocked", "active"), []string{"- Below it, not done yet: card-highlight (blocked).", "gh pr create --base feature/plans_ui --head feature/load_outline"}, nil},
+		// a task finished late slots in under a done PR: link says where that one goes
+		{"slots in", plan("done", "active", "done"), []string{"gh stack link --base dev feature/plans_ui feature/card_highlight feature/load_outline,"}, nil},
 	}
 	for _, c := range cases {
 		got, _ := Sendoff(c.p, "rex/plans/demo.rex.json")
@@ -165,8 +167,28 @@ func TestSendoffNeverNamesABranchRexFlagged(t *testing.T) {
 			t.Errorf("%s: %s\n%s", name, problems(p), stack)
 		}
 	}
+	if p := mustParse(t, `{"base": "dev", "tasks": [{"id": "old", "status": "skipped", "branch": "feature/x"}, {"id": "new", "status": "active", "branch": "feature/x"}]}`); len(p.Problems) != 1 {
+		t.Fatalf("a skipped task's branch is still taken: %s", problems(p))
+	} else if got, _ := Sendoff(p, "p.rex.json"); strings.Contains(got, "--head feature/x") {
+		t.Fatalf("and stays out of commands:\n%s", got)
+	}
 	if p := mustParse(t, `{"base": "feature/auth", "tasks": [{"id": "a", "branch": "feature/auth/login"}]}`); len(p.Problems) != 1 || !strings.Contains(p.Problems[0].Msg, "can't both exist in git") {
 		t.Fatalf("a branch under the base is a Problem: %s", problems(p))
+	}
+}
+
+func TestALongLinkKeepsThePin(t *testing.T) {
+	var tasks []string
+	for i := 0; i < 12; i++ {
+		status := "done"
+		if i == 6 {
+			status = "active"
+		}
+		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "status": %q, "branch": "f/t%02d"}`, i, status, i))
+	}
+	got, _ := Sendoff(mustParse(t, `{"base": "dev", "tasks": [`+strings.Join(tasks, ",")+`]}`), "p.rex.json")
+	if !strings.Contains(got, "gh stack link --base dev f/t00 … f/t05 f/t06 f/t07 … f/t11, every branch from the bottom") {
+		t.Fatalf("the shortened link keeps the bottom, the pin's neighbours and the top:\n%s", got[strings.Index(got, "\nStack: "):])
 	}
 }
 

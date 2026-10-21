@@ -1,6 +1,10 @@
 package plan
 
-import "strings"
+import (
+	"path"
+	"slices"
+	"strings"
+)
 
 // Stacked reports a plan that is one stack of PRs (docs/plan-format.md,
 // Stacks): it names a base, or a task names a branch.
@@ -62,15 +66,16 @@ func nests(a, b string) string {
 
 // branches are the stack members' branches Rex may name in a command:
 // plain, not the base, not nested with the base or another, and only the
-// first task that claims one (Parse reports the rest). why says what is
+// first leaf that claims one (Parse reports the rest; a skipped task's
+// branch stays taken, its commits may still be there). why says what is
 // wrong with a branch that is set but left out.
 func (g *Graph) branches() (use map[*Task]string, why map[*Task]string) {
 	p := g.p
 	use, why = map[*Task]string{}, map[*Task]string{}
-	owner := map[string]bool{}
+	var claimed []string // in file order, so reasons don't reshuffle
 	for i := range p.Tasks {
 		t := &p.Tasks[i]
-		if !g.inStack(t) || t.Branch == "" {
+		if t.ID == "" || g.byID[t.ID] != t || !g.Leaf(t) || t.Branch == "" {
 			continue
 		}
 		b := t.Branch
@@ -79,21 +84,22 @@ func (g *Graph) branches() (use map[*Task]string, why map[*Task]string) {
 			why[t] = "not a plain branch name"
 		case b == p.Base:
 			why[t] = "it is the plan's base"
-		case owner[b]:
+		case slices.Contains(claimed, b):
 			why[t] = "an earlier task has it"
 		case nests(b, p.Base) != "":
 			why[t] = "it nests with the base"
 		default:
-			for o := range owner {
+			for _, o := range claimed {
 				if nests(b, o) != "" {
 					why[t] = "it nests with " + o
+					break
 				}
 			}
 		}
-		if why[t] == "" {
+		if why[t] == "" && g.inStack(t) {
 			use[t] = b
 		}
-		owner[b] = true
+		claimed = append(claimed, b)
 	}
 	return use, why
 }
@@ -107,6 +113,7 @@ func (r *reader) stack() {
 	}
 	g := p.Graph()
 	owner := map[string]string{}
+	var order []string // owner's keys in file order, so problems come out the same each time
 	for i := range p.Tasks {
 		t := &p.Tasks[i]
 		if t.ID == "" || g.byID[t.ID] != t {
@@ -125,12 +132,13 @@ func (r *reader) stack() {
 		case nests(t.Branch, p.Base) != "":
 			r.problem(t.ID, "branch %q and the base %q can't both exist in git · one can't sit under the other", t.Branch, p.Base)
 		default:
-			for b, id := range owner {
+			for _, b := range order {
 				if nests(t.Branch, b) != "" {
-					r.problem(t.ID, "branch %q and %s's %q can't both exist in git · one can't sit under the other", t.Branch, id, b)
+					r.problem(t.ID, "branch %q and %s's %q can't both exist in git · one can't sit under the other", t.Branch, owner[b], b)
 				}
 			}
 			owner[t.Branch] = t.ID
+			order = append(order, t.Branch)
 		}
 		if !g.Leaf(t) || g.Cyclic(t) {
 			continue
@@ -301,19 +309,20 @@ func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task, rel str
 				names = append(names, t.ID+"'s branch")
 			}
 		}
-		line("- PRs above it, already done: %s. Once this branch is pushed, rebase them onto it from the top of the stack (git rebase --autostash --update-refs %s; leave out any whose PR merged), push each moved branch with --force-with-lease, and retarget the PR of %s to %s.", list(names, ", "), head, clip(clean(names[0]), idCap), head)
+		line("- PRs above it, already done: %s. Once this branch is pushed, rebase them onto it from the top of the stack (git rebase --update-refs %s; leave out any whose PR merged), push each moved branch with --force-with-lease, and retarget the PR of %s to %s.", list(names, ", "), head, clip(clean(names[0]), idCap), head)
 	}
-	plan := "<plan file>"
+	plan, dir := "<plan file>", "<its folder>"
 	if plainRef(rel) {
-		plan = rel
+		plan, dir = rel, path.Dir(rel)
 	}
-	line("- The plan file is the stack's, not this PR's: commit its changes only on the top branch of the stack, and keep it as it is across every branch switch (copy it out of the repo, git checkout -- %s, switch, copy it back), so Rex keeps reading the current plan.", plan)
+	line("- The plan file is the stack's, not this PR's: commit its changes only on the top branch of the stack, and keep it as it is around every git switch or rebase, in one command line so its older copy is on disk only for that moment: cp %s /tmp/rex-plan.json && { git checkout HEAD -- %s 2>/dev/null || rm %s; } && <the switch or rebase>; mkdir -p %s && cp /tmp/rex-plan.json %s", plan, plan, plan, dir, plan)
 	line(`- Repo rules on branches and PRs win: if you use another branch, write it into this task as "branch".`)
 }
 
 // linkCommand is gh-stack's link for the pin: every done branch below it
-// from the bottom, then the pin, since --base names the bottom's base and
-// link corrects the PR bases it is given. A done task with no usable
+// from the bottom, the pin, then the done PRs already above it, since
+// --base names the bottom's base and link corrects the PR bases it is
+// given. A done task with no usable
 // branch, or a long stack, leaves the list to the agent.
 func (g *Graph) linkCommand(pin *Task, use map[*Task]string, trunkArg, head string) string {
 	var chain []string
@@ -330,9 +339,26 @@ func (g *Graph) linkCommand(pin *Task, use map[*Task]string, trunkArg, head stri
 		}
 		chain = append(chain, use[c])
 	}
-	if len(chain) > 6 {
-		chain = append(chain[:2:2], "…", chain[len(chain)-1])
-		return "gh stack link --base " + trunkArg + " " + strings.Join(chain, " ") + " " + head + ", every branch from the bottom, leaving out any whose PR merged"
+	chain = append(chain, head)
+	for _, c := range g.above(pin) {
+		if use[c] == "" {
+			return "gh stack link --base " + trunkArg + " <the stack's branches, bottom first, " + head + " in its place>, leaving out any whose PR merged"
+		}
+		chain = append(chain, use[c]) // a PR that already sits above: say where it goes
 	}
-	return "gh stack link --base " + trunkArg + " " + strings.Join(chain, " ") + " " + head + ", leaving out any whose PR merged"
+	if len(chain) > 6 {
+		// Keep the bottom, the pin with its neighbours, and the top.
+		at := slices.Index(chain, head)
+		var short []string
+		for i, b := range chain {
+			switch {
+			case i == 0 || i == len(chain)-1 || (i >= at-1 && i <= at+1):
+				short = append(short, b)
+			case len(short) > 0 && short[len(short)-1] != "…":
+				short = append(short, "…")
+			}
+		}
+		return "gh stack link --base " + trunkArg + " " + strings.Join(short, " ") + ", every branch from the bottom, leaving out any whose PR merged"
+	}
+	return "gh stack link --base " + trunkArg + " " + strings.Join(chain, " ") + ", leaving out any whose PR merged"
 }

@@ -119,7 +119,7 @@ A plan can be one stack of pull requests: each PR's base branch is the head bran
 - **One plan, one stack.** Tasks that need none of each other's code still stack, in the order they should land. Work that must merge on its own goes in its own plan. A plan that builds on another unmerged stack names that stack's top branch as `base`.
 - **Branch names are plain:** letters, digits and `. _ - /`, at most 80 bytes, not starting with `-`, `.` or `/`, not ending with `.` or `/`, with no `..`, `//` or `.lock` part, and not `HEAD`. Two branches (or a branch and the base) can't nest (`feature/a` and `feature/a/b`), since git can't hold both. Rex puts them into the commands a send-off suggests, so it leaves any other name out. One branch per task, never the base. Name them the way the repo does.
 - **Rex never runs git or talks to a forge.** It reads `base` and `branch` and never writes them. The send-off places the pinned task from the file alone: its base is the branch of the nearest earlier leaf that is `done`, else `base`. Earlier leaves that are not done yet join under it when they are. Later leaves that are already `done` are PRs that sit on it, rebased onto it after a fix. Whether a PR has merged is the forge's business: the send-off says to use `base` once the PR below has merged.
-- **One plan for the whole stack.** Rex reads the plan from the working tree, so it must stay the same file whichever branch is checked out. Commit its changes (a task's `branch`, status writes, retrospectives) only on the top branch of the stack, and carry it across a branch switch as it is (the send-off gives the commands). The agent working a task writes its `branch` if the plan had none.
+- **One plan for the whole stack.** Rex reads the plan from the working tree, so it must stay the same file whichever branch is checked out. Commit its changes (a task's `branch`, status writes, retrospectives) only on the top branch of the stack, and keep it as it is around every branch switch or rebase, in one command line (the send-off gives it), so its older copy is on disk only for that moment. The agent working a task writes its `branch` if the plan had none.
 
 ## Who writes what
 
@@ -152,7 +152,7 @@ Rex shows what it can and lists the rest under the plan:
 - more than one `active` task;
 - an unknown status (read as `pending`);
 - a value of the wrong type (ignored);
-- in a stack: a `base` or `branch` that is not a plain branch name (left out of commands), a branch two tasks share or that equals the base, a branch on a parent (ignored), or a task that depends on a later one.
+- in a stack: a `base` or `branch` that is not a plain branch name (left out of commands), a branch two tasks share, that equals the base, or that nests with the base or another branch, a branch on a parent (ignored), or a task that depends on a later one.
 
 Rex will not write to a file whose `version` is newer than 1 or unreadable (a quoted number such as `"1"` is read, with a warning), whose `tasks` is not a list, or that still has git conflict markers. A missing `version` reads as 1. A file that is not valid JSON or that has a duplicate key is not shown: Rex keeps the last good copy on screen and names the line and column (`14:3`); for conflict markers it names the line of the first one.
 

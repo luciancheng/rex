@@ -693,14 +693,11 @@ func fitNotice(notice string, width int) string {
 	var variants []string
 	switch {
 	case strings.HasPrefix(notice, outsideGitPrefix):
-		path := strings.TrimPrefix(notice, outsideGitPrefix)
-		for _, head := range []string{outsideGitPrefix, "not in git · plans go to ", "no git · plans in "} {
-			variants = append(variants, head+path)
-		}
-		for _, head := range []string{"no git · plans in ", "no git · "} {
-			if room := width - len([]rune(head)) - 1; room >= len("rex/plans") {
-				r := []rune(path)
-				variants = append(variants, head+"…"+string(r[max(0, len(r)-room):]))
+		path := []rune(strings.TrimPrefix(notice, outsideGitPrefix))
+		for _, head := range []string{outsideGitPrefix, "not in git · plans go to ", "no git · plans in ", "no git · "} {
+			variants = append(variants, head+string(path))
+			if room := width - len([]rune(head)) - 1; room >= len([]rune("…/rex/plans")) && room < len(path) {
+				variants = append(variants, head+"…"+string(path[len(path)-room:]))
 			}
 		}
 	case notice == rexFileNotice:

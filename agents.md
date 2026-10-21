@@ -133,9 +133,7 @@ set -euo pipefail
 base=${1:?usage: bash gate.sh <base-branch>}
 out=$(gofmt -l .); [ -z "$out" ] || { echo "gofmt needed: $out"; exit 1; }
 for os in darwin linux windows; do GOOS=$os go vet ./...; done
-# dev has two known staticcheck findings until #19; until then they report
-# without stopping the gate (#19 makes this step fatal again).
-staticcheck ./... || echo "staticcheck: findings above; only the two from $base may remain"
+staticcheck ./...
 go test -race ./...
 GOTOOLCHAIN=local go1.22.12 test ./...      # go install golang.org/dl/go1.22.12@latest && go1.22.12 download
 git diff --exit-code "$base" -- go.mod go.sum  # no new deps, no toolchain line

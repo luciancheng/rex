@@ -24,7 +24,7 @@ Rex has exactly **two places**. **Tab** switches between them and does nothing e
 | **PLAN** | Library (Home, Find, Browse, Name prompt) · Outline · Plan detail · Task detail |
 | **TAPE** | Live tape |
 
-**Overlays** open on top of whichever place you are in: Completion, Send-off, Help, and Pin confirm. Esc closes them.
+**Overlays** open on top of whichever place you are in: Completion, Send-off (also used for the planning brief), Help, and Pin confirm. Esc closes them, and Tab leaves them open in their place.
 
 Each place remembers its screen, its selection, its scroll position, its draft, and any open overlay. Tab away and back, and everything is where you left it.
 - Selection is kept by **identity**: plan path or task id. Row indexes are not used.
@@ -47,26 +47,31 @@ Letters always type into the composer. What the text means depends on the screen
 | Tape | a verb, or a local note | ` > ` | `note (not sent) · sendoff · ?` |
 | Completion | the focused field | ` › ` | see §8 |
 
+**Where verbs run:**
+- Verbs run on the Outline, Plan / Task detail, and the Tape.
+- In the Library composers (Home find, Browse filter, Name prompt), text is taken literally, so `d⏎` there finds or names "d". A leading `/` forces a verb: `/sendoff⏎`, `/help⏎`.
+- A lone `?⏎` opens Help everywhere.
+
 Keys that act without ⏎: the arrows, PgUp/PgDn, Home/End, Esc, Tab, Ctrl keys. Everything else waits for ⏎. Paste arrives as one token, and newlines and tabs inside it become spaces. **A paste never submits.** Scroll-wheel noise or a pasted blob therefore cannot write a plan file.
 
 ### Verbs
 
 | Verb | Alias | Where | Does |
 |---|---|---|---|
-| `sendoff` | `handoff`, `s` | anywhere a plan is open | opens the Send-off overlay and copies the brief (§9) |
-| `brief` | `b` | anywhere a plan is open | opens the planning brief ("fill or refine this plan") |
-| `done` | `d` | anywhere a plan is open | opens Completion **for the pin** (§8) |
-| `pin [id]` | `p` | outline / detail: the selection or the id; tape: needs an id | pins a task (§7) |
-| `help` | `?` | anywhere | opens the Help overlay |
-| `breakdance` | – | anywhere | plays the breakdance sheet once, then resumes the turn pose |
+| `sendoff` | `handoff`, `s` | outline, detail, tape (plan open) | opens the Send-off overlay and copies the brief (§9) |
+| `brief` | `b` | outline, detail, tape (plan open) | opens the Send-off overlay in **planning** mode and copies the planning brief (§9) |
+| `done` | `d` | outline, detail, tape (plan open) | opens Completion **for the effective pin**, computed or written (§8) |
+| `pin [id]` | `p` | outline / detail: the selection, or the id; tape: the id, or the next-up task when bare | pins a task (§7) |
+| `help` | `?` | anywhere (`?` alone, or `/help` in the Library) | opens the Help overlay |
+| `breakdance` | – | outline, detail, tape (`/breakdance` in the Library) | plays the breakdance sheet once, then resumes the turn pose |
 
 Rules:
 - A leading `/` is accepted (`/sendoff`), the case of the letters does not matter, and `send off` works as two words.
-- A verb is **never echoed** as a note. It leaves one muted result line instead, e.g. `sendoff · copied (pbcopy)`.
+- A verb is **never echoed** as a note. It leaves one muted record line on the tape instead, e.g. `── sendoff · card-highlight · copied (pbcopy) ──` or `── done · card-highlight ──`.
 - While you type, the footer shows what ⏎ will do: `⏎ sendoff card-highlight` or `⏎ note (local, not sent)`. A typo is visible before you press ⏎.
 - On the tape, any other text becomes a **note**:
   - It is labelled `── note · local ──` and drawn muted.
-  - It exists only in Rex's memory. It is never written to the feed and never reaches the agent.
+  - It exists only in Rex's memory. It is never written to the feed and never reaches the agent. The same holds for every block Rex adds itself: `note`, `plan`, `drift`, `sendoff`, `done` and `before rex started`.
   - It does not start or end a turn.
 - In the outline, any other text shows `not a verb · ?⏎ for help`.
 
@@ -91,12 +96,13 @@ Rules:
 | ⏎, empty draft | open the selected card or recent | open the plan or enter the folder | "type a name first" | title row → Plan detail; task row → Task detail | – | – | confirm / save |
 | ⏎, with draft | open the selected match, or create from `+ Create 'x'` | open the selected match | create, then go to its outline | run the verb | run the verb | run the verb, or add a note | save |
 | → | – | enter the folder | – | Task detail | – | – | – |
-| Esc / ← (empty draft) | clear find, else nothing | clear filter, else up one folder, else to Home | cancel, nothing written | to Library (cursor on **Current**) | back to Outline | clear draft | close, nothing written |
+| Esc | clear the find text, else nothing | clear the filter, else up one folder, else to Home | cancel, nothing written | clear the draft, else to Library (cursor on **Continue**) | clear the draft, else back to Outline | clear the draft | close, nothing written |
+| ← (empty draft only) | – | up one folder, else to Home | – | to Library | back to Outline | – | – |
 | Tab | to TAPE | to TAPE | to TAPE (draft kept) | to TAPE | to TAPE | to PLAN | the overlay stays open in its place |
 | Ctrl+L | full repaint | full repaint | full repaint | full repaint | full repaint | full repaint | full repaint |
 | Ctrl+C | clear + arm quit | clear + arm quit | clear + arm quit | clear + arm quit | clear + arm quit | clear + arm quit | cancel + arm quit |
 
-The Esc ladder goes **up one level within the place**:
+Esc first clears a non-empty draft. With an empty draft it goes **up one level within the place**:
 - Detail → Outline → Library Home.
 - Browse → parent folder → Home.
 
@@ -127,7 +133,7 @@ REX plan                       running · rex/plans/cuj/sendoff-demo.rex.json
 - Right: the turn-state word, then the open plan path relative to the repo root.
 - The state word is colored, and `ask` / `error` use the error color.
 - The same header appears on **every** screen. The turn state and the open plan are never hidden while you browse.
-- When the path does not fit, it is shortened in this order:
+- The full repo-relative path (`rex/plans/cuj/sendoff-demo.rex.json`) is shown whenever it fits. When it does not fit, it is shortened in this order:
   1. drop `rex/plans/`;
   2. drop `.rex.json`;
   3. clip with `…` from the left.
@@ -139,37 +145,46 @@ REX plan                       running · rex/plans/cuj/sendoff-demo.rex.json
 This row is blank today. It becomes a one-line status shared by both places. It shows the **first** of these that applies:
 
 1. `plan JSON error 14:3 · showing last good`
-2. `drift · hard: README.md is outside card-highlight files`
-3. `2 active: card-highlight, load-outline · pinned card-highlight`
-4. A toast, which expires after about 3 s:
+2. A toast, which expires after about 3 s:
    - `plan updated · plans-ui → done · +1 task`
-   - `✓ card-highlight done · next up load-outline · p⏎ to pin`
-5. `▸ card-highlight  Selected plan card is one block (active)`, or `(next up)` when the pin is computed rather than written.
-6. `no pin · all tasks done` or `no pin · nothing unblocked`.
+   - `✓ card-highlight done · next up load-outline · p⏎ pins it`
+3. `drift · hard: README.md is outside card-highlight files` (§9a)
+4. `drift · soft: internal/tui/live_view.go is not listed for card-highlight`
+5. `2 active: card-highlight, load-outline · pinned card-highlight`
+6. `▸ card-highlight  Selected plan card is one block (active)`, or `▸ load-outline  Outline view (next up · p⏎ pins it)` when the pin is computed rather than written.
+7. `no pin · all tasks done` or `no pin · nothing unblocked`.
 
 The line is empty when no plan is open.
 
 ### Last row: footer
 
-The footer is built from **ranked segments**. When the width is short, whole segments are dropped, lowest rank first. Words are never cut. The first segment names the screen in words, so it still works under NO_COLOR.
+The footer says **where you can go**. The composer placeholder (§2) already says **what you can type**, so verbs don't repeat in the footer.
 
-| Screen | Footer (highest rank first) |
+The footer is built from **ranked segments**:
+- When the width is short, whole segments are dropped, lowest rank first. Words are never cut.
+- The first segment names the screen in words, so it still works under NO_COLOR.
+- The first segments up to the `|` below must fit **38 cells**, the text column at 80×24. These are the must-have keys for that screen. A test checks every row.
+
+| Screen | Footer (highest rank first; `|` marks the 38-cell cut) |
 |---|---|
-| Library Home | `plans · ⏎ open · type to find · tab tape · ctrl+c×2 quit` |
-| Library Home (no plans) | `plans · ⏎ create · tab tape` |
-| Browse | `open · ⏎ open · esc back · type to filter · tab tape` |
-| Name prompt | `new plan · ⏎ create · esc cancel · tab tape` |
-| Outline | `outline · s⏎ sendoff · d⏎ done · p⏎ pin · ⏎ detail · esc plans · tab tape` |
-| Outline (empty plan) | `outline · b⏎ planning brief · tab tape` |
-| Outline (read-only) | `read-only · esc plans · tab tape` |
-| Plan / Task detail | `detail · ↑↓ scroll · p⏎ pin · esc outline` |
-| Tape, empty draft | `tape · s⏎ sendoff · d⏎ done · tab plan · ?⏎ help` |
-| Tape, typing | `⏎ note (local, not sent)` · `⏎ sendoff card-highlight` |
-| Tape, scrolled | `12↑ · 3 new · end live · tab plan` |
-| Completion | `done · ⏎ save · ↑↓ field · esc cancel` |
-| Send-off | `copied (pbcopy) · c⏎ copy again · o⏎ print plain · esc close` |
-| Pin confirm | `card-highlight is active · p⏎ again to move the pin · esc cancel` |
-| Quit armed | `ctrl+c again to quit` |
+| Library Home | `plans · ⏎ open · tab tape` \| `· type to find · ctrl+c×2 quit` |
+| Library Home (no plans) | `plans · ⏎ create · tab tape` \| |
+| Browse | `open · ⏎ open · esc back · tab tape` \| `· type to filter` |
+| Name prompt | `new plan · ⏎ create · esc cancel` \| `· tab tape` |
+| Outline | `outline · tab tape · esc plans` \| `· ⏎ detail · ?⏎ help` |
+| Outline (empty plan) | `outline · b⏎ brief · tab tape` \| `· esc plans` |
+| Outline (read-only) | `outline · read-only · esc plans` \| `· tab tape` |
+| Plan / Task detail | `detail · esc outline · ↑↓ scroll` \| `· tab tape` |
+| Tape, empty draft | `tape · tab plan · ↑↓ scroll` \| `· ?⏎ help · ctrl+c×2 quit` |
+| Tape, typing | `tape · ⏎ note (local, not sent)` \| (or `tape · ⏎ sendoff card-highlight`) |
+| Tape, scrolled | `tape · 12↑ · end live · tab plan` \| `· 3 new` |
+| Completion | `done · ⏎ save · esc cancel · ↑↓ field` \| |
+| Send-off / brief | `sendoff · esc close · c⏎ copy` \| `· o⏎ print plain` |
+| Pin confirm | `pin · p⏎ move pin · esc cancel` \| |
+| Help | `help · esc close · tab tape` \| |
+| Quit armed | `ctrl+c again to quit` (replaces the footer) |
+
+The copy status (`copied (pbcopy)` or `sent (OSC 52) · may be blocked`) lives in the overlay's title rule, not in the footer.
 
 ### Composer
 
@@ -195,7 +210,7 @@ The footer is built from **ranked segments**. When the width is short, whole seg
 Rules:
 - No glyph is an emoji, and the set avoids emoji-capable code points such as `▶` and `📌`.
 - Meaning is never carried by color alone. Under `NO_COLOR` every state still reads from its glyph and its words.
-- Color roles come from `mascot.UI`: `title`, `text`, `muted`, `you`, `pick`, `pickbg`, `folder`, `action`, `error`, `border`. No new palettes.
+- Color roles come from `mascot.UI`: `title`, `text`, `muted`, `accent` (commands), `you`, `pick`, `pickbg`, `folder`, `action`, `error`, `border`. No new palettes.
 - Terminal.app has no 24-bit color. When `TERM_PROGRAM=Apple_Terminal` and `COLORTERM` is not `truecolor`/`24bit`, the same yellow palette is quantized to the 256-color cube.
 
 ---
@@ -207,26 +222,25 @@ Opening or creating a plan lands on its **Outline**.
 Mockup at 120×32 (78-col text column):
 
 ```
-REX plan                       running · rex/plans/cuj/sendoff-demo.rex.json
+REX plan                         running · rex/plans/cuj/sendoff-demo.rex.json
 ▸ card-highlight  Selected plan card is one block (active)
-── Send-off demo · active · 1/3 ──────────────────────────────── tasks 3/3 ──
+── Send-off demo · active · 1/3 ──────────────────────────────────────────────
   last ✓ plans-ui: Home cards, browse, duplicate warn
 
-  ✓ plans-ui         Plans navigator
-▌ ▸ card-highlight   Selected plan card is one block
-▌     Bar, border, and fill cover the whole selected card
-  · load-outline     Outline view                       after card-highlight
+  ✓ plans-ui         Plans navigator · Create, open, browse rex/plans in the…
+▌ ▸ card-highlight   Selected plan card is one block · Bar, border, and fill…
+  · load-outline     Outline view · Show tasks       after card-highlight
 
 ╭────────────────────────────────────────────────────────────────────────────╮
 │ > s⏎ sendoff · d⏎ done · p⏎ pin · ?⏎                                       │
 ╰────────────────────────────────────────────────────────────────────────────╯
-outline · s⏎ sendoff · d⏎ done · p⏎ pin · ⏎ detail · esc plans · tab tape
+outline · tab tape · esc plans · ⏎ detail · ?⏎ help
 ```
 
 The same outline at 80×24 (38-col text column):
 
 ```
-REX plan     running · cuj/sendoff-demo
+REX plan    running · cuj/sendoff-demo
 ▸ card-highlight (active)
 ── Send-off demo · active · 1/3 ──────
   last ✓ plans-ui: Home cards, brow…
@@ -237,18 +251,18 @@ REX plan     running · cuj/sendoff-demo
 ╭────────────────────────────────────╮
 │ > s⏎ sendoff · d⏎ done · p⏎ pin    │
 ╰────────────────────────────────────╯
-outline · s⏎ sendoff · d⏎ done
+outline · tab tape · esc plans
 ```
 
 Layout:
-- **The rule.** The title row reads `── <title> · <status> · <done>/<total> ──`, with `tasks <selected>/<total>` on the right once the list scrolls. ⏎ on the rule opens Plan detail (goal, scope in/out, plan problems).
+- **The rule.** The title row reads `── <title> · <status> · <done>/<total> ──`. Once the list scrolls, `tasks <selected>/<total>` appears on the right (e.g. `tasks 12/34`). ⏎ on the rule opens Plan detail (goal, scope in/out, plan problems).
 - **The last line.** It shows the last finished task's `accomplished` text, the most useful "where we left off" sentence for a teammate.
 - **Task order.**
   - Tasks are listed in **file order**, never topologically sorted. Moving deps around never reshuffles the list.
   - `parent` is shown as indentation, two levels at most. Deeper tasks get a `↳`.
   - A parent shows a rollup (`1/3`) instead of a status glyph.
   - **Only leaf tasks can be pinned.** Pinning a parent pins its first ready child.
-- **The selected row** gets one muted blurb line: `does`, else `description`.
+- **Blurbs.** Issue #7 asks for a small blurb on every task. At text widths of 60 or more, each row shows `title · blurb` (from `does`, else `description`), clipped. Below 60, rows show the title only, and the selected row gets the blurb on its own muted line. A blurb line under every row would double the list's height at 38×18.
 - **Scrolling.** The list keeps a two-row margin around the selection, and shows `more ↓` / `more ↑` when rows are hidden.
 - **Task detail** (⏎ or → on a task) is a scrolling sub-screen:
   - title, status;
@@ -277,46 +291,57 @@ Reload behaviour:
 ## 7. Pin
 
 - **The effective pin.** It is the first `active` leaf task, else the first `pending` leaf whose `depends_on` are all `done` or `skipped`. With no tasks there is no pin; drift is then off and send-off says the plan is empty.
-- **`p⏎` writes.** It writes `"status": "active"` on the target, and `"pending"` on the previous active task. Only those status values change in the file.
-- **Confirmation.** Pinning a blocked task, or moving the pin while another task is `active`, asks again: `p⏎ again to move the pin`.
+- **`p⏎` writes.** It writes `"status": "active"` on the target and `"pending"` on **every** other active task. Only those status values change in the file. On the tape, a bare `p⏎` pins the next-up task; `pin <id>⏎` pins any task.
+- **Confirmation.** Pinning a blocked task, or moving the pin while another task is `active`, opens Pin confirm:
+  - `p⏎` writes.
+  - Esc, Ctrl+C or any other submitted draft cancels.
+  - A bare ⏎ does nothing.
+  - Tab leaves it open.
 - **Reopening.** Pinning a `done` task reopens it. The status becomes `active`, and the retrospective is kept.
-- **Pin start time.** It is recorded in `~/.rex/state.json`, outside the repo and never committed. It powers the completion evidence. The JSON gets no timestamps.
+- **Pin start time.** It is recorded in `~/.rex/state.json` when you pin with `p⏎`. It powers the completion evidence. The JSON gets no timestamps.
+  - When Rex didn't see the pin start (the agent or a teammate set `active`, the pin is computed, or Rex wasn't running), the window is "since Rex first saw this task as the pin", and it is labelled that way.
+  - When nothing was seen, the panel says `not seen on this machine` and lists no files.
+- **`~/.rex/state.json`** is outside the repo and never committed. It is keyed by repo root. Each write happens under a lock, re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries.
 - **After `done`, nothing is auto-claimed.**
   - The cursor moves to the first newly ready task.
-  - Row 1 says `next up <id> · p⏎ to pin`.
+  - Row 1 says `▸ <id> <title> (next up · p⏎ pins it)`.
   - Drift and send-off use the effective pin in the meantime.
 
 ---
 
 ## 8. Completion overlay
 
-`d⏎` / `done⏎` opens it **for the pin**. To complete another task, pin it first.
+`d⏎` / `done⏎` opens it **for the effective pin**, whether written (`active`) or computed (next up). To complete another task, pin it first. With no pin it says `no pin · p⏎ a task first`.
 
 ```
-── done · card-highlight ──────────────────────────
+── done · card-highlight ─────────────────────────────
   intended  Bar, border, and fill cover the whole card
-  files     internal/tui/plans.go, internal/tui/live.go
-            seen on this machine since 14:02 · may be partial
-╭─────────────────────────────────────────────────╮
-│ did ›  agent says: selection bar spans 3 rows   │
-│ verified ›  go test ./internal/tui (passed)     │
-╰─────────────────────────────────────────────────╯
-done · ⏎ save · ↑↓ field · esc cancel
+  files     internal/tui/plans.go, tui/live.go
+            seen on this machine since 14:02 · partial
+╭────────────────────────────────────────────────────╮
+│ did ›  agent says: selection bar spans 3 rows      │
+│ verified ›  go test ./internal/tui (passed)        │
+╰────────────────────────────────────────────────────╯
+done · ⏎ save · esc cancel · ↑↓ field
 ```
+
+At 38 columns, each label sits on its own line above its value, and long values are clipped with `…`.
 
 - **`did ›`** is required. It becomes `accomplished`.
-  - If the agent's last reply ended with an `accomplished:` trailer, that text is shown as a dim **"agent says"** placeholder. ⏎ on the empty field accepts it.
-  - Without a trailer, you type it.
+  - If the plan already has `accomplished` for this task (written by the agent), it prefills the field.
+  - Otherwise, an `accomplished:` trailer from the agent's reply is shown as a dim **"agent says"** placeholder, and ⏎ on the empty field accepts it. Only a trailer that arrived **after this task became the pin** counts. A reply that mentions the fingerprint `rex-sendoff: <path>#<id>` of a different task never does, so the previous task's trailer can't land on the next one.
+  - Otherwise, you type it.
 - **`verified ›`** becomes `verified_how`.
-  - It is suggested from what Rex saw: a command matching the task's `verify`, else a known test command.
+  - It is prefilled from the JSON when present. Otherwise it is suggested from what Rex saw: a command matching the task's `verify`, else a known test command.
   - It reads `(passed)` / `(failed)` only when a paired result was seen. Otherwise it reads `(result not seen)`.
 - **`files`** becomes `modified`. The value is read-only here.
-  - It lists completed edits seen in the feed since the pin started, inside this repo only.
+  - It lists completed edits seen in the feed during the evidence window (§7), inside this repo only.
   - It excludes `rex/plans/**` and never includes file bodies.
-  - It is always labelled as partial.
+  - It is always labelled as partial. Existing `modified` entries in the JSON are kept, and new paths are added to them.
 - **Writes.**
-  - Values already in the JSON win over suggestions, so an agent's own retrospective is never overwritten.
-  - Saving writes `"status": "done"` plus only the fields that changed. The git diff stays inside that task.
+  - Saving is a user action. What the fields show when you press ⏎ is written: `"status": "done"` plus `accomplished`, `modified` and `verified_how`.
+  - A value you edited replaces the old one. A value you left as prefilled from the JSON is unchanged, so its bytes don't move.
+  - Only changed fields are written, so the git diff stays inside that task.
 - **Binding.** The overlay is bound to the task id. If that task changed on disk while it was open, it warns: `card-highlight changed on disk · ⏎ to save anyway`.
 - **Esc** writes nothing.
 
@@ -333,7 +358,7 @@ done · ⏎ save · ↑↓ field · esc cancel
   File: rex/plans/cuj/sendoff-demo.rex.json
   Status: active · pinned task: card-highlight
   …
-copied (pbcopy) · c⏎ copy again · o⏎ print plain · esc close
+sendoff · esc close · c⏎ copy · o⏎ print plain
 ```
 
 - **Content.** The brief follows the template in issue #9:
@@ -353,11 +378,11 @@ copied (pbcopy) · c⏎ copy again · o⏎ print plain · esc close
   - Rex uses the native tool (`pbcopy`, `wl-copy`, `xclip`, `clip.exe`) and says `copied (<tool>)` only if it exited 0.
   - Over SSH, or with no tool available, it sends OSC 52 and says `sent (OSC 52) · may be blocked`.
   - `o⏎` leaves the alternate screen and prints the plain brief to the normal screen. Mouse selection is then clean, and the text stays in scrollback. ⏎ returns.
-- **Saved copy.** The brief is also written to `~/.rex/sendoff.md`, outside the repo, and regenerated every time. It is not a second source of truth.
+- **No saved copy.** Rex keeps no handoff file, so nothing can drift from the JSON. The brief can always be regenerated, and `o⏎` covers terminals where copying fails.
 - **On the tape.** Rex adds a one-line record: `── sendoff · card-highlight · copied (pbcopy) ──`. When the brief comes back as a user prompt (it carries the fingerprint), the tape collapses it to `── sendoff ── card-highlight pasted (24 lines)`. That confirms the new chat started from the pin.
 - **An empty plan** (no tasks) refuses: `nothing to send · this plan has no tasks · b⏎ copies a planning brief`.
 
-`b⏎` / `brief⏎` copies the **planning brief**:
+`b⏎` / `brief⏎` opens the same overlay in **planning mode**. It has the same copy status, `c⏎`, `o⏎` and Esc, and leaves the tape record `── brief · copied (pbcopy) ──`. The planning brief contains:
 - the plan path;
 - the v1 shape in a few lines;
 - the field rules (ids are short stable slugs; file order is do order; `parent` groups tasks; `depends_on` lists hard prerequisites only; one task should fit one PR);
@@ -367,9 +392,45 @@ The outline reloads live while the agent writes the file.
 
 ---
 
+## 9a. Drift
+
+Drift means the session is wandering off the pin. Rex only shows it. It never sends a correction, never blocks a tool, and never writes drift to the feed or the plan.
+
+**What counts.**
+- **Completed** file edits (a write that was denied doesn't count) and user prompts.
+- These are ignored:
+  - reads;
+  - edits under `rex/plans/**`;
+  - events from other repos;
+  - everything, when there is no pin or the plan is empty.
+
+| Level | Meaning | Examples |
+|---|---|---|
+| none | on the pin | a listed file, a glob or folder it lists, its `_test` sibling |
+| **soft** | probably fine, worth a glance | a file next to a listed one; a file another task lists; a long prompt that shares no words with the pin |
+| **hard** | clearly off the pin | an edit or prompt that hits `scope.out`; an edit outside every folder the pin lists |
+
+If the pin lists no files, only the `scope.out` rule applies.
+
+**Display.**
+- **Row 1** shows the latest drift: `drift · hard: README.md is outside card-highlight files`.
+- **The tape** gets one `── drift ──` block per pin, updated in place:
+
+```
+── drift · card-highlight ─────────────
+  hard  README.md (outside listed files)
+  soft  internal/tui/live_view.go (next to live.go)
+```
+
+- Each path or prompt is listed once per pin.
+- Changing the pin clears row 1 and starts a new block. An on-pin edit clears a soft notice from row 1, though not from the block.
+- Your options are yours: repin (`p⏎`), widen the plan (edit the JSON; Rex reloads it), or send off to a fresh chat (`s⏎`).
+
+---
+
 ## 10. Tape
 
-- **Blocks.** `thinking`, `run`, `ask`, `reply`, `error`, `note · local`, `plan`, `drift`, `sendoff`.
+- **Blocks.** `thinking`, `run`, `ask`, `reply`, `error`, plus the ones Rex adds itself: `note · local`, `plan`, `drift`, `sendoff`, `brief`, `done`, `before rex started`. Rex's own blocks exist only in this process and are never appended to the feed.
   - File-look commands and result echoes stay hidden.
   - Each reply is its own block.
 - **Prompt boxes.** User prompt boxes are right-aligned with left-aligned text. They are capped at 6 rows, followed by `(+N lines)`.
@@ -389,13 +450,14 @@ The outline reloads live while the agent writes the file.
 ```
 
 - **Submitting.** Sending a note while scrolled up jumps back to live.
+- **Installs are opt-in.** Rex never installs a hook or a skill on its own. Feed health shows the command, and you run it. The install script keeps wiring Cursor, as today, and prints the opt-in commands for the other harnesses it finds. `rex ingest --install <harness>` arrives with the harness slices; `--install-cursor-hook` stays as an alias.
 
 ---
 
 ## 11. Library
 
 - **Cards, in order:**
-  1. **Continue `<plan>`**: the last plan opened in this repo, from `~/.rex/state.json`.
+  1. **Continue `<plan>`**: the plan that is open now, else the last plan opened in this repo (from `~/.rex/state.json`). Esc from the Outline lands here.
   2. **Create a plan**.
   3. **Open a plan**.
   4. **Open latest**: the newest plan by modification time.
@@ -405,7 +467,7 @@ The outline reloads live while the agent writes the file.
 - **Card hints** show progress, e.g. `2/5 · ▸ card-highlight`. The currently open plan is marked in recents and in Browse.
 - **Find (typing on Home)** matches across `rex/plans/**`.
   - The first match is selected.
-  - With no match, the selected row becomes `+ Create 'x'`, and ⏎ creates it with that name.
+  - The list always ends with `+ Create 'x'` (unless a plan is named exactly `x`). With no match, that row is selected, and ⏎ creates the plan at once and opens its outline. There is no extra prompt.
 - **Browse:**
   - The cursor starts on the first folder or plan, and a filter selects its first match.
   - `[ + New folder ]` / `[ + New plan ]` sit **below** the listing.
@@ -440,7 +502,8 @@ Notes:
 - **Repaints.** Resize, `SIGCONT` and Ctrl+L force a full repaint.
 - **Widths.**
   - Text is clipped by **cell width**: East Asian wide characters and emoji count 2, combining marks 0.
-  - Ambiguous-width box glyphs count 1. "Ambiguous characters are wide" terminal settings are not supported.
+  - All East-Asian-ambiguous characters count 1, including `·`, `…`, `↑↓`, `○`, `▌` and box drawing. "Ambiguous characters are wide" terminal settings are not supported.
+  - The width table is a small range list written by hand in `internal/tui`. The standard library has no width data, and no new module is added for it.
 
 ---
 
@@ -465,11 +528,11 @@ The full-loop tests check these counts.
 |---|---|
 | Open the plan you had last time | ⏎ |
 | Open a plan by name | `name` ⏎ |
-| Create a plan | ⏎ `name` ⏎ (lands on its outline) |
+| Create a plan | `name` ⏎ via find → `+ Create 'name'` (first run, when only Create shows: ⏎ `name` ⏎); lands on its outline |
 | See the pin | 0 (row 1) |
 | Watch the tape | Tab |
 | Pin a task | ↑↓ `p` ⏎ |
-| Mark the pin done | `d` ⏎ `text` ⏎ (or `d` ⏎ ⏎ to accept the agent's line) |
+| Mark the pin done | `d` ⏎ `text` ⏎ (or `d` ⏎ ⏎ to accept the agent's line for this task) |
 | Send off | `s` ⏎ |
 | Back to the plan | Tab |
 | Quit | Ctrl+C Ctrl+C |
@@ -480,15 +543,15 @@ The full-loop tests check these counts.
 
 | State | Entered via | Left via |
 |---|---|---|
-| Library Home | start; Esc from Browse root or from Outline | ⏎ card/recent/match · typing (find) · Tab |
+| Library Home | start; Esc from Browse root or from Outline (cursor on Continue) | ⏎ card/recent/match · ⏎ on `+ Create 'x'` creates and opens the outline · typing (find) · Tab |
 | Browse | ⏎ Open a plan | ⏎ plan → Outline · Esc/← · Tab |
-| Name prompt | Create card · `+ Create 'x'` · `+` rows | ⏎ → Outline (plan) or into the new folder · Esc (nothing written) · Tab (draft kept) |
+| Name prompt | Create card · `[ + New plan ]` / `[ + New folder ]` rows | ⏎ → Outline (plan) or into the new folder · Esc (nothing written) · Tab (draft kept) |
 | Outline | open or create a plan · Esc from detail · Tab back | ⏎/→ detail · Esc → Library · verbs · Tab |
 | Plan detail | ⏎ on the outline rule | Esc |
 | Task detail | ⏎/→ on a task | Esc |
-| Pin confirm | `p⏎` on a blocked task or over another active task | `p⏎` again writes · any other key cancels |
-| Completion | `d⏎`/`done⏎` with a pin | ⏎ save (toast) · Esc · Ctrl+C |
-| Send-off | `s⏎`/`sendoff⏎`/`handoff⏎` | Esc · `o⏎` (plain print, ⏎ returns) |
+| Pin confirm | `p⏎` on a blocked task or over another active task | `p⏎` writes · Esc / Ctrl+C / any other submitted draft cancels · bare ⏎ does nothing · Tab keeps it open |
+| Completion | `d⏎`/`done⏎` with an effective pin | ⏎ save (toast) · Esc · Ctrl+C |
+| Send-off | `s⏎`/`sendoff⏎`/`handoff⏎` (sendoff mode) · `b⏎`/`brief⏎` (planning mode) | Esc · `o⏎` (plain print, ⏎ returns) · `c⏎` copies again |
 | Help | `?⏎`/`help⏎` | Esc |
 | Tape | Tab | Tab · verbs |
 | Quit armed | Ctrl+C | Ctrl+C quits · any key / timeout disarms |
@@ -497,14 +560,14 @@ The full-loop tests check these counts.
 
 ## 16. Friction register
 
-This is what the 2026-10 audit found, from four lenses: first run, daily loop, teammate handoff, and terminal robustness. Each item lists its symptom, the fix, and the slice that owns it. Code locations are as of `dev` @ `4318b56`.
+This is what the 2026-10 audit found, from four lenses: first run, daily loop, teammate handoff, and terminal robustness. Each item lists its symptom, the fix, and the slice that owns it. Code locations are as of `dev` @ `4318b56`. Rows marked **design** are risks in the planned features, not bugs on `dev`.
 
 | ID | Sev | Friction (symptom) | Fix | Slice |
 |---|---|---|---|---|
-| F1 | critical | Start deletes a file named `rex`, `RemoveAll`s `rex-plans/` after a name clash, and creates `rex/plans/` in `$HOME` (plans.go:101-122) | Never delete; create lazily; show notices instead (§11) | `fix/plans_dir_safety` |
+| F1 | critical | Start deletes a file named `rex`, `RemoveAll`s `rex-plans/` after a name clash, and creates `rex/plans/` in whatever non-git folder you start in, e.g. `$HOME` (plans.go:76-122) | Never delete; create lazily; show notices instead (§11) | `fix/plans_dir_safety` |
 | F2 | high | Quitting can leave the TTY broken: Windows Ctrl+C kills the process; no SIGTERM/SIGHUP restore | Windows raw input mode; signals take the restore path (§3) | `fix/key_input` |
-| F3 | high | Esc does nothing on Windows (0x1B is not mapped) | Map it; join surrogate pairs | `fix/key_input` |
-| F4 | high | Fast arrows or the wheel drop keys and type stray `A`/`B`; paste submits; `é` becomes `��`; Ctrl+S freezes output | Buffered tokenizer, bracketed paste, IXON/IEXTEN off | `fix/key_input` |
+| F3 | high | Esc does nothing on Windows (0x1B is not mapped); emoji split into two `�` (surrogate halves) | Map it; join surrogate pairs | `fix/key_input` |
+| F4 | high | Fast arrows or the wheel drop keys and type stray `A`/`B`; paste submits; a multi-byte character at the 256 cap leaves a lone byte; Ctrl+S freezes output | Buffered tokenizer, bracketed paste, cap by runes, IXON/IEXTEN off | `fix/key_input` |
 | F5 | high | Agent text is painted raw: escape/OSC sequences can repaint the screen or set the clipboard | `CleanText` at the render boundary (§10) | `fix/text_sanitize` |
 | F6 | high | Below 66 cols the text column vanishes, but keys still act | Layout tiers (§12) | `feature/ux_chrome` |
 | F7 | high | Local composer text renders as `── reply ──`; the pane is called "chat" | Local `note` kind; "tape"; no echoed verbs (§2) | `feature/ux_input` |
@@ -515,26 +578,26 @@ This is what the 2026-10 audit found, from four lenses: first run, daily loop, t
 | F12 | high | No data for `modified`/`verified_how` (results never reach the log) | Evidence from raw events + feed since pin start (§8) | `feature/task_completion` |
 | F13 | high | The empty tape can't say whether any hook is wired | Feed health (§10) | `feature/harness_hooks` |
 | F14 | med | Turn state is wrong: Claude never idles; a tool failure idles mid-turn; restart shows idle | Map Stop; tool errors keep the turn running; warm start | `feature/harness_hooks`, `feature/event_scope` |
-| F15 | med | Outline hotkeys would collide with the composer and with paste | ⏎-only verbs (§2) | `feature/ux_input` |
+| F15 | design | Outline hotkeys would collide with the composer and with paste | ⏎-only verbs (§2) | `feature/ux_input` |
 | F16 | med | Esc and Backspace navigate inconsistently (Esc on Home jumps to the tape) | Esc ladder; Backspace only deletes (§3) | `feature/ux_input` |
-| F17 | med | The plans header drops turn state and path; the open plan is invisible in the library | Header on every screen; Current card (§4, §11) | `feature/ux_chrome`, `feature/plan_outline` |
+| F17 | med | The plans header drops turn state and path; the open plan is invisible in the library | Header on every screen; Continue card (§4, §11) | `feature/ux_chrome`, `feature/plan_outline` |
 | F18 | med | Home: inert composer, dead cards, sticky errors, Open latest takes ↓↓⏎ | Find on Home; hide dead cards; clear errors; default cursor (§11) | `fix/library_navigation` |
 | F19 | med | Lists have no scroll position; selection is a row index | Scroll offset + margin; selection by identity (§1, §6) | `fix/library_navigation` |
 | F20 | med | Footers are cut mid-word at 80 cols | Ranked segments (§4) | `feature/ux_chrome` |
 | F21 | med | The existing write pattern reorders keys and isn't atomic; agents edit the same file | Byte-span edits, hash re-check, atomic writes | `feature/plan_store` |
-| F22 | med | Live-reload edge states are undefined | Debounce, last good, read-only states (§6) | `feature/plan_outline` |
-| F23 | med | Pin semantics in a shared file (claiming, blocked, parents) | §7 | `feature/pin_task` |
+| F22 | design | Live-reload edge states are undefined | Debounce, last good, read-only states (§6) | `feature/plan_outline` |
+| F23 | design | Pin semantics in a shared file (claiming, blocked, parents) | §7 | `feature/pin_task` |
 | F24 | med | Copy can claim success falsely; pasted briefs flood the tape | Honest copy; plain print; fingerprint collapse; 6-row cap (§9, §10) | `feature/sendoff`, `feature/clipboard` |
-| F25 | med | Drift would be noisy and shown in too many places | Row 1 + one block per pin; plain reasons | `feature/prompt_drift` |
-| F26 | med | A dense outline overflows 38×18 | §6 layout | `feature/plan_outline` |
+| F25 | design | Drift would be noisy and shown in too many places | Row 1 + one block per pin; soft/hard with plain reasons (§9a) | `feature/prompt_drift` |
+| F26 | design | A dense outline overflows 38×18 | §6 layout | `feature/plan_outline` |
 | F27 | med | Every frame clears the screen: flicker, wasted CPU | Diff renderer + caches (§12) | `fix/render_flicker` |
-| F28 | med | The tail drops replies that grow (the last line is rewritten in place) | Append-only feed | `fix/ingest_fail_open` |
+| F28 | med | The tail drops replies that grow (the last line is rewritten in place), and a poll mid-rewrite replays the whole feed onto the tape | Append-only feed | `fix/ingest_fail_open` |
 | F29 | med | 24-bit color only; Terminal.app on macOS ≤ 15 has none | 256-color quantization of the same palette (§5) | `fix/render_flicker` |
 | F30 | med | Tab drops a half-typed name; `a/b` silently becomes `b` | Drafts per place; subfolder create (§11) | `feature/ux_input`, `fix/library_navigation` |
 | F31 | low | No Ctrl+U/W; silent 256 cap; stale "press again" footer | §2, §3 | `feature/ux_input` |
 | F32 | low | Nothing is discoverable (breakdance only in the README) | Help overlay, placeholders (§13) | `feature/ux_input` |
 | F33 | low | Width counted in runes: CJK titles break borders | Cell-width clipping (§12) | `fix/text_sanitize` |
-| F34 | low | README says teammates watch the same feed (feeds are per machine) | Reword | `feature/plan_schema` |
+| F34 | low | README:26 says "Teammates pick the same plan and watch the same send-off", but each machine only sees its own agent | Reword | `feature/plan_schema` |
 | F35 | low | No trace after quitting | Exit line (§3) | `feature/ux_chrome` |
 
 Found in the same audit, outside the UI:
@@ -544,6 +607,7 @@ Found in the same audit, outside the UI:
 | H1 | critical | `rex ingest` exits 2 on a bad flag or source; Claude Code, Cursor and Codex treat exit 2 as **block** | Ingest always exits 0 with empty stdout; stdin and lock deadlines | `fix/ingest_fail_open` |
 | H2 | high | The Cursor installer overwrites `hooks.json` it can't parse; writes non-atomically; quotes with Go syntax; registers shell commands twice | Safe merge, `.bak`, atomic write, shell quoting | `fix/cursor_installer` |
 | H3 | med | Every hook call reads the whole feed file | Seek-based tail read | `fix/ingest_fail_open` |
+| H4 | med | After the feed is truncated, the tail keeps a stale partial line and glues the next event to it, which is then dropped | Clear the pending fragment on truncation | `fix/ingest_fail_open` |
 
 ---
 
@@ -553,15 +617,19 @@ These `agents.md` and README lines change when the slice that implements them sh
 
 | Slice | Line today → after |
 |---|---|
-| `fix/ingest_fail_open` | Watch feed: `AppendEvent` dedupes → append-only; ingest always exits 0 with empty stdout |
-| `fix/plans_dir_safety` | "Ensures rex/plans (replaces a colliding rex file…)" → created on first Create; never deletes |
+| `fix/ingest_fail_open` | Watch feed: "`AppendEvent` dedupes" → "dedupes and only ever appends"; add "ingest always exits 0 and never writes stdout" |
+| `chore/ci_build_output` | Commands and tests: CI line → gofmt, vet, `go build -o dist/rex` |
+| `fix/plans_dir_safety` | TUI: after "Duplicate names warn and do not overwrite.", add "Starting Rex never deletes or creates files…" |
+| `fix/cursor_installer` | Mascot: "`text` / `error` → idle" → a tool `error` keeps the turn running and `stop` is `idle` (never text). Watch feed: installers splice with `internal/jsonedit` |
 | `fix/key_input` | "Unix live mode is cbreak (ECHO/ICANON/ISIG off) and must keep OPOST" → also IXON and IEXTEN off |
-| `fix/text_sanitize` | "Clip ANSI by cells (runes)" → clip by cell width; agent text is cleaned first |
+| `fix/text_sanitize` | "Clip ANSI by cells (runes)" and Code conventions "Pane width math uses `runeLen` / `clip` / `padRight`" → clip by cell width (`clipCells`); agent text is cleaned first |
 | `fix/render_flicker` | "Yellow from assets/idle.png is the only look" → plus the 256-color quantization of that palette for Terminal.app |
-| `feature/ux_chrome` | "Left ~40 columns: mascot" → layout tiers; header on every screen |
-| `feature/ux_input` | Kinds: + local-only `note`; "Tab switches to chat" → two places; "chat" → "tape" |
+| `feature/ux_chrome` | "Left ~40 columns: mascot" → layout tiers. "Chat header always shows turn state and the open plan" → the header on every screen, with path shortening when narrow |
+| `feature/ux_input` | Kinds: + local-only `note`. "Tab switches to chat" → two places. "chat" → "tape". Tape blocks: + Rex's own local blocks |
+| `fix/library_navigation` | "Start opens the plans home: Create, Open, Open latest (cards), then recents" → Continue card, first-run cards, find, `+` rows below the listing |
 | `feature/event_scope` | "`NewEventTail(path, true)` paints new lines" → plus warm start and repo scope |
-| `feature/harness_hooks` | "Only Cursor hooks are installed" → which harnesses are wired, and that the others are opt-in |
-| `feature/plan_schema` | "Build plan JSON schema … unless asked" → schema is v1 in `docs/plan-format.md`; README "new plans start as `{}`" |
+| `refactor/harness_registry` | README Usage/Install: `rex ingest --install <harness>` (`--install-cursor-hook` stays as an alias) |
+| `feature/harness_hooks` | "Assume Claude Code or Codex are wired. Mappers exist; only Cursor hooks are installed." → which harnesses are wired, and that the others are opt-in. Mascot turn mapping: Claude `Stop` → reply text, or idle |
+| `feature/plan_schema` | "Build plan JSON schema, drift detection… unless asked" → the schema is v1 in `docs/plan-format.md`. README: "new plans start as `{}`" and the send-off line (F34) |
 | `feature/plan_outline` | "Opening a plan is a no-op load" → opening parses the plan read-only and shows the outline |
-| `feature/sendoff`, `feature/prompt_drift` | Send-off is generated from the JSON; drift is display-only |
+| `feature/sendoff`, `feature/prompt_drift` | Send-off is generated from the JSON; drift is display-only and never written anywhere |

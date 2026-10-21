@@ -148,9 +148,10 @@ func (a *app) ingest(fresh []watch.Event) bool {
 			a.lastKind = ev.Kind
 		}
 	}
+	n := len(a.log)
 	added := ExtendLog(&a.log, fresh)
-	if len(added) > 0 {
-		a.logRev++
+	if len(added) > 0 || len(a.log) != n {
+		a.logRev++ // a trim to MaxLog changes the tape too
 	}
 	if len(added) > 0 && a.scroll > 0 {
 		a.scroll += max(0, a.logLines()-before)
@@ -199,6 +200,7 @@ func (a *app) handleKey(key string) bool {
 	switch {
 	case key == "\x0c":
 		a.repaint = true
+		a.quitPending = false // like any other key, it disarms quit
 		return true
 	case key == CtrlC:
 		if a.quitPending {
@@ -333,6 +335,7 @@ func (a *app) settle(columns, lines int) bool {
 	}
 	if columns != a.columns || lines != a.lines {
 		a.columns, a.lines = columns, lines
+		a.repaint = true // a resize repaints everything, whatever the frame shape
 		changed = true
 	}
 	total := a.logLines()

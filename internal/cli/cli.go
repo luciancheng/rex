@@ -113,11 +113,11 @@ func runStart(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	enabled := mascot.ColorEnabledWriter(isTTY(stdout))
-	if *noColor {
-		enabled = false
+	if *noColor || os.Getenv("TERM") == "dumb" {
+		enabled = false // a dumb terminal can't take color either
 	}
 	mascot.ColorDepth = mascot.DetectDepth(os.Getenv)
-	if *static || !interactive(stdin, stdout) || os.Getenv("TERM") == "dumb" {
+	if staticStart(*static, interactive(stdin, stdout), os.Getenv("TERM")) {
 		if err := tui.PrintCard("idle", mascot.DefaultPalette, enabled, stdout); err != nil {
 			fmt.Fprintf(stderr, "rex: %v\n", err)
 			return 1
@@ -189,6 +189,13 @@ func ingestSafely(stdin io.Reader, source, events string, stderr io.Writer) {
 	if err := ingestFn(stdin, source, events); err != nil {
 		fmt.Fprintf(stderr, "rex: %v\n", err)
 	}
+}
+
+// staticStart reports whether start prints one card instead of the live
+// screen: asked for, not a terminal, or a terminal that can't move the
+// cursor.
+func staticStart(static, interactive bool, term string) bool {
+	return static || !interactive || term == "dumb"
 }
 
 func interactive(stdin io.Reader, stdout io.Writer) bool {

@@ -99,7 +99,7 @@ func Index256(rgb RGB) int {
 	cr, cg, cb := cubeLevels[r], cubeLevels[g], cubeLevels[b]
 	cubeD := sq(rgb[0]-cr) + sq(rgb[1]-cg) + sq(rgb[2]-cb)
 	avg := (rgb[0] + rgb[1] + rgb[2]) / 3
-	gi := (avg - 8) / 10
+	gi := (avg - 3) / 10 // the nearest gray step 8+10k
 	if gi < 0 {
 		gi = 0
 	}

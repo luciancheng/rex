@@ -300,6 +300,24 @@ func TestIngestReportsAnUnwritableFeed(t *testing.T) {
 	}
 }
 
+func TestStaticStartDecision(t *testing.T) {
+	cases := []struct {
+		static, tty bool
+		term        string
+		want        bool
+	}{
+		{false, true, "xterm-256color", false},
+		{false, true, "dumb", true}, // a real TTY that can't move the cursor
+		{true, true, "xterm", true},
+		{false, false, "xterm", true},
+	}
+	for _, c := range cases {
+		if got := staticStart(c.static, c.tty, c.term); got != c.want {
+			t.Errorf("%+v: %v", c, got)
+		}
+	}
+}
+
 func TestStartDumbTerminalPrintsCard(t *testing.T) {
 	t.Setenv("TERM", "dumb")
 	var stdout bytes.Buffer

@@ -13,8 +13,8 @@ func TestDiffFrameRepaintsOnlyChangedRows(t *testing.T) {
 	if strings.Contains(out, Clear) || strings.Contains(out, "aaaa") || strings.Contains(out, "cccc") {
 		t.Fatalf("unchanged rows repainted: %q", out)
 	}
-	if !strings.Contains(out, "\033[2;1HBBBB"+Reset) || strings.Contains(out, "\033[K") {
-		t.Fatalf("changed row is written whole, reset, and never erased to EOL: %q", out)
+	if !strings.Contains(out, "\033[2;1H"+Reset+eraseLine+"BBBB"+Reset) || strings.Contains(out, "\033[K") {
+		t.Fatalf("a changed row is erased from column 1, then written whole, never erased after: %q", out)
 	}
 	if !strings.HasPrefix(out, syncBegin+HideCursor) || !strings.HasSuffix(out, "\033[3;2H"+ShowCursor+syncEnd) {
 		t.Fatalf("framing %q", out)

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -687,12 +688,17 @@ type mascotKey struct {
 	depth         mascot.Depth
 }
 
-var mascotCache = map[mascotKey][]string{}
+var (
+	mascotMu    sync.Mutex
+	mascotCache = map[mascotKey][]string{}
+)
 
 // stagedMascot renders a sprite once per size and color mode; the typing
 // sheet would otherwise re-render ~800 cells on every frame.
 func stagedMascot(spriteName, color string, mascotCols int, enabled bool) []string {
 	key := mascotKey{spriteName, color, mascotCols, enabled, mascot.ColorDepth}
+	mascotMu.Lock()
+	defer mascotMu.Unlock()
 	if rows, ok := mascotCache[key]; ok {
 		return rows
 	}

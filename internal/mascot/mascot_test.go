@@ -202,6 +202,9 @@ func TestColor256QuantizesTheSamePalette(t *testing.T) {
 	if got := Index256(RGB{0, 0, 0}); got != 16 {
 		t.Fatalf("black %d", got)
 	}
+	if got := Index256(RGB{17, 17, 17}); got != 233 {
+		t.Fatalf("near gray rounds to the closest step: %d", got)
+	}
 	if got := Index256(RGB{128, 128, 128}); got != 244 {
 		t.Fatalf("gray %d", got)
 	}

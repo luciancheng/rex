@@ -8,6 +8,7 @@ import (
 const (
 	syncBegin = "\033[?2026h" // synchronized output; terminals without it ignore it
 	syncEnd   = "\033[?2026l"
+	eraseLine = "\033[2K" // the whole row, from column 1: no deferred-wrap trap
 )
 
 // renderer paints frames without clearing the screen: only rows that
@@ -42,9 +43,11 @@ func (r *renderer) render(f Frame) string {
 }
 
 // diffFrame writes the rows of next that differ from prev (all of them when
-// prev is nil). Rows are always padded to the full width, so overwriting a
-// row replaces all of it. There is deliberately no erase-to-end-of-line:
-// after a write to the last column the cursor stays on that column, and an
+// prev is nil). Each changed row is erased first, with the cursor at column
+// 1, then written whole: a terminal that draws a glyph narrower than Rex
+// counts it (a ZWJ cluster, a text-style pictograph) can't leave stale
+// cells past the row's end. There is deliberately no erase after the row:
+// a write to the last column leaves the cursor on that column, and an
 // erase there would wipe the row's last character.
 func diffFrame(prev []string, next Frame, clear bool) string {
 	var b strings.Builder
@@ -58,6 +61,7 @@ func diffFrame(prev []string, next Frame, clear bool) string {
 			continue
 		}
 		fmt.Fprintf(&b, "\033[%d;1H", i+1)
+		b.WriteString(Reset + eraseLine)
 		b.WriteString(row)
 		b.WriteString(Reset)
 	}

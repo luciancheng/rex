@@ -504,7 +504,7 @@ If the pin lists no files, only the `scope.out` rule applies.
 | `TERM=dumb`, pipes, CI | the static card (`rex start --static`) |
 
 Notes:
-- **No full clears.** Rex never clears the whole screen on a normal frame. Changed rows are repainted and erased to end of line, inside synchronized-output markers. The cursor is hidden while painting.
+- **No full clears.** Rex never clears the whole screen on a normal frame. Each changed row is erased from column 1 and then written whole, inside synchronized-output markers. Nothing is erased after a row: after a write to the last column the cursor stays there, and an erase would wipe that cell. The cursor is hidden while painting.
 - **Repaints.** Resize, `SIGCONT` and Ctrl+L force a full repaint.
 - **Widths.**
   - Text is clipped by **cell width**: East Asian wide characters and emoji count 2, combining marks 0.

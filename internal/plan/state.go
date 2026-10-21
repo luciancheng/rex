@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -111,6 +112,10 @@ func UpdateState(path string, now time.Time, mutate func(*State)) error {
 		return err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
+		if runtime.GOOS != "windows" {
+			return err
+		}
+		// Windows refuses to replace a file another process holds open.
 		return os.WriteFile(path, append(data, '\n'), 0o600)
 	}
 	return nil
@@ -127,8 +132,9 @@ func pinPlan(key string) string {
 	return ""
 }
 
-// exists is false only for a path that is known to be gone; an unreadable
-// or unmounted one is kept.
+// exists is false only for a path known to be gone; one that can't be
+// read right now (no permission) is kept. An unmounted volume's path is
+// gone as far as the OS says, so its entries go too.
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return !os.IsNotExist(err)

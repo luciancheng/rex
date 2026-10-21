@@ -26,6 +26,7 @@ func edit(a *app, c *clock, d time.Duration, rel string) watch.Event {
 
 func TestDriftIsShownNeverSent(t *testing.T) {
 	a, c, path := openDemo(t, driftDemo, 120, 32)
+	a.feed = filepath.Join(t.TempDir(), "session.jsonl")
 	planBefore, _ := os.ReadFile(path)
 	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
 	if got := a.statusLine().Text; got != "drift · hard: README.md · outside card-highlight files" {
@@ -56,7 +57,7 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 	if after, _ := os.ReadFile(path); string(after) != string(planBefore) {
 		t.Fatal("drift never writes the plan")
 	}
-	if _, err := os.Stat(a.feed); a.feed != "" && err == nil {
+	if _, err := os.Stat(a.feed); !os.IsNotExist(err) {
 		t.Fatal("drift never writes the feed")
 	}
 	// A new pin clears row 1 and starts a new block.

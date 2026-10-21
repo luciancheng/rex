@@ -113,16 +113,14 @@ func gather(events []watch.Event, scope watch.Scope, since time.Time, rel, id st
 		ok, hasOK := e.Meta["ok"].(bool)
 		switch {
 		case e.Kind == "result" && watch.IsFileEditEvent(e) && (!hasOK || ok):
-			p := watch.EventPath(e)
-			rel, in := scope.Rel(p)
-			if !in {
-				continue
+			for _, p := range watch.EventPaths(e) {
+				rel, in := scope.Rel(p)
+				if !in || rel == "" || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, "rex/plans/") || seenFile[rel] {
+					continue
+				}
+				seenFile[rel] = true
+				ev.files = append(ev.files, rel)
 			}
-			if rel == "" || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, "rex/plans/") || seenFile[rel] {
-				continue
-			}
-			seenFile[rel] = true
-			ev.files = append(ev.files, rel)
 		case e.Kind == "command" && watch.IsShellTool(tool):
 			if cmd := strings.TrimSpace(e.Text); cmd != "" {
 				runs = append(runs, run{cmd: cmd})

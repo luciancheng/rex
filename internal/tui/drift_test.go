@@ -166,3 +166,21 @@ func TestDriftKeepsAScrolledUpViewStill(t *testing.T) {
 		}
 	}
 }
+
+func TestOnePatchManyFiles(t *testing.T) {
+	a, c, _ := openDemo(t, driftDemo, 120, 32)
+	repo := a.plans.Repo
+	// the on-pin file last, so it mustn't clear what the others raised
+	paths := []any{filepath.Join(repo, "README.md"), filepath.Join(repo, "internal/tui/live_view.go"), filepath.Join(repo, "internal/tui/plans.go")}
+	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "codex", Kind: "result", Text: "wrote " + paths[0].(string), Meta: map[string]any{"tool": "apply_patch", "path": paths[0], "paths": paths, "ok": true}})})
+	if got := a.statusLine().Text; !strings.HasPrefix(got, "drift · hard: README.md") || a.drift.soft == nil {
+		t.Fatalf("one patch's files are judged worst last, wherever they sit in it: %q", got)
+	}
+	if view := viewText(BuildLogView(a.log, 78)); !strings.Contains(view, "hard README.md") || !strings.Contains(view, "soft internal/tui/live_view.go") {
+		t.Fatalf("every off-pin file of the patch is in the block:\n%s", view)
+	}
+	ev := gather(a.seen, a.scope, c.t, "", "card-highlight", nil)
+	if strings.Join(ev.files, ",") != "README.md,internal/tui/live_view.go,internal/tui/plans.go" {
+		t.Fatalf("every patched file is evidence: %q", ev.files)
+	}
+}

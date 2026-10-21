@@ -83,9 +83,21 @@ func installClaude(path string, out io.Writer) error {
 }
 
 func mergeClaudeHooks(d *jsonedit.Doc, ours map[string]any, want bool) ([]byte, error) {
+	return mergeGroupHooks(d, groupHooks{events: ClaudeHookEvents, isRex: isRexClaudeHandler, file: "settings file"}, ours, want)
+}
+
+// groupHooks describes a config whose hooks are event → matcher groups →
+// handlers, as in Claude Code and Codex.
+type groupHooks struct {
+	events []string
+	isRex  func(h, ours map[string]any) bool
+	file   string // for error messages: "settings file", "hooks.json"
+}
+
+func mergeGroupHooks(d *jsonedit.Doc, spec groupHooks, ours map[string]any, want bool) ([]byte, error) {
 	e := &editor{doc: d}
 	if e.doc.Root().Kind != '{' {
-		return nil, fmt.Errorf("settings file is not a JSON object")
+		return nil, fmt.Errorf("%s is not a JSON object", spec.file)
 	}
 	group := map[string]any{"hooks": []any{ours}}
 	hooks := e.doc.Root().Member("hooks")
@@ -95,7 +107,7 @@ func mergeClaudeHooks(d *jsonedit.Doc, ours map[string]any, want bool) ([]byte, 
 			return e.doc.Bytes(), nil
 		}
 		fresh := map[string]any{}
-		for _, name := range ClaudeHookEvents {
+		for _, name := range spec.events {
 			fresh[name] = []any{group}
 		}
 		if err := e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Set(d.Root(), "hooks", fresh) }); err != nil {
@@ -103,9 +115,9 @@ func mergeClaudeHooks(d *jsonedit.Doc, ours map[string]any, want bool) ([]byte, 
 		}
 		return e.doc.Bytes(), nil
 	case hooks.Kind != '{':
-		return nil, fmt.Errorf(`"hooks" in the settings file is not an object`)
+		return nil, fmt.Errorf(`"hooks" in the %s is not an object`, spec.file)
 	}
-	names := ClaudeHookEvents
+	names := spec.events
 	if !want {
 		names = nil
 		for _, m := range hooks.Members {
@@ -113,7 +125,7 @@ func mergeClaudeHooks(d *jsonedit.Doc, ours map[string]any, want bool) ([]byte, 
 		}
 	}
 	for _, name := range names {
-		if err := mergeClaudeGroups(e, name, ours, group, want); err != nil {
+		if err := mergeGroups(e, spec, name, ours, group, want); err != nil {
 			return nil, err
 		}
 	}
@@ -126,12 +138,12 @@ func mergeClaudeHooks(d *jsonedit.Doc, ours map[string]any, want bool) ([]byte, 
 	return e.doc.Bytes(), nil
 }
 
-// mergeClaudeGroups edits one event's list of matcher groups. Only Rex's
+// mergeGroups edits one event's list of matcher groups. Only Rex's
 // handlers are spliced out; a group left with none of the user's handlers
 // goes too. Rex's own group (no matcher, Rex's handler alone) stays where
 // it is, and on reinstall only a changed command is rewritten, so the
 // user's tweaks to it (a longer timeout) survive.
-func mergeClaudeGroups(e *editor, name string, ours, group map[string]any, want bool) error {
+func mergeGroups(e *editor, spec groupHooks, name string, ours, group map[string]any, want bool) error {
 	hooks := func(d *jsonedit.Doc) *jsonedit.Node { return d.Root().Member("hooks") }
 	list := func(d *jsonedit.Doc) *jsonedit.Node { return hooks(d).Member(name) }
 	node := list(e.doc)
@@ -143,7 +155,7 @@ func mergeClaudeGroups(e *editor, name string, ours, group map[string]any, want 
 	}
 	if node.Kind != '[' {
 		if want {
-			return fmt.Errorf(`"hooks.%s" in the settings file is not a list; fix it by hand, rex did not change it`, name)
+			return fmt.Errorf(`"hooks.%s" in the %s is not a list; fix it by hand, rex did not change it`, name, spec.file)
 		}
 		return nil
 	}
@@ -157,7 +169,7 @@ func mergeClaudeGroups(e *editor, name string, ours, group map[string]any, want 
 		var rex []int
 		for j, h := range inner.Elems {
 			var m map[string]any
-			if e.doc.Decode(h, &m) == nil && isRexClaudeHandler(m, ours) {
+			if e.doc.Decode(h, &m) == nil && spec.isRex(m, ours) {
 				rex = append(rex, j)
 			}
 		}
@@ -198,15 +210,16 @@ func mergeClaudeGroups(e *editor, name string, ours, group map[string]any, want 
 	return nil
 }
 
-// refreshRexHandler rewrites the command (and, on Windows, args) of Rex's
-// handler if the binary moved, and leaves its other fields alone.
+// refreshRexHandler rewrites the command of Rex's handler (and its args or
+// commandWindows) if the binary moved, and leaves its other fields alone.
 func refreshRexHandler(e *editor, handler func(*jsonedit.Doc) *jsonedit.Node, ours map[string]any) error {
-	for _, key := range []string{"command", "args"} {
+	for _, key := range []string{"command", "args", "commandWindows"} {
 		want, ok := ours[key]
 		if !ok {
 			// Ours has no args (the shell form): an exec-form entry's args
-			// would make the new command string fail, so they go.
-			if handler(e.doc).Member(key) != nil {
+			// would make the new command string fail, so they go. A
+			// commandWindows stays: the same file may be read on Windows.
+			if key == "args" && handler(e.doc).Member(key) != nil {
 				if err := e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Remove(handler(d), key) }); err != nil {
 					return err
 				}

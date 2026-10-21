@@ -197,13 +197,14 @@ func TestOutsideGitNoticeKeepsWherePlansGo(t *testing.T) {
 func TestNoticesFitNarrowPanes(t *testing.T) {
 	cases := []struct{ notice, want string }{
 		{outsideGitPrefix + "~/work/clients/acme/very/deep/folder/rex/plans", "/rex/plans"},
+		{outsideGitPrefix + "~/作業/顧客/とても長いフォルダの名前/rex/plans", "/rex/plans"},
 		{rexFileNotice, "plans off"},
 		{"rex-plans/ has 3 old plan(s) · move them into rex/plans", "rex-plans/"},
 	}
 	for _, width := range []int{PaneTextWidth(66) - 2, PaneTextWidth(80) - 2} {
 		for _, c := range cases {
 			got := fitNotice(c.notice, width)
-			if len([]rune(got)) > width || !strings.Contains(got, c.want) {
+			if cellLen(got) > width || !strings.Contains(got, c.want) {
 				t.Errorf("width %d: %q -> %q", width, c.notice, got)
 			}
 		}

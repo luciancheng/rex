@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/luciancheng/rex/internal/mascot"
 	"github.com/luciancheng/rex/internal/watch"
@@ -60,17 +61,6 @@ func runeLen(s string) int {
 	return len([]rune(s))
 }
 
-func clip(text string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	r := []rune(text)
-	if len(r) <= width {
-		return string(r) + strings.Repeat(" ", width-len(r))
-	}
-	return string(r[:width])
-}
-
 func wrap(text string, width int) []string {
 	if width <= 0 {
 		return nil
@@ -83,7 +73,7 @@ func wrap(text string, width int) []string {
 	current := words[0]
 	for _, word := range words[1:] {
 		candidate := current + " " + word
-		if runeLen(candidate) <= width {
+		if cellLen(candidate) <= width {
 			current = candidate
 			continue
 		}
@@ -93,18 +83,11 @@ func wrap(text string, width int) []string {
 	lines = append(lines, current)
 	var wrapped []string
 	for _, line := range lines {
-		if runeLen(line) <= width {
+		if cellLen(line) <= width {
 			wrapped = append(wrapped, line)
 			continue
 		}
-		r := []rune(line)
-		for i := 0; i < len(r); i += width {
-			end := i + width
-			if end > len(r) {
-				end = len(r)
-			}
-			wrapped = append(wrapped, string(r[i:end]))
-		}
+		wrapped = append(wrapped, hardWrap(line, width)...)
 	}
 	return wrapped
 }
@@ -116,39 +99,33 @@ func hardWrap(text string, width int) []string {
 	if text == "" {
 		return []string{""}
 	}
-	r := []rune(text)
 	var out []string
-	for i := 0; i < len(r); i += width {
-		end := i + width
-		if end > len(r) {
-			end = len(r)
+	for text != "" {
+		part := cutCells(text, width)
+		if part == "" {
+			_, size := utf8.DecodeRuneInString(text)
+			part = text[:size]
 		}
-		out = append(out, string(r[i:end]))
+		out = append(out, part)
+		text = text[len(part):]
 	}
 	return out
 }
 
 func asLogEntry(event watch.Event) (string, string) {
 	if watch.ProseKinds[event.Kind] {
-		return event.Kind, event.Text
+		return event.Kind, watch.CleanText(event.Text)
 	}
-	return event.Kind, event.DisplayText()
+	return event.Kind, watch.CleanText(event.DisplayText())
 }
 
 func rule(label string, width int) string {
+	label = strings.ReplaceAll(watch.CleanText(label), "\n", " ")
 	prefix := "── " + label + " "
-	if runeLen(prefix) >= width {
+	if cellLen(prefix) >= width {
 		return clip(label, width)
 	}
-	return prefix + strings.Repeat("─", width-runeLen(prefix))
-}
-
-func padRight(s string, width int) string {
-	n := runeLen(s)
-	if n >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-n)
+	return prefix + strings.Repeat("─", width-cellLen(prefix))
 }
 
 func userRows(text string, width int) []string {
@@ -176,7 +153,7 @@ func userRows(text string, width int) []string {
 	}
 	contentW := 0
 	for _, line := range wrapped {
-		if n := runeLen(line); n > contentW {
+		if n := cellLen(line); n > contentW {
 			contentW = n
 		}
 	}
@@ -403,17 +380,18 @@ func ClampScroll(total, viewH, scroll int) int {
 
 func header(width int, meta string, enabled bool) string {
 	left := "REX"
-	if width < runeLen(left) {
+	meta = strings.ReplaceAll(watch.CleanText(meta), "\n", " ")
+	if width < cellLen(left) {
 		return mascot.Paint(clip(left, width), mascot.UI["title"], enabled)
 	}
-	room := width - runeLen(left) - 1
+	room := width - cellLen(left) - 1
 	if room < 1 {
 		return mascot.Paint(clip(left, width), mascot.UI["title"], enabled)
 	}
-	if runeLen(meta) > room {
+	if cellLen(meta) > room {
 		meta = clipPathLeft(meta, room)
 	}
-	gap := width - runeLen(left) - runeLen(meta)
+	gap := width - cellLen(left) - cellLen(meta)
 	if gap < 1 {
 		gap = 1
 	}
@@ -421,8 +399,9 @@ func header(width int, meta string, enabled bool) string {
 }
 
 func chatHeaderMeta(state, planRel string, width int) string {
-	state = strings.TrimSpace(state)
-	planRel = strings.TrimSpace(planRel)
+	// Clean first, so what is measured is what is drawn.
+	state = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(state), "\n", " "))
+	planRel = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(planRel), "\n", " "))
 	if state == "" {
 		state = "idle"
 	}
@@ -434,16 +413,12 @@ func chatHeaderMeta(state, planRel string, width int) string {
 		return meta
 	}
 	room := max(8, width-5)
-	if runeLen(meta) <= room {
+	if cellLen(meta) <= room {
 		return meta
 	}
-	keep := room - runeLen(state) - 3
+	keep := room - cellLen(state) - 3
 	if keep < 8 {
-		r := []rune(state + " · " + planRel)
-		if len(r) > room {
-			return string(r[:room])
-		}
-		return string(r)
+		return cutCells(meta, room)
 	}
 	return state + " · " + clipPathLeft(planRel, keep)
 }
@@ -452,8 +427,7 @@ func clipPathLeft(path string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	r := []rune(path)
-	if len(r) <= width {
+	if cellLen(path) <= width {
 		return path
 	}
 	if width <= 1 {
@@ -463,11 +437,28 @@ func clipPathLeft(path string, width int) string {
 	if i := strings.LastIndexAny(path, `/\`); i >= 0 {
 		base = path[i+1:]
 	}
-	br := []rune(base)
-	if 2+len(br) <= width {
+	if 2+cellLen(base) <= width {
 		return "…/" + base
 	}
-	return "…" + string(r[len(r)-(width-1):])
+	return "…" + tailCells(path, width-1)
+}
+
+// visibleDraft is the end of the draft that fits in room cells, with "…"
+// on the left when it was cut. It leaves the last cell free for the
+// cursor.
+func visibleDraft(draft string, room int) string {
+	room--
+	if room <= 0 {
+		return ""
+	}
+	clean := strings.ReplaceAll(watch.CleanText(draft), "\n", " ")
+	if cellLen(clean) <= room {
+		return clean
+	}
+	if room == 1 {
+		return "…"
+	}
+	return "…" + tailCells(clean, room-1)
 }
 
 func inputBox(draft string, width int, enabled bool, prefix string) []string {
@@ -475,17 +466,7 @@ func inputBox(draft string, width int, enabled bool, prefix string) []string {
 		prefix = InputPrefix
 	}
 	inner := max(0, width-2)
-	room := max(0, inner-runeLen(prefix))
-	visible := draft
-	if room == 0 {
-		visible = ""
-	} else {
-		r := []rune(draft)
-		if len(r) > room {
-			visible = string(r[len(r)-room:])
-		}
-	}
-	content := clip(prefix+visible, inner)
+	content := clip(prefix+visibleDraft(draft, inner-cellLen(prefix)), inner)
 	top := "╭" + strings.Repeat("─", inner) + "╮"
 	bot := "╰" + strings.Repeat("─", inner) + "╯"
 	if width < 4 {
@@ -685,19 +666,9 @@ func ComposeFrame(spriteName, color string, opt ComposeOptions) string {
 	frame := Home + Clear + strings.Join(out, "\r\n")
 	if textWidth >= 4 && lines >= InputRows+FooterRows+3 {
 		prefix := composerPrefix(opt)
-		inner := textWidth - 2
-		room := max(0, inner-runeLen(prefix))
-		visible := opt.Draft
-		if room == 0 {
-			visible = ""
-		} else {
-			r := []rune(opt.Draft)
-			if len(r) > room {
-				visible = string(r[len(r)-room:])
-			}
-		}
+		visible := visibleDraft(opt.Draft, textWidth-2-cellLen(prefix))
 		cursorRow := lines - 2
-		cursorCol := mascotCols + Gutter + 1 + 1 + runeLen(prefix) + runeLen(visible)
+		cursorCol := mascotCols + Gutter + 1 + 1 + cellLen(prefix) + cellLen(visible)
 		frame += fmt.Sprintf("\033[%d;%dH%s", cursorRow, cursorCol, ShowCursor)
 	} else {
 		frame += HideCursor

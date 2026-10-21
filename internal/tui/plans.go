@@ -795,7 +795,3 @@ func planFooter(b *PlanBrowser, quitPending bool) (string, mascot.RGB) {
 		return "↑↓ choose · enter · tab chat", mascot.UI["muted"]
 	}
 }
-
-func chatStatus(turn Turn, lastKind, planRel string) string {
-	return chatHeaderMeta(statusForTurn(turn, lastKind), planRel, 0)
-}

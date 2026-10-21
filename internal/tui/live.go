@@ -847,249 +847,33 @@ func ComposerAnimation(text, current string) string {
 }
 
 func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.File, eventsPath string) (int, error) {
-	sequence := mascot.MustAnimation(animation)
-	frameIndex := 0
-	hold := sequence.Frames[0].Hold
-	spriteName := sequence.Frames[0].Sprite
 	columns, lines := Size()
-	animated := len(sequence.Frames) > 1
-	draft := ""
-	chatDraft := ""
-	var log []watch.Event
-	quitPending := false
-	quitTicks := 0
-	status := sequence.Name
-	lastKind := ""
-	scroll := 0
-	pane := PanePlans
-	plans := NewPlanBrowser("")
+	a := newApp(color, enabled, animation, NewPlanBrowser(""), columns, lines)
 	path := eventsPath
 	if path == "" {
 		path = watch.DefaultEventPath()
 	}
 	tail := watch.NewEventTail(path, true)
-	turn := TurnIdle
-	code := 0
 	err := LiveScreen(stdout, stdin, func() error {
-		play := func(name string) {
-			if sequence.Name == name {
-				return
-			}
-			sequence = mascot.MustAnimation(name)
-			frameIndex = 0
-			hold = sequence.Frames[0].Hold
-			spriteName = sequence.Frames[0].Sprite
-			animated = len(sequence.Frames) > 1
-		}
-		syncTurn := func() {
-			want := AnimationForTurn(turn)
-			if sequence.Name == "breakdance" {
-				return
-			}
-			play(want)
-		}
 		draw := func() {
-			meta := status
-			if pane == PanePlans {
-				meta = "plans"
-				switch plans.Screen {
-				case ScreenCreate:
-					meta = "new plan"
-				case ScreenFolder:
-					meta = "new folder"
-				case ScreenBrowse:
-					meta = "open"
-				}
-			} else {
-				meta = chatHeaderMeta(statusForTurn(turn, lastKind), plans.CurrentRel(), PaneTextWidth(columns))
-			}
-			_, _ = io.WriteString(stdout, ComposeFrame(spriteName, color, ComposeOptions{
-				Enabled:       enabled,
-				Columns:       columns,
-				Lines:         lines,
-				AnimationName: sequence.Name,
-				Draft:         draft,
-				Log:           log,
-				QuitPending:   quitPending,
-				Status:        meta,
-				Scroll:        scroll,
-				Pane:          pane,
-				Plans:         plans,
-			}))
+			_, _ = io.WriteString(stdout, a.frame())
 			_ = stdout.Sync()
 		}
 		draw()
 		for {
 			key, haveKey := ReadKey(stdin, time.Duration(FrameTick)*time.Millisecond)
-			changed := false
-			fresh := tail.Poll()
-			if len(fresh) > 0 {
-				textW := PaneTextWidth(columns)
-				before := 0
-				if textW > 0 {
-					before = len(BuildLogView(log, textW))
-				}
-				prevTurn := turn
-				for _, ev := range fresh {
-					turn = ApplyTurn(turn, ev)
-					if watch.KeepInPane(ev) || ev.Kind == "idle" { // a turn end clears an old error
-						lastKind = ev.Kind
-					}
-				}
-				added := ExtendLog(&log, fresh)
-				after := 0
-				if textW > 0 {
-					after = len(BuildLogView(log, textW))
-				}
-				if len(added) > 0 && scroll > 0 {
-					scroll += max(0, after-before)
-				}
-				if len(added) > 0 || turn != prevTurn {
-					status = statusForTurn(turn, lastKind)
-					syncTurn()
-					changed = true
-				}
-			}
-			textW, bodyH := PaneTextWidth(columns), PaneBodyHeight(lines)
-			totalLines := 0
-			if textW > 0 {
-				totalLines = len(BuildLogView(log, textW))
-			}
-			maxScroll := ClampScroll(totalLines, bodyH, totalLines)
+			changed := a.ingest(tail.Poll())
 			if haveKey {
-				switch {
-				case key == CtrlC:
-					if quitPending {
-						code = 0
-						return nil
-					}
-					quitPending = true
-					quitTicks = QuitWindowTicks
+				if a.handleKey(key) {
 					changed = true
-				case key == "\t":
-					quitPending = false
-					if pane == PanePlans {
-						if plans.Browsing() {
-							plans.Filter = draft
-						}
-						pane = PaneChat
-						draft = chatDraft
-					} else {
-						chatDraft = draft
-						pane = PanePlans
-						draft = ""
-						if plans.Browsing() {
-							draft = plans.Filter
-						}
-						plans.Rebuild()
-					}
-					changed = true
-				case pane == PanePlans:
-					quitPending = false
-					var openChat bool
-					changed, openChat = handlePlanKey(plans, &draft, key, bodyH)
-					if openChat {
-						pane = PaneChat
-						draft = chatDraft
-					}
-				default:
-					switch key {
-					case "up":
-						scroll = min(maxScroll, scroll+1)
-						changed = true
-					case "down":
-						scroll = max(0, scroll-1)
-						changed = true
-					case "pageup":
-						scroll = min(maxScroll, scroll+max(1, bodyH))
-						changed = true
-					case "pagedown":
-						scroll = max(0, scroll-max(1, bodyH))
-						changed = true
-					case "home":
-						scroll = maxScroll
-						changed = true
-					case "end":
-						scroll = 0
-						changed = true
-					case "\r", "\n":
-						quitPending = false
-						if strings.TrimSpace(draft) != "" {
-							text := strings.TrimSpace(draft)
-							next := ComposerAnimation(text, sequence.Name)
-							if next != sequence.Name {
-								if next == mascot.DefaultAnimation {
-									turn = TurnIdle
-								}
-								play(next)
-								status = sequence.Name
-							}
-							log = append(log, watch.NewEvent("user", "text", text, nil))
-							draft = ""
-							changed = true
-						}
-					case "\x7f", "\x08":
-						quitPending = false
-						if draft != "" {
-							r := []rune(draft)
-							draft = string(r[:len(r)-1])
-							changed = true
-						}
-					default:
-						if isPrintableKey(key) {
-							quitPending = false
-							if runeLen(draft) < 256 {
-								draft += key
-								changed = true
-							}
-						} else if quitPending {
-							quitPending = false
-							changed = true
-						}
-					}
 				}
-			} else {
-				if quitPending {
-					quitTicks--
-					if quitTicks <= 0 {
-						quitPending = false
-						changed = true
-					}
+				if a.quit {
+					return nil
 				}
-				if animated {
-					var finished bool
-					frameIndex, hold, finished = advance(sequence.Frames, frameIndex, hold, animationLoops(sequence.Name))
-					if finished {
-						play(AnimationForTurn(turn))
-						status = statusForTurn(turn, "")
-						changed = true
-					} else {
-						nextName := sequence.Frames[frameIndex].Sprite
-						if nextName != spriteName {
-							spriteName = nextName
-							changed = true
-						}
-					}
-				}
-			}
-			if pane == PanePlans && plans.Browsing() && plans.Filter != draft {
-				plans.Filter = draft
-				plans.Rebuild()
+			} else if a.tick() {
 				changed = true
 			}
-			newColumns, newLines := Size()
-			if newColumns != columns || newLines != lines {
-				columns, lines = newColumns, newLines
-				changed = true
-			}
-			textW, bodyH = PaneTextWidth(columns), PaneBodyHeight(lines)
-			totalLines = 0
-			if textW > 0 {
-				totalLines = len(BuildLogView(log, textW))
-			}
-			clamped := ClampScroll(totalLines, bodyH, scroll)
-			if clamped != scroll {
-				scroll = clamped
+			if a.settle(Size()) {
 				changed = true
 			}
 			if changed {
@@ -1097,5 +881,5 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 			}
 		}
 	})
-	return code, err
+	return 0, err
 }

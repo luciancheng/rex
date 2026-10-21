@@ -154,7 +154,7 @@ func TestProblems(t *testing.T) {
 		{"unknown status", `{"tasks":[{"id":"a","status":"wip"}]}`, `a: unknown status "wip" · read as pending`},
 		{"task not object", `{"tasks":["a"]}`, "tasks[0]: is not an object"},
 		{"bad scope", `{"scope":["a"]}`, `plan: scope is not {"in": [...], "out": [...]}`},
-		{"bad version", `{"version":"1"}`, "plan: version is not a whole number"},
+		{"bad version", `{"version":"1"}`, "plan: version should be a number, not text"},
 	}
 	for _, c := range cases {
 		p := mustParse(t, c.src)
@@ -204,6 +204,8 @@ func TestParseErrors(t *testing.T) {
 		{"{\"id\": \"a\"} x", "1:13: "},
 		{"{\n  \"tasks\": [\n", "3:1: the file ends before the JSON does"},
 		{"{\"t\": \"é\", x}", "1:12: "},
+		{"{\"a<&>\": 1, \"a<&>\": 2}", `1:13: duplicate key`},
+		{"{\"\\u0061\": 1, \"a\": 2}", `1:15: duplicate key`},
 	}
 	for _, c := range cases {
 		_, err := Parse([]byte(c.src))

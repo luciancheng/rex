@@ -94,7 +94,7 @@ Keep `needs` and `does` apart: one is "we still lack X", the other is "we will s
 - Write status down. Do not leave it to be inferred from git or from `verify`.
 - At most one task is `active`: that is the pinned task. If none is active, the pin is the first `pending` task, in file order, whose `depends_on` are all `done` or `skipped`.
 - Only leaf tasks (tasks that are nobody's `parent`) are pinned. A parent's progress is its children's, and Rex never writes a parent's status.
-- A `depends_on` that names a parent is met once every leaf under it is `done` or `skipped` (or the parent itself is marked `done` or `skipped`).
+- A `depends_on` that names a parent is met once every leaf under it is `done` or `skipped` (or the parent itself is marked `done` or `skipped`). A task under that parent never waits on itself: only the parent's other leaves count.
 
 ## Parent vs depends_on
 

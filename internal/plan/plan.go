@@ -177,6 +177,7 @@ func duplicateKey(body []byte) int {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	var stack []*frame
 	for {
+		before := int(dec.InputOffset()) // the key, if this is one, starts at the next '"'
 		tok, err := dec.Token()
 		if err != nil {
 			return -1
@@ -205,8 +206,10 @@ func duplicateKey(body []byte) int {
 			}
 			key, _ := t.(string)
 			if top.keys[key] {
-				quoted, _ := json.Marshal(key)
-				return max(0, int(dec.InputOffset())-len(quoted))
+				if i := bytes.IndexByte(body[before:], '"'); i >= 0 {
+					return before + i
+				}
+				return before
 			}
 			top.keys[key] = true
 			top.wantKey = false
@@ -250,7 +253,7 @@ func (r *reader) plan(root *jsonedit.Node) {
 			var quoted string
 			r.doc.Decode(n, &quoted)
 			if v, err = strconv.Atoi(strings.TrimSpace(quoted)); err == nil {
-				r.problem("plan", "version is not a whole number (read %q as %d)", quoted, v)
+				r.problem("plan", "version should be a number, not text (read %q as %d)", quoted, v)
 			}
 		}
 		switch {

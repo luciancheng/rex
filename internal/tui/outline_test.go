@@ -544,3 +544,21 @@ func TestNarrowRuleKeepsProgress(t *testing.T) {
 		t.Fatalf("%q", rule)
 	}
 }
+
+func TestDetailShowsTheStackFields(t *testing.T) {
+	p, err := plan.Parse([]byte(`{"base": "dev", "tasks": [{"id": "a", "branch": "feature/a"}, {"id": "b"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &planDoc{path: "rex/plans/x.rex.json", plan: p}
+	trim := regexp.MustCompile(` +\n`)
+	if got := trim.ReplaceAllString(viewText(planDetail(d, 60)), "\n"); !strings.Contains(got, "stack base\n    dev\n") {
+		t.Fatal(got)
+	}
+	if got := trim.ReplaceAllString(viewText(taskDetail(d, "a", 60)), "\n"); !strings.Contains(got, "branch\n    feature/a\n") {
+		t.Fatal(got)
+	}
+	if got := viewText(taskDetail(d, "b", 60)); strings.Contains(got, "branch") {
+		t.Fatal(got)
+	}
+}

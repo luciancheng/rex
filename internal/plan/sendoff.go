@@ -22,8 +22,9 @@ const (
 func Fingerprint(rel, task string) string { return "rex-sendoff: " + rel + "#" + task }
 
 // Sendoff is the handoff for the next chat or person, generated only from
-// the plan (issue #9's template, plus a short Done section, the reply
-// trailer request and the fingerprint). rel is the plan's repo-relative
+// the plan (issue #9's template, plus a short Done section, for a stacked
+// plan a Stack part saying where the pin's PR goes, the reply trailer
+// request and the fingerprint). rel is the plan's repo-relative
 // path. Every field is cleaned of terminal control characters.
 func Sendoff(p *Plan, rel string) (string, error) {
 	if p == nil || len(p.Tasks) == 0 {
@@ -34,7 +35,7 @@ func Sendoff(p *Plan, rel string) (string, error) {
 	// list of open tasks is shortened; the pin's Next section stays when it fits,
 	// and the closing instructions and fingerprint always do.
 	var s string
-	for _, limit := range []int{-1, 6, 3, 0} {
+	for _, limit := range []int{-1, 6, 3, 1, 0} {
 		for _, open := range []int{-1, -2, 12, 4} {
 			if s = sendoff(p, rel, limit, open); len(s) <= sendoffCap {
 				return s, nil
@@ -190,6 +191,9 @@ func sendoff(p *Plan, rel string, done, open int) string {
 		line("Work only on the pinned task. Stay in scope. Open the plan file in Rex.")
 	}
 	line("Do not inject tools or expand into scope.out. If the plan is wrong, edit the JSON.")
+	if pin != nil && p.Stacked() {
+		stackLines(line, p, g, pin)
+	}
 	line("When you finish, end your final reply with these lines:")
 	line("accomplished: <what you actually did>")
 	line("verified: <how you checked it>")
@@ -252,16 +256,19 @@ func Brief(p *Plan, rel string) string {
 	line("Planning brief: %s", rel)
 	line("")
 	line("Fill or refine the Rex plan at %s. It is JSON, v1:", rel)
-	line(`{"version": 1, "id": "slug", "title": "", "goal": "one paragraph", "status": "pending",`)
+	line(`{"version": 1, "id": "slug", "title": "", "goal": "one paragraph", "status": "pending", "base": "...",`)
 	line(`  "scope": {"in": ["..."], "out": ["..."]},`)
 	line(`  "tasks": [{"id": "short-slug", "title": "", "parent": "", "status": "pending",`)
-	line(`    "needs": ["..."], "does": ["..."], "depends_on": ["..."], "verify": ["..."], "files": ["..."]}]}`)
+	line(`    "needs": ["..."], "does": ["..."], "depends_on": ["..."], "verify": ["..."], "files": ["..."], "branch": "..."}]}`)
 	line("")
 	line("Rules")
 	line("- ids are short, stable slugs; never renumber or reuse them")
-	line("- file order is do order; keep the tasks array flat")
-	line("- parent groups tasks under a heading; depends_on lists hard prerequisites only")
+	line("- file order is do order and stack order; keep the tasks array flat")
+	line("- parent groups tasks under a heading (a heading is not a PR); depends_on lists hard prerequisites only, all earlier in the file")
 	line("- one task should fit one PR a human can review in one sitting")
+	line("- the leaf tasks stack in file order: the first PR targets base, each next one the branch of the task before it, so each task builds and passes its tests on the tasks before it alone")
+	line("- base = the branch the stack lands on (the repo's trunk, e.g. main or dev); branch = a leaf task's PR branch, named the way this repo names branches (letters, digits, . _ - /); leave both out if the work won't be PRs")
+	line("- work that should merge on its own, apart from this stack, goes in its own plan")
 	line("- needs = what must already be true; does = what will be true when it is done")
 	line("- verify = how a stranger would check it; files = likely paths, not a lock")
 	line("- scope.out is the hard edge of the job: list what this work must not touch")

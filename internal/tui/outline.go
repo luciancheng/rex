@@ -547,6 +547,7 @@ func planDetail(d *planDoc, width int) []LogLine {
 		}
 	}
 	add("goal", nonEmpty(p.Goal))
+	add("stack base", nonEmpty(p.Base))
 	add("in scope", p.Scope.In)
 	add("out of scope", p.Scope.Out)
 	if p.ReadOnly != "" {
@@ -633,6 +634,7 @@ func taskDetail(d *planDoc, key string, width int) []LogLine {
 	add("needs", t.Needs)
 	add("verify", t.Verify)
 	add("files", t.Files)
+	add("branch", nonEmpty(t.Branch))
 	add("in scope", t.Scope.In)
 	add("out of scope", t.Scope.Out)
 	add("description", nonEmpty(t.Description))

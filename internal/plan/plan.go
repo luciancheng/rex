@@ -51,8 +51,10 @@ type Plan struct {
 	Title   string `json:"title"`
 	Goal    string `json:"goal"`
 	Status  Status `json:"status"`
-	Scope   Scope  `json:"scope"`
-	Tasks   []Task `json:"tasks"`
+	// Base is the branch a stacked plan's bottom PR targets (optional).
+	Base  string `json:"base,omitempty"`
+	Scope Scope  `json:"scope"`
+	Tasks []Task `json:"tasks"`
 
 	// Problems are what Parse could not read or does not trust.
 	Problems []Problem `json:"-"`
@@ -75,6 +77,8 @@ type Task struct {
 	DependsOn   []string `json:"depends_on"`
 	Verify      []string `json:"verify"`
 	Files       []string `json:"files"`
+	// Branch is the head branch of this leaf task's PR (optional).
+	Branch string `json:"branch,omitempty"`
 
 	Accomplished   []string `json:"accomplished"`
 	Modified       []string `json:"modified"`
@@ -304,6 +308,7 @@ func (r *reader) plan(root *jsonedit.Node) {
 	p.Title = r.text("plan", root, "title")
 	p.Goal = r.text("plan", root, "goal")
 	p.Status = r.status("plan", root)
+	p.Base = strings.TrimSpace(r.text("plan", root, "base"))
 	p.Scope = r.scope("plan", root)
 	tasks := root.Member("tasks")
 	if tasks == nil || r.null(tasks) {
@@ -352,6 +357,7 @@ func (r *reader) task(where string, index int, n *jsonedit.Node) Task {
 	}
 	t.Verify = r.list(where, n, "verify")
 	t.Files = r.list(where, n, "files")
+	t.Branch = strings.TrimSpace(r.text(where, n, "branch"))
 	t.Accomplished = r.list(where, n, "accomplished")
 	t.Modified = r.list(where, n, "modified")
 	t.VerifiedHow = r.list(where, n, "verified_how")
@@ -500,6 +506,9 @@ func (r *reader) check() {
 	}) {
 		r.problem(cycle[0], "parent loops: %s", strings.Join(cycle, " → "))
 	}
+	if p.Stacked() {
+		r.stack()
+	}
 }
 
 // maxLoops caps the loops reported per graph: a dense file could have a
@@ -578,8 +587,8 @@ func (p *Plan) Task(id string) *Task {
 	return nil
 }
 
-// Stub is a new, empty v1 plan for stem, every field present so an agent
-// or a human can fill it in.
+// Stub is a new, empty v1 plan for stem, every field present (but the
+// optional stack base) so an agent or a human can fill it in.
 func Stub(stem string) []byte {
 	p := Plan{
 		Version: Version,

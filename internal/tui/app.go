@@ -605,8 +605,12 @@ func (a *app) syncPlanInput() bool {
 	if forcedVerb(text) {
 		text = ""
 	}
-	// Spaces alone don't filter or find anything.
+	// Spaces alone don't filter or find anything, and on Home neither does
+	// text that names no plan (".rex.json", "./").
 	text = strings.TrimSpace(text)
+	if b.Screen == ScreenHome && findKey(text) == "" {
+		text = ""
+	}
 	switch b.Screen {
 	case ScreenBrowse:
 		if b.Filter == text {

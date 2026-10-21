@@ -398,3 +398,33 @@ func TestHomeFolderLineIsThePlansRoot(t *testing.T) {
 		t.Fatalf("Home says %q", got)
 	}
 }
+
+func TestFindCleansPathsLikeCreate(t *testing.T) {
+	a, _ := libraryApp(t, "b.rex.json", "a/b.rex.json")
+	for _, q := range []string{"./b", "a//b", "a / b"} {
+		typeText(a, q)
+		b := a.plans
+		if len(b.Rows) == 0 || b.Rows[b.Cursor].Kind != PlanRowPlan {
+			t.Fatalf("%q finds what it names: %#v", q, b.Rows)
+		}
+		for _, row := range b.Rows {
+			if row.Kind == PlanRowCreateNamed {
+				t.Fatalf("%q exists, so no + Create: %#v", q, b.Rows)
+			}
+		}
+		press(a, "\x15")
+	}
+	typeText(a, ".rex.json")
+	if a.plans.Find != "" || a.plans.Rows[a.plans.Cursor].Kind != PlanRowLatest {
+		t.Fatalf("a bare suffix finds nothing and keeps the cards: find=%q", a.plans.Find)
+	}
+}
+
+func TestNewFolderShowsWhereItGoes(t *testing.T) {
+	a, root := libraryApp(t, "alpha.rex.json")
+	b := a.plans
+	b.Screen, b.Dir, b.Name = ScreenFolder, root, "team/q3"
+	if v := viewText(BuildPlanView(b, 60)); !strings.Contains(v, "Creates rex/plans/team/q3/") {
+		t.Fatalf("%s", v)
+	}
+}

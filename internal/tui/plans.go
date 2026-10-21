@@ -710,7 +710,18 @@ func buildHomeRows(plans []planStat, find string) (rows []PlanRow, more int) {
 // findKey is a Home find query as matched: lowercase, "/" separators,
 // without a typed .rex.json.
 func findKey(find string) string {
-	q := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(find, "\\", "/")))
+	// The same cleaning as planName, so ./b, a//b and "a / b" find what
+	// they would create; "" means there is nothing to find.
+	var parts []string
+	for _, part := range strings.Split(strings.ToLower(strings.ReplaceAll(find, "\\", "/")), "/") {
+		if part = strings.TrimSpace(part); part != "" && part != "." {
+			parts = append(parts, part)
+		}
+	}
+	q := strings.Join(parts, "/")
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(find)), "/") && q != "" {
+		q += "/" // "team/" is on its way into a folder
+	}
 	return strings.TrimSuffix(q, ".rex.json")
 }
 
@@ -846,11 +857,14 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 		lines = appendWrapped(lines, "text", "Name the plan, then enter. a/b makes it in folder a.", inner)
 		return appendWrapped(lines, "idle", target, inner)
 	case ScreenFolder:
-		lines = append(lines,
-			LogLine{Kind: "text", Text: "  " + clip("Name the folder, then enter.", inner)},
-			LogLine{Kind: "idle", Text: "  " + clip("For grouping plans. Esc cancels.", inner)},
-		)
-		return lines
+		target := "For grouping plans. Esc cancels."
+		if rel, err := folderPath(b.Name); err == nil {
+			if r, rerr := filepath.Rel(b.Repo, filepath.Join(b.Dir, filepath.FromSlash(rel))); rerr == nil {
+				target = "Creates " + filepath.ToSlash(r) + "/"
+			}
+		}
+		lines = appendWrapped(lines, "text", "Name the folder, then enter. a/b makes b inside a.", inner)
+		return appendWrapped(lines, "idle", target, inner)
 	case ScreenBrowse:
 		items := 0
 		for i, row := range b.Rows {

@@ -109,7 +109,9 @@ func TestShortTerminalComposer(t *testing.T) {
 }
 
 func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
-	b := NewPlanBrowser(t.TempDir())
+	repo := t.TempDir()
+	seedPlans(t, repo, "alpha.rex.json")
+	b := NewPlanBrowser(repo)
 	for i, row := range b.Rows {
 		if row.Kind == PlanRowNew {
 			b.Cursor = i
@@ -124,9 +126,10 @@ func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
 			b.Cursor, open = i, true
 		}
 	}
-	// First run shows only Create; with more cards the footer follows the
-	// card under the cursor.
-	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); open && segs[1] == "⏎ create" {
+	if !open {
+		t.Fatal("with a plan, Home has an Open card")
+	}
+	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[1] == "⏎ create" {
 		t.Fatalf("on Open a plan: %q", segs)
 	}
 }

@@ -268,7 +268,7 @@ Layout:
   - A parent shows a rollup (`1/3`) instead of a status glyph.
   - **Only leaf tasks can be pinned.** Pinning a parent pins its first ready child.
 - **Blurbs.** Issue #7 asks for a small blurb on every task. At text widths of 60 or more, each row shows `title · blurb` (from `does`, else `description`), clipped. Below 60, rows show the title only, and the selected row gets the blurb on its own muted line. A blurb line under every row would double the list's height at 38×18.
-- **Scrolling.** The list keeps a two-row margin around the selection, and shows `more ↓` / `more ↑` when rows are hidden.
+- **Scrolling.** The list keeps a two-row margin around the selection, and shows `↑ more` / `↓ more` when rows are hidden.
 - **Task detail** (⏎ or → on a task) is a scrolling sub-screen:
   - title, status;
   - parent, `depends_on` (each with its state), and dependents;

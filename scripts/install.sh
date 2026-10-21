@@ -50,6 +50,7 @@ build_from_git() {
 
 have_go || die "need Go 1.22 or newer on PATH (https://go.dev/dl/)"
 mkdir -p "$BIN_DIR"
+BIN_DIR="$(cd "$BIN_DIR" && pwd)" # go build runs in another folder
 
 if SRC="$(local_src)"; then
   say "building REX from $SRC"

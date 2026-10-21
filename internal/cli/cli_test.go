@@ -507,13 +507,38 @@ func TestInstallScripts(t *testing.T) {
 				t.Errorf("%s: missing %q", name, w)
 			}
 		}
+		module, rex := `MODULE="github.com/luciancheng/rex"`, `"$REX"`
+		installs, runs := `"$MODULE/cmd/rex@`, 0
+		if name == "install.ps1" {
+			module, rex, installs = `$Module = "github.com/luciancheng/rex"`, "& $Rex", `"$Module/cmd/rex@`
+		}
+		if !strings.Contains(body, module) {
+			t.Errorf("%s: the module path is %s", name, module)
+		}
 		for _, line := range strings.Split(body, "\n") {
-			if strings.Contains(line, "go install") && (strings.Contains(line, "2>") || strings.Contains(line, "Out-Null")) {
-				t.Errorf("%s: go install errors are shown, not swallowed: %q", name, line)
+			code := strings.TrimSpace(line)
+			if strings.HasPrefix(code, "#") {
+				continue
 			}
-			if strings.Contains(line, "ingest --install ") && !strings.Contains(line, "#") && !strings.Contains(line, "once it is") && !strings.HasPrefix(strings.TrimSpace(line), "Write-Host") && !strings.HasPrefix(strings.TrimSpace(line), "say") {
-				t.Errorf("%s: only Cursor is wired, and through the alias every binary knows: %q", name, line)
+			if strings.Contains(code, "go install") {
+				if !strings.Contains(code, installs) || strings.Contains(code, "REPO_URL") || strings.Contains(code, "RepoUrl") {
+					t.Errorf("%s: go install takes the module path, never the repo URL: %q", name, line)
+				}
+				if strings.Contains(code, "2>") || strings.Contains(code, "Out-Null") {
+					t.Errorf("%s: go install errors are shown, not swallowed: %q", name, line)
+				}
 			}
+			// Every run of the new binary: its version, or the Cursor hook
+			// through the alias every binary knows. Nothing else is wired.
+			if i := strings.Index(code, rex+" "); i >= 0 {
+				runs++
+				if args := code[i+len(rex)+1:]; !strings.HasPrefix(args, "--version") && !strings.HasPrefix(args, "ingest --install-cursor-hook") {
+					t.Errorf("%s: only Cursor is wired: %q", name, line)
+				}
+			}
+		}
+		if runs != 2 {
+			t.Errorf("%s: the script runs rex %d times; the guard expects --version and the Cursor hook", name, runs)
 		}
 		for _, bad := range []string{"rex.git/cmd/rex", "clone --branch", "--install auto", "go build -o rex "} {
 			if strings.Contains(body, bad) {
@@ -524,6 +549,13 @@ func TestInstallScripts(t *testing.T) {
 	if bash, err := exec.LookPath("bash"); err == nil && runtime.GOOS != "windows" {
 		if out, err := exec.Command(bash, "-n", filepath.Join("..", "..", "scripts", "install.sh")).CombinedOutput(); err != nil {
 			t.Fatalf("bash -n: %v\n%s", err, out)
+		}
+	}
+	if pwsh, err := exec.LookPath("pwsh"); err == nil { // CI's runners have it
+		ps1, _ := filepath.Abs(filepath.Join("..", "..", "scripts", "install.ps1"))
+		parse := "$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('" + ps1 + "', [ref]$null, [ref]$e); if ($e) { $e; exit 1 }"
+		if out, err := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", parse).CombinedOutput(); err != nil {
+			t.Fatalf("install.ps1 doesn't parse: %v\n%s", err, out)
 		}
 	}
 }

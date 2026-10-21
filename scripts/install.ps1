@@ -2,7 +2,7 @@
 # Other agents are opt-in; the script prints the command for each one it finds.
 # Usage (PowerShell):
 #   irm https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.ps1 | iex
-#   $env:REX_REF = "v0.2.0"; irm …/install.ps1 | iex      # a tag, branch or commit
+#   $env:REX_REF = "dev"; irm …/install.ps1 | iex         # a tag, branch or commit
 #   .\scripts\install.ps1                                 # from a clone: installs this tree
 $ErrorActionPreference = "Stop"
 
@@ -49,6 +49,7 @@ function Build-FromGit {
 
 Assert-Go
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+$BinDir = (Resolve-Path $BinDir).Path # go build runs in another folder
 $Rex = Join-Path $BinDir "rex.exe"
 
 $Src = Local-Src

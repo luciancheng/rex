@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "id": "v1-sendoff-loop",
+  "title": "Rex v1: the send-off loop",
+  "goal": "Open a plan in Rex, see its outline and pinned task, watch the agent work it on the tape, mark it done with a retrospective, and type sendoff to get a brief you paste into the next chat. Rex stays watch-only: it never sends, approves, or steers.",
+  "status": "active",
+  "scope": {
+    "in": [
+      "v1 plan JSON: parse, show, pin, complete",
+      "send-off brief generated from the plan file",
+      "drift from the pinned task, shown in Rex only",
+      "opt-in hooks for Claude Code, Codex, OpenCode next to Cursor"
+    ],
+    "out": [
+      "injecting prompts or plans into the agent",
+      "auto-approving or blocking tools",
+      "palettes or a --color flag",
+      "a custom plan language or a web UI",
+      "scraping transcripts"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "plans",
+      "title": "Plans you can read",
+      "status": "pending",
+      "does": ["A plan file has a frozen v1 shape and Rex shows it as an outline"]
+    },
+    {
+      "id": "plan-schema",
+      "title": "Freeze the v1 plan format",
+      "parent": "plans",
+      "status": "pending",
+      "does": [
+        "internal/plan parses v1 and reports problems instead of failing",
+        "Create writes an empty v1 stub instead of {}",
+        "docs/plan-format.md is the contract"
+      ],
+      "verify": ["go test ./internal/plan/", "every file under rex/plans parses"],
+      "files": ["internal/plan/plan.go", "docs/plan-format.md", "internal/tui/plans.go"]
+    },
+    {
+      "id": "plan-store",
+      "title": "Edit a plan without disturbing it",
+      "parent": "plans",
+      "status": "pending",
+      "depends_on": ["plan-schema"],
+      "needs": ["internal/jsonedit splices one member and keeps every other byte"],
+      "does": [
+        "Status and completion edits touch only the target task's members",
+        "A file changed on disk since it was read is re-checked, never clobbered"
+      ],
+      "verify": ["golden diffs: a pin changes only status values", "FuzzEdit"],
+      "files": ["internal/plan/edit.go", "internal/plan/state.go"]
+    },
+    {
+      "id": "plan-outline",
+      "title": "Outline, plan detail, task detail",
+      "parent": "plans",
+      "status": "pending",
+      "depends_on": ["plan-schema"],
+      "does": [
+        "Opening a plan lands on its outline",
+        "External edits reload with a toast; invalid JSON keeps the last good copy"
+      ],
+      "verify": ["open → outline → task detail → Esc → library in tmux at 78 and 38 columns"],
+      "files": ["internal/tui/outline.go", "internal/tui/plans.go"]
+    },
+    {
+      "id": "loop",
+      "title": "Pin, complete, send off",
+      "status": "pending",
+      "does": ["The pinned task drives completion, the send-off brief, and drift"]
+    },
+    {
+      "id": "pin-task",
+      "title": "Pin one task",
+      "parent": "loop",
+      "status": "pending",
+      "depends_on": ["plan-store", "plan-outline"],
+      "does": ["p⏎ pins the selected leaf task; the status line shows it"],
+      "verify": ["pinning writes active on the target and pending on the old pin, nothing else"],
+      "files": ["internal/plan/pin.go", "internal/tui/outline.go"]
+    },
+    {
+      "id": "task-completion",
+      "title": "Mark the pin done with a retrospective",
+      "parent": "loop",
+      "status": "pending",
+      "depends_on": ["pin-task"],
+      "does": ["d⏎ opens a completion overlay prefilled from the agent's trailer and the tape, and writes accomplished, modified, verified_how"],
+      "verify": ["git diff shows only that task's lines"],
+      "files": ["internal/plan/complete.go", "internal/tui/complete.go"]
+    },
+    {
+      "id": "sendoff",
+      "title": "Type sendoff, get a brief",
+      "parent": "loop",
+      "status": "pending",
+      "depends_on": ["pin-task"],
+      "does": ["s⏎ builds the issue #9 brief from the JSON and shows it to copy"],
+      "verify": ["golden brief from a fixture plan", "an empty plan says nothing to send"],
+      "files": ["internal/plan/sendoff.go", "internal/tui/sendoff.go"]
+    },
+    {
+      "id": "clipboard",
+      "title": "Copy the brief honestly",
+      "parent": "loop",
+      "status": "pending",
+      "depends_on": ["sendoff"],
+      "does": ["The brief is copied with the platform tool or OSC 52, and the view says which"],
+      "files": ["internal/tui/clipboard.go"]
+    },
+    {
+      "id": "prompt-drift",
+      "title": "Show drift from the pin",
+      "parent": "loop",
+      "status": "pending",
+      "depends_on": ["pin-task"],
+      "needs": ["completed edits carry repo-relative paths"],
+      "does": ["Edits and prompts off the pinned task show soft or hard drift in Rex only"],
+      "verify": ["nothing is written to the feed, the plan, or stdout"],
+      "files": ["internal/plan/drift.go"]
+    },
+    {
+      "id": "harnesses",
+      "title": "More agents on the tape",
+      "status": "pending",
+      "does": ["Codex and OpenCode report to the same feed, opt-in"]
+    },
+    {
+      "id": "codex-hooks",
+      "title": "Codex hooks",
+      "parent": "harnesses",
+      "status": "pending",
+      "does": ["rex ingest --install codex writes hooks.json; MapCodex reads hook payloads"],
+      "files": ["internal/watch/codex.go"]
+    },
+    {
+      "id": "opencode-hooks",
+      "title": "OpenCode plugin",
+      "parent": "harnesses",
+      "status": "pending",
+      "does": ["rex ingest --install opencode writes a plugin that pipes events to rex ingest"],
+      "files": ["internal/watch/opencode.go"]
+    },
+    {
+      "id": "plan-skill",
+      "title": "rex-plan skill",
+      "status": "pending",
+      "depends_on": ["plan-schema"],
+      "does": ["Agents that load the skill write v1 plans and end replies with the trailer"],
+      "files": ["assets/skills/rex-plan/SKILL.md"]
+    },
+    {
+      "id": "install-scripts",
+      "title": "Install scripts",
+      "status": "pending",
+      "does": ["install.sh and install.ps1 build from any ref and print the opt-in commands"],
+      "files": ["scripts/install.sh", "scripts/install.ps1"]
+    },
+    {
+      "id": "cuj-flow",
+      "title": "Create → pin → watch → complete → send off",
+      "status": "pending",
+      "depends_on": ["task-completion", "sendoff", "clipboard", "prompt-drift"],
+      "does": ["The whole loop works end to end in a real terminal"],
+      "verify": ["whole-loop key tests", "a tmux walk of every CUJ step at 80×24 and 60×20"]
+    }
+  ]
+}

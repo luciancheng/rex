@@ -16,7 +16,7 @@ Install and user docs live in `README.md`. This file is how to change the code.
 - Dump Write bodies, duplicate thoughts, or flatten markdown into one blob in the pane.
 - Giant ASCII, extra emoji, or a web UI squeezed into the terminal.
 - Wire a harness without an explicit `rex ingest --install <name>`. Wired today: Cursor (the install script does it) and Claude Code (opt-in). Codex has an `exec --json` mapper only.
-- Build plan JSON schema, drift detection, or extra mascot poses unless asked this turn.
+- Add plan fields beyond [docs/plan-format.md](docs/plan-format.md) v1, drift detection, or extra mascot poses unless asked this turn. `internal/plan` parses plans leniently (Problems, not errors); keep it that way.
 
 Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. macOS, Linux, and Windows 10+ (VT).
 
@@ -28,6 +28,7 @@ Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. 
 | Mascot | `internal/mascot/` |
 | Live UI / keys | `internal/tui/` |
 | Event feed | `internal/watch/` |
+| Plan files | `internal/plan/` · format in `docs/plan-format.md` |
 | Idle PNG | `assets/idle.png` |
 | Breakdance sheet | `assets/breakdance.png` (40×40 cells) |
 | Typing sheet | `assets/typing.png` (40×40 cells) |

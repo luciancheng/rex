@@ -118,12 +118,15 @@ func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
 	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[1] != "⏎ create" {
 		t.Fatalf("on Create: %q", segs)
 	}
+	open := false
 	for i, row := range b.Rows {
 		if row.Kind == PlanRowOpen {
-			b.Cursor = i
+			b.Cursor, open = i, true
 		}
 	}
-	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[1] == "⏎ create" {
+	// First run shows only Create; with more cards the footer follows the
+	// card under the cursor.
+	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); open && segs[1] == "⏎ create" {
 		t.Fatalf("on Open a plan: %q", segs)
 	}
 }

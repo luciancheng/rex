@@ -785,6 +785,7 @@ func isPrintableKey(key string) bool {
 func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.File, eventsPath string) (int, error) {
 	columns, lines := Size()
 	a := newApp(color, enabled, animation, NewPlanBrowser(""), columns, lines)
+	a.copy = newClipboard().copyAsync
 	path := eventsPath
 	if path == "" {
 		path = watch.DefaultEventPath()
@@ -797,6 +798,12 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 	paint := &renderer{full: true}
 	err := LiveScreen(stdout, stdin, func(sig screenSignals) error {
 		draw := func() {
+			if a.oscOut != "" {
+				// Between frames, never inside one; the normal screen (o⏎)
+				// takes OSC 52 too.
+				_, _ = io.WriteString(stdout, a.oscOut)
+				a.oscOut = ""
+			}
 			if a.plainShown {
 				return // the brief is on the normal screen
 			}

@@ -16,15 +16,86 @@ type briefView struct {
 	text     string
 	status   string // what copying did: "copied (pbcopy)", "sent (OSC 52) · may be blocked", …
 	refused  bool   // status says why the plan can't be sent off right now
+	copySeq  int    // its latest copy, which decides what it says
+	recorded bool   // its line is on the tape
 }
 
-// copyText copies a brief and says honestly what happened. Without a
-// clipboard Rex says so, and o⏎ prints the brief plain.
-func (a *app) copyText(text string) string {
+// pendingCopy is one copy still running, with what it was started for:
+// the plan can change before the tool answers.
+type pendingCopy struct {
+	v          *briefView
+	done       <-chan copyResult
+	text, task string
+	seq        int
+}
+
+// startCopy copies the brief off the UI goroutine. Until the tool answers
+// it says "copying…"; without a clipboard it says so, and o⏎ prints the
+// brief plain.
+func (a *app) startCopy(v *briefView) {
 	if a.copy == nil {
-		return "not copied · o⏎ prints it plain"
+		v.status = "not copied · o⏎ prints it plain"
+		a.recordBrief(v, v.task, v.status)
+		return
 	}
-	return a.copy(text)
+	a.copySeq++
+	v.status, v.copySeq = "copying…", a.copySeq
+	a.copying = append(a.copying, pendingCopy{v: v, done: a.copy(v.text), text: v.text, task: v.task, seq: a.copySeq})
+}
+
+// pollCopies takes in finished copies: the status they earned, the OSC 52
+// sequence for the loop to write, and the brief's line on the tape.
+// A brief closed or replaced while its copy runs still gets its tape line.
+// Only the newest copy may write OSC 52, so an older brief can't land on
+// the clipboard over a newer one, and a brief rebuilt while it copied says
+// so instead of claiming the new text was copied.
+func (a *app) pollCopies() bool {
+	changed := false
+	left := a.copying[:0]
+	for _, c := range a.copying {
+		select {
+		case r := <-c.done:
+			changed = true
+			status := r.status
+			if c.seq == a.copySeq {
+				a.oscOut += r.osc
+			} else if r.osc != "" {
+				status = "not sent · a newer copy replaced it" // its OSC 52 is dropped
+			}
+			if c.seq == c.v.copySeq {
+				c.v.status = status
+				if c.v.text != c.text {
+					c.v.status = "plan changed · c⏎ copies this one"
+				}
+				if a.doc != nil && c.v.path == a.doc.path {
+					if why := a.stale(c.v); why != "" {
+						c.v.status = why
+					}
+				}
+			}
+			a.recordBrief(c.v, c.task, status)
+		default:
+			left = append(left, c)
+		}
+	}
+	a.copying = left
+	return changed
+}
+
+// recordBrief leaves one line on the tape the first time a brief is
+// copied (or not): the task that copy was for, and what it did.
+func (a *app) recordBrief(v *briefView, task, status string) {
+	if v.recorded {
+		return
+	}
+	v.recorded = true
+	// The tape keeps the outcome; the o⏎ hint belongs in the overlay.
+	outcome := strings.TrimSuffix(status, " · o⏎ prints it plain")
+	if v.planning {
+		a.tapeLine("brief", outcome)
+	} else {
+		a.tapeLine("sendoff", task+" · "+outcome)
+	}
 }
 
 // sendoffVerb is s⏎ / sendoff⏎ / handoff⏎.
@@ -120,17 +191,10 @@ func (a *app) briefVerb() {
 }
 
 func (a *app) openBrief(v *briefView) {
-	v.status = a.copyText(v.text)
 	a.briefs[a.pane] = v
 	a.overlay[a.pane] = overlaySendoff
 	a.overlayScroll[a.pane] = 0
-	// The tape keeps the outcome; the o⏎ hint belongs in the overlay.
-	outcome := strings.TrimSuffix(v.status, " · o⏎ prints it plain")
-	if v.planning {
-		a.tapeLine("brief", outcome)
-	} else {
-		a.tapeLine("sendoff", v.task+" · "+outcome)
-	}
+	a.startCopy(v)
 }
 
 // briefKey is ⏎ in the Send-off overlay: c⏎ copies again, o⏎ prints the
@@ -149,7 +213,7 @@ func (a *app) briefKey() bool {
 	}
 	switch text {
 	case "c", "copy":
-		v.status = a.copyText(v.text)
+		a.startCopy(v)
 	case "o", "open", "print":
 		a.plainOut = v.text
 	}
@@ -165,7 +229,7 @@ func (a *app) briefLines(width int) []LogLine {
 		head = "brief"
 		note = "Paste into your agent chat to fill this plan. Rex never sends it."
 	}
-	lines := []LogLine{{Kind: "command", Text: rule(head, max(8, width-cellLen(v.status)-1)) + " " + v.status}}
+	lines := []LogLine{{Kind: "command", Text: rule(head, width-cellLen(v.status)-1) + " " + v.status}}
 	if cellLen(head)+cellLen(v.status)+8 > width {
 		lines = []LogLine{{Kind: "command", Text: rule(head, width)}, {Kind: "muted", Text: "  " + clip(v.status, inner)}}
 	}

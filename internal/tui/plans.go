@@ -114,7 +114,10 @@ func PlansDir(repo string) string {
 // folder goes. Rex never deletes it; plans stay off until the human moves it.
 var errRexFile = errors.New("move the file named rex to create plans")
 
-const rexFileNotice = "rex/ is a file here · plans off"
+const (
+	rexFileNotice    = "rex/ is a file here · plans off"
+	outsideGitPrefix = "not in a git repo · plans go to "
+)
 
 // EnsurePlansDir creates rex/plans when the human creates a plan or
 // folder. Starting Rex never calls it, and it never deletes anything.
@@ -214,7 +217,7 @@ func (b *PlanBrowser) refreshNotice() {
 	case rexIsFile(b.Repo):
 		b.Notice = rexFileNotice
 	case !b.inGit:
-		b.Notice = "not in a git repo · plans go to " + homePath(filepath.Join(b.Repo, "rex", "plans"))
+		b.Notice = outsideGitPrefix + homePath(filepath.Join(b.Repo, "rex", "plans"))
 	case legacyPlans(b.Repo) > 0:
 		b.Notice = fmt.Sprintf("rex-plans/ has %d old plan(s) · move them into rex/plans", legacyPlans(b.Repo))
 	default:
@@ -682,28 +685,38 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 	return lines
 }
 
-// fitNotice shortens a notice that ends in a path from the left of the
-// path, so the "rex/plans" end that says where plans go stays visible; on
-// narrow panes the wording before the path shrinks too.
+// fitNotice fits a Library notice into width runes without losing what
+// it is for: each notice has shorter wordings, and the outside-git notice
+// keeps the end of its path ("…/rex/plans"), which says where plans go.
 func fitNotice(notice string, width int) string {
-	if len([]rune(notice)) <= width {
-		return notice
-	}
-	i := strings.LastIndex(notice, " to ")
-	if i < 0 {
-		return notice
-	}
-	path := []rune(notice[i+4:])
-	for _, head := range []string{notice[:i+4], "not in git · plans go to ", "no git · plans in "} {
-		room := width - len([]rune(head)) - 1
-		if room >= 12 && room < len(path) {
-			return head + "…" + string(path[len(path)-room:])
+	fits := func(s string) bool { return len([]rune(s)) <= width }
+	var variants []string
+	switch {
+	case strings.HasPrefix(notice, outsideGitPrefix):
+		path := strings.TrimPrefix(notice, outsideGitPrefix)
+		for _, head := range []string{outsideGitPrefix, "not in git · plans go to ", "no git · plans in "} {
+			variants = append(variants, head+path)
 		}
-		if room >= len(path) {
-			return head + string(path)
+		for _, head := range []string{"no git · plans in ", "no git · "} {
+			if room := width - len([]rune(head)) - 1; room >= len("rex/plans") {
+				r := []rune(path)
+				variants = append(variants, head+"…"+string(r[max(0, len(r)-room):]))
+			}
+		}
+	case notice == rexFileNotice:
+		variants = []string{notice, "rex is a file · plans off", "plans off: rex file"}
+	case strings.HasPrefix(notice, "rex-plans/ has "):
+		n := strings.Fields(strings.TrimPrefix(notice, "rex-plans/ has "))[0]
+		variants = []string{notice, n + " old plan(s) in rex-plans/ · move them", "rex-plans/: " + n + " old plan(s)", "rex-plans/: " + n + " old"}
+	default:
+		variants = []string{notice}
+	}
+	for _, v := range variants {
+		if fits(v) {
+			return v
 		}
 	}
-	return notice
+	return variants[len(variants)-1]
 }
 
 func browseLine(row PlanRow, selected bool, inner int) LogLine {

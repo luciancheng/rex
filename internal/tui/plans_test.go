@@ -192,6 +192,24 @@ func TestOutsideGitNoticeKeepsWherePlansGo(t *testing.T) {
 	}
 }
 
+// Every notice keeps its point at the narrowest text column (24 cells,
+// a 66-column terminal) and at 80 columns (38 cells).
+func TestNoticesFitNarrowPanes(t *testing.T) {
+	cases := []struct{ notice, want string }{
+		{outsideGitPrefix + "~/work/clients/acme/very/deep/folder/rex/plans", "/rex/plans"},
+		{rexFileNotice, "plans off"},
+		{"rex-plans/ has 3 old plan(s) · move them into rex/plans", "rex-plans/"},
+	}
+	for _, width := range []int{PaneTextWidth(66) - 2, PaneTextWidth(80) - 2} {
+		for _, c := range cases {
+			got := fitNotice(c.notice, width)
+			if len([]rune(got)) > width || !strings.Contains(got, c.want) {
+				t.Errorf("width %d: %q -> %q", width, c.notice, got)
+			}
+		}
+	}
+}
+
 func TestPlanHomeShowsActions(t *testing.T) {
 	repo := t.TempDir()
 	b := NewPlanBrowser(repo)

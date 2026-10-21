@@ -25,7 +25,8 @@ var openCodeTypes = map[string]bool{
 // opencodePluginJS is the plugin. It never throws from a hook, never waits
 // for rex, and never sets output. Only allow-listed fields leave it: no
 // file bodies, diffs, attachments or tool output. A subagent's (child)
-// session is agent work: its prompt, replies and turn end are not sent.
+// session is agent work: its prompt, replies, thoughts, errors and turn
+// end are not sent (its tool calls are).
 // The reply is the last text of a turn, sent with session.idle, as Claude
 // Code's Stop does; parts older than the plugin (a fork replays history)
 // are skipped.

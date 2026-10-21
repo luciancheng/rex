@@ -250,4 +250,11 @@ func TestOpenCodeInstallKeepsASymlink(t *testing.T) {
 	if data, _ := os.ReadFile(real); !strings.Contains(string(data), `"ingest", "--source", "opencode"`) {
 		t.Fatal("the file it points at is updated")
 	}
+	var out bytes.Buffer
+	if err := UninstallHarness("opencode", &out); err != nil || !strings.Contains(out.String(), "it was a link") {
+		t.Fatalf("uninstall says the file it pointed to is kept: %v %q", err, out.String())
+	}
+	if _, err := os.Stat(real); err != nil {
+		t.Fatal("and keeps it")
+	}
 }

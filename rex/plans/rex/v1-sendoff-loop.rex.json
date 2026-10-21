@@ -315,7 +315,7 @@
       "status": "done",
       "depends_on": ["plan-schema"],
       "does": ["Agents that load the skill write v1 plans and end replies with the trailer"],
-      "files": ["assets/skills/rex-plan/SKILL.md"],
+      "files": ["internal/skill/rex-plan/SKILL.md"],
       "accomplished": [
         "the rex-plan skill teaches the v1 format and the reply trailer; installed only by rex ingest --install-skill [--project]"
       ],
@@ -360,7 +360,7 @@
       "does": ["The whole loop works end to end in a real terminal"],
       "verify": ["whole-loop key tests", "a tmux walk of every CUJ step at 80×24 and 60×20"],
       "accomplished": [
-        "a whole-loop test holds the CUJ to its keystroke budget, a frame matrix covers 11 screens at 9 sizes, and a tmux walkthrough of the loop found and fixed small gaps"
+        "a whole-loop test holds the CUJ (create → open → watch → done → pin → send off → drift → quit) to its keystroke budget, a frame matrix checks 14 screens at 9 sizes, and a tmux walkthrough of the loop found and fixed small gaps"
       ],
       "verified_how": [
         "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); tmux walkthrough of the CUJ with stty identical before and after quitting"
@@ -374,7 +374,15 @@
         "internal/tui/plans.go",
         "internal/tui/plans_test.go",
         "internal/tui/render_test.go",
-        "internal/tui/width_test.go"
+        "internal/tui/width_test.go",
+        "agents.md",
+        "docs/ux.md",
+        "internal/tui/library_test.go",
+        "internal/tui/outline.go",
+        "internal/tui/outline_test.go",
+        "internal/tui/testdata/sendoff-demo.rex.json",
+        "internal/watch/adapters.go",
+        "internal/watch/claude_test.go"
       ]
     }
   ]

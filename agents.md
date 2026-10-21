@@ -87,7 +87,7 @@ go test ./...
 go run ./cmd/rex start
 ```
 
-CI: GitHub Actions, Ubuntu/macOS/Windows, Go 1.22 and 1.24.
+CI: GitHub Actions, Ubuntu/macOS/Windows, Go 1.22 and 1.24: `go vet`, `go test`, then `go build -o dist/rex ./cmd/rex` (never `-o rex`; `rex/` is the plans directory). A separate job on stable Go runs gofmt and `go vet` for darwin, linux and windows, whose stdversion check catches APIs newer than go.mod's 1.22.
 
 After sprite or TUI changes, restart a running `rex start`. Tests do not replace looking at the terminal.
 

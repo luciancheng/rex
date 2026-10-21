@@ -2,13 +2,42 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 permissions:
   contents: read
 
+# A force-pushed PR stack cancels its stale runs. Each push to dev/main
+# gets its own group, so a push run is never cancelled or left queued.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  format:
+    name: gofmt and vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: gofmt
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"
+            echo "$unformatted"
+            exit 1
+          fi
+      # A current vet knows every API's Go version (stdversion), so it
+      # catches anything newer than the go 1.22 line in go.mod.
+      - name: vet (every OS, current Go)
+        shell: bash
+        run: for os in darwin linux windows; do GOOS=$os go vet ./...; done
+
   test:
     name: test (${{ matrix.os }}, go ${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
@@ -25,8 +54,13 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Test
         run: go test ./...
 
+      # rex/ at the repo root is the plans directory; never build a binary there.
       - name: Build
-        run: go build -o rex ./cmd/rex
+        shell: bash
+        run: go build -o dist/rex ./cmd/rex

@@ -27,7 +27,7 @@ func TestMapOpenCode(t *testing.T) {
 		{`{"type":"message.part.updated","part":{"type":"reasoning","text":"Checking the card."}}`, "thought", "Checking the card."},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"running","input":{"command":"go test ./..."}}}}`, "command", "go test ./..."},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"go test ./..."}}}}`, "result", "ran go test ./..."},
-		{`{"type":"message.part.updated","cwd":"/repo","part":{"type":"tool","tool":"edit","state":{"status":"running","input":{"filePath":"internal/tui/live.go"}}}}`, "command", "edit /repo/internal/tui/live.go"},
+		{`{"type":"message.part.updated","cwd":"/repo","part":{"type":"tool","tool":"edit","state":{"status":"running","input":{"filePath":"internal/tui/live.go"}}}}`, "command", "edit " + filepath.Join("/repo", "internal", "tui", "live.go")}, // joined the OS's way
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"write","state":{"status":"completed","input":{"filePath":"/repo/a.go"}}}}`, "result", "wrote /repo/a.go"},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"apply_patch","state":{"status":"completed","input":{},"files":[{"path":"/repo/a.go","type":"update"},{"path":"/repo/b.go","type":"add"}]}}}`, "result", "wrote /repo/a.go"},
 		{`{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"error","input":{"command":"go vet"},"error":"exit 1\nmore"}}}`, "error", "bash failed · go vet: exit 1"},

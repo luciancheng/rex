@@ -63,12 +63,12 @@ func helpLines(width int) []LogLine {
 		row("/word", "in plans, where typing finds or names, a verb starts with /"),
 		row("anything else", "on the tape, a note: local, never sent"),
 		LogLine{Kind: "gap"},
+		head("rex never"),
+		"runs or approves tools, sends anything to your agent, or reads transcripts",
+		LogLine{Kind: "gap"},
 		head("outline"),
 		row("▸ ○ ·", "pinned / ready / waiting (after another task)"),
 		row("✓ – !", "done / skipped / blocked; 1/3 a parent's progress"),
-		LogLine{Kind: "gap"},
-		head("rex never"),
-		"runs or approves tools, sends anything to your agent, or reads transcripts",
 	}
 	for _, r := range rows {
 		switch v := r.(type) {

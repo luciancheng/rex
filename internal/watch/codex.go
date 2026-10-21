@@ -26,6 +26,13 @@ var CodexHookEvents = []string{
 
 const codexHookTimeout = 5
 
+// codexEvents are every Codex hook name, registered or not, for
+// --source auto.
+var codexEvents = map[string]bool{
+	"SessionStart": true, "UserPromptSubmit": true, "PreToolUse": true, "PermissionRequest": true,
+	"PostToolUse": true, "Stop": true, "SessionEnd": true, "Interrupt": true,
+}
+
 // codexDir is Codex's home: $CODEX_HOME or ~/.codex.
 func codexDir(home string) string {
 	if dir := os.Getenv("CODEX_HOME"); dir != "" {
@@ -65,7 +72,8 @@ var codexSpec = groupHooks{events: CodexHookEvents, isRex: isRexCodexHandler, fi
 // nothing else is ever added.
 func installCodex(path string, out io.Writer) error {
 	ours := codexHandler(rexExecutable(), runtimeGOOS)
-	changed, err := UpdateJSONFile(path, []byte("{}\n"), func(d *jsonedit.Doc) ([]byte, error) {
+	// A new file starts multi-line, so the hooks are written one per line.
+	changed, err := UpdateJSONFile(path, []byte("{\n}\n"), func(d *jsonedit.Doc) ([]byte, error) {
 		return mergeGroupHooks(d, codexSpec, ours, true)
 	})
 	if err != nil {
@@ -77,7 +85,9 @@ func installCodex(path string, out io.Writer) error {
 		fmt.Fprintf(out, "codex hooks already installed at %s\n", path)
 	}
 	fmt.Fprintln(out, "codex: open Codex, run /hooks and trust the rex hooks; Codex skips new hooks until you do")
-	fmt.Fprintln(out, "codex: hooks run in your login shell ($SHELL -lc); anything your shell profile prints is added to the agent's context")
+	if runtimeGOOS != "windows" {
+		fmt.Fprintln(out, "codex: hooks run in your login shell ($SHELL -lc); anything your shell profile prints is added to the agent's context")
+	}
 	fmt.Fprintf(out, "feed: %s\n", DefaultEventPath())
 	return nil
 }
@@ -107,19 +117,20 @@ func codexWired(path string) bool {
 	if err != nil {
 		return false
 	}
+	// Decoded loosely: one malformed entry of the user's must not hide ours.
 	var file struct {
-		Hooks map[string][]struct {
-			Hooks []map[string]any `json:"hooks"`
-		} `json:"hooks"`
+		Hooks map[string]any `json:"hooks"`
 	}
 	if json.Unmarshal(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")), &file) != nil {
 		return false
 	}
 	ours := codexHandler(rexExecutable(), runtimeGOOS)
 	for _, groups := range file.Hooks {
-		for _, g := range groups {
-			for _, h := range g.Hooks {
-				if isRexCodexHandler(h, ours) {
+		list, _ := groups.([]any)
+		for _, g := range list {
+			handlers, _ := asDict(g)["hooks"].([]any)
+			for _, h := range handlers {
+				if m, ok := h.(map[string]any); ok && isRexCodexHandler(m, ours) {
 					return true
 				}
 			}
@@ -153,14 +164,26 @@ func mapCodexHook(payload map[string]any, name string) *Event {
 			if len(files) == 0 {
 				return nil
 			}
-			paths := make([]any, 0, len(files))
-			for _, f := range files {
+			// meta.paths is capped, so a huge patch's feed line still fits
+			// the tail window dedupe and warm start read.
+			paths := make([]any, 0, min(len(files), maxPatchPaths))
+			for _, f := range files[:min(len(files), maxPatchPaths)] {
 				paths = append(paths, f.path)
 			}
 			meta := toolMeta("apply_patch", files[0].path)
 			meta["paths"] = paths
 			text := "Edit " + files[0].path
 			if post {
+				if failed, why := patchFailed(payload["tool_response"]); failed {
+					// A patch that didn't apply wrote nothing: not evidence,
+					// not drift.
+					meta["ok"] = false
+					text = "apply_patch failed · " + files[0].path
+					if why != "" {
+						text += ": " + firstLine(why)
+					}
+					return event("error", text, meta)
+				}
 				meta["ok"] = true
 				text = files[0].verb + " " + files[0].path
 			}
@@ -180,11 +203,24 @@ func mapCodexHook(payload map[string]any, name string) *Event {
 				return event("result", "ran "+cmd, meta)
 			}
 			return event("command", cmd, meta)
+		case tool == "update_plan":
+			if post {
+				return event("result", tool, toolMeta(tool, ""))
+			}
+			text := "plan updated"
+			steps, _ := input["plan"].([]any)
+			for _, s := range steps {
+				if st := asDict(s); strField(st, "status") == "in_progress" {
+					text = "plan: " + firstLine(strField(st, "step"))
+				}
+			}
+			return event("command", text, toolMeta(tool, ""))
 		default:
 			if post {
 				return event("result", tool, toolMeta(tool, ""))
 			}
-			return event(toolKind(tool), toolText(tool, payload["tool_input"]), toolMeta(tool, ""))
+			// The same short lines as Claude's tools: never a JSON dump.
+			return event(toolKind(tool), claudeToolText(tool, payload["tool_input"]), toolMeta(tool, ""))
 		}
 	case "PermissionRequest":
 		text := tool + " wants permission"
@@ -209,14 +245,37 @@ func mapCodexHook(payload map[string]any, name string) *Event {
 
 type patchFile struct{ verb, path string }
 
+const maxPatchPaths = 200
+
+// patchFailed reads Codex's PostToolUse tool_response for apply_patch: a
+// summary that doesn't start with "Success", or a success flag that is
+// false, is a patch that didn't apply. No response says nothing.
+func patchFailed(resp any) (bool, string) {
+	switch r := resp.(type) {
+	case string:
+		if s := strings.TrimSpace(r); s != "" && !strings.HasPrefix(s, "Success") {
+			return true, s
+		}
+	case map[string]any:
+		if ok, has := r["success"].(bool); has && !ok {
+			return true, strings.TrimSpace(strField(r, "output") + " " + strField(r, "error"))
+		}
+	}
+	return false, ""
+}
+
 // patchFiles reads the file headers of an apply_patch body, and never its
 // contents: "*** Add File:" and "*** Update File:" are writes, "*** Delete
-// File:" a delete, "*** Move to:" the new name. Relative paths are taken
-// from the session's cwd.
+// File:" a delete, "*** Move to:" the new name. Only a line that starts
+// with "*** " is a header; a hunk's context lines start with a space.
+// Relative paths are taken from the session's cwd.
 func patchFiles(patch, cwd string) []patchFile {
 	var out []patchFile
 	seen := map[string]bool{}
 	for _, line := range strings.Split(patch, "\n") {
+		if !strings.HasPrefix(line, "*** ") {
+			continue
+		}
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		verb := ""
 		for prefix, v := range map[string]string{"*** Add File:": "wrote", "*** Update File:": "wrote", "*** Delete File:": "deleted", "*** Move to:": "wrote"} {

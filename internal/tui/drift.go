@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/luciancheng/rex/internal/plan"
@@ -44,7 +45,11 @@ func (a *app) applyDrift() bool {
 	a.driftQueue = nil
 	changed := false
 	for _, ev := range queue {
-		for _, n := range a.judge(ev) {
+		// One event's paths go in order of level, so row 1 ends on its worst
+		// (a patch's on-pin file can't hide its off-pin one).
+		notes := a.judge(ev)
+		sort.SliceStable(notes, func(i, j int) bool { return notes[i].d.Level < notes[j].d.Level })
+		for _, n := range notes {
 			if a.noteDrift(n) {
 				changed = true
 			}

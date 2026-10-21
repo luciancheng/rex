@@ -3,6 +3,7 @@ package watch
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -163,5 +164,70 @@ func TestCodexHandlerForms(t *testing.T) {
 	}
 	if !isRexCodexHandler(map[string]any{"commandWindows": `"C:\old\rex.exe" ingest --source codex`}, posix) {
 		t.Fatal("a rex handler from any path is ours")
+	}
+}
+
+func TestCodexPatchHeadersAreOnlyHeaders(t *testing.T) {
+	patch := "*** Begin Patch\n*** Update File: docs/apply.md\n@@\n context\n *** Delete File: README.md\n+*** Add File: fake.go\n*** End Patch\n"
+	files := patchFiles(patch, "/r")
+	if len(files) != 1 || files[0].path != filepath.Join("/r", "docs/apply.md") {
+		t.Fatalf("a context or body line that looks like a header is no file: %+v", files)
+	}
+}
+
+func TestCodexFailedPatchIsNoWrite(t *testing.T) {
+	ev := codexMap(t, `{"hook_event_name":"PostToolUse","turn_id":"t","cwd":"/r","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: a.go\n*** End Patch"},"tool_response":"Failed to read file to update /r/a.go"}`)
+	if ev == nil || ev.Kind != "error" || ev.Meta["ok"] != false || !strings.Contains(ev.Text, "apply_patch failed") {
+		t.Fatalf("%#v", ev)
+	}
+	ok := codexMap(t, `{"hook_event_name":"PostToolUse","turn_id":"t","cwd":"/r","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: a.go\n*** End Patch"},"tool_response":"Success. Updated the following files:\nM a.go"}`)
+	if ok == nil || ok.Kind != "result" || ok.Meta["ok"] != true {
+		t.Fatalf("%#v", ok)
+	}
+}
+
+func TestCodexToolLinesAreNeverJSON(t *testing.T) {
+	for _, payload := range []string{
+		`{"hook_event_name":"PreToolUse","turn_id":"t","tool_name":"update_plan","tool_input":{"explanation":"x","plan":[{"step":"read","status":"completed"},{"step":"write the mapper","status":"in_progress"}]}}`,
+		`{"hook_event_name":"PreToolUse","turn_id":"t","tool_name":"mcp__github__get_issue","tool_input":{"owner":"x","body":"SECRET BODY"}}`,
+		`{"hook_event_name":"PreToolUse","turn_id":"t","tool_name":"write_stdin","tool_input":{"session_id":3,"chars":"y"}}`,
+	} {
+		ev := codexMap(t, payload)
+		if ev == nil || strings.HasPrefix(strings.TrimSpace(ev.Text), "{") || strings.Contains(ev.Text, "SECRET BODY") {
+			t.Errorf("%s → %#v", payload, ev)
+		}
+	}
+	if ev := codexMap(t, `{"hook_event_name":"PreToolUse","turn_id":"t","tool_name":"update_plan","tool_input":{"plan":[{"step":"write the mapper","status":"in_progress"}]}}`); ev.Text != "plan: write the mapper" {
+		t.Fatalf("%q", ev.Text)
+	}
+}
+
+func TestCodexAutoDetectsEveryHook(t *testing.T) {
+	if got := DetectSource(map[string]any{"hook_event_name": "PermissionRequest", "turn_id": "t"}, "auto"); got != "codex" {
+		t.Fatalf("PermissionRequest with turn_id is Codex's: %q", got)
+	}
+}
+
+func TestCodexWiredReadsLoosely(t *testing.T) {
+	home := codexHome(t)
+	path := filepath.Join(home, ".codex", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	cmd, _ := json.Marshal(codexHandler(rexExecutable(), runtimeGOOS)["command"])
+	os.WriteFile(path, []byte(`{"hooks": {"Odd": "not a list", "Stop": [{"hooks": [{"type": "command", "command": `+string(cmd)+`}]}]}}`), 0o644)
+	if !codexWired(path) {
+		t.Fatal("one odd entry of the user's doesn't hide Rex's")
+	}
+}
+
+func TestCodexBigPatchIsCapped(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("*** Begin Patch\n")
+	for i := 0; i < maxPatchPaths+50; i++ {
+		fmt.Fprintf(&b, "*** Add File: f%d.go\n+x\n", i)
+	}
+	payload, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "turn_id": "t", "cwd": "/r", "tool_name": "apply_patch", "tool_input": map[string]any{"command": b.String()}})
+	ev := codexMap(t, string(payload))
+	if paths := ev.Meta["paths"].([]any); len(paths) != maxPatchPaths {
+		t.Fatalf("%d paths", len(paths))
 	}
 }

@@ -114,7 +114,7 @@ func DetectSource(payload map[string]any, hint string) string {
 		return hint
 	}
 	name := hookName(payload)
-	if _, ok := payload["turn_id"]; ok && claudeEvents[name] {
+	if _, ok := payload["turn_id"]; ok && (claudeEvents[name] || codexEvents[name]) {
 		return "codex" // Codex hooks share Claude's event names; turn_id is Codex's
 	}
 	if claudeEvents[name] {

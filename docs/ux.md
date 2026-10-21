@@ -66,7 +66,7 @@ Keys that act without ⏎: the arrows, PgUp/PgDn, Home/End, Esc, Tab, Ctrl keys.
 | `brief` | `b` | outline, detail, tape, `/brief` in the Library (plan open) | opens the Send-off overlay in **planning** mode and copies the planning brief (§9) |
 | `done` | `d` | outline, detail, tape, `/done` in the Library (plan open) | opens Completion **for the effective pin**, computed or written (§8) |
 | `pin [id]` | `p` | outline / detail: the selection, or the id; tape: the id, or the next-up task when bare | pins a task (§7) |
-| `help` | `?` | anywhere (`?` alone, or `/help` in the Library) | opens the Help overlay |
+| `help` | `?` | any screen, not inside an overlay (`?` alone, or `/help` in the Library) | opens the Help overlay |
 | `breakdance` | – | outline, detail, tape (`/breakdance` in the Library) | plays the breakdance sheet once, then resumes the turn pose |
 
 Rules:
@@ -175,7 +175,7 @@ The footer is built from **ranked segments**:
 | Library Home | `plans · ⏎ open · tab tape` \| `· type to find · ctrl+c×2 quit` |
 | Library Home (no plans) | `plans · ⏎ create · tab tape` \| |
 | Browse | `open · ⏎ open · esc back · tab tape` \| `· type to filter` |
-| Name prompt | `new plan · ⏎ create · esc cancel` \| `· tab tape` |
+| Name prompt | `new plan · ⏎ create · esc cancel` \| `· tab tape` (`new folder · …` for a folder) |
 | Outline | `outline · tab tape · esc plans` \| `· ⏎ detail · ?⏎ help` |
 | Outline (empty plan) | `outline · b⏎ brief · tab tape` \| `· esc plans` |
 | Outline (read-only) | `outline · read-only · esc plans` \| `· tab tape` |
@@ -485,7 +485,6 @@ If the pin lists no files, only the `scope.out` rule applies.
   - A new plan is a valid v1 stub, not `{}`.
 - **Errors** clear on the next key.
 - **Rex never deletes or creates files just by starting.**
-  - `rex/plans/` is created on the first Create.
   - A file named `rex` at the repo root shows `rex/ is a file here · plans off` instead of being removed.
   - Outside a git repo, Home says `not in a git repo · plans go to <cwd>/rex/plans`.
   - Plans left in an old `rex-plans/` folder are reported (`rex-plans/ has 2 old plan(s) · move them into rex/plans`), never moved.

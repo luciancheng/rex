@@ -3,6 +3,7 @@ package plan
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Pin is the effective pin (docs/ux.md §7): the first active leaf task,
@@ -34,8 +35,13 @@ func (g *Graph) PinTarget(t *Task) (*Task, error) {
 		}
 		return t, nil
 	}
+	seen := map[string]bool{}
 	var walk func(id string) *Task
 	walk = func(id string) *Task {
+		if seen[id] {
+			return nil // a loop the graph didn't catch; never recurse forever
+		}
+		seen[id] = true
 		for _, c := range g.Children(id) {
 			if g.Leaf(c) && g.Ready(c) {
 				return c
@@ -79,8 +85,20 @@ func (g *Graph) PinWarnings(t *Task) []string {
 func (g *Graph) activeLeaves() []*Task {
 	var out []*Task
 	for i := range g.p.Tasks {
-		if t := &g.p.Tasks[i]; t.Status == Active && t.ID != "" && g.Leaf(t) {
+		if t := &g.p.Tasks[i]; t.Status == Active && t.ID != "" && g.byID[t.ID] == t && g.Leaf(t) {
 			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// Moving lists the other active leaves a pin on t takes the pin off, in
+// file order: what the user agrees to when they pin.
+func (g *Graph) Moving(t *Task) []string {
+	var out []string
+	for _, other := range g.activeLeaves() {
+		if other != t {
+			out = append(out, other.ID)
 		}
 	}
 	return out
@@ -88,9 +106,11 @@ func (g *Graph) activeLeaves() []*Task {
 
 // PinOp pins task id: active on it, pending on every other active leaf
 // (parents are never written), and the plan active if it was pending or
-// done. seen is the status the user saw; if the file moved on since, the
-// pin is refused. A done task is reopened with its retrospective kept.
-func PinOp(id string, seen Status) Op {
+// done. seen is the status the user saw and moving the active tasks they
+// agreed to move the pin off (Moving, when they pinned); if the file moved
+// on since, say an agent claimed another task meanwhile, the pin is
+// refused. A done task is reopened with its retrospective kept.
+func PinOp(id string, seen Status, moving []string) Op {
 	return func(p *Plan) ([]Change, error) {
 		g := p.Graph()
 		t := g.Task(id)
@@ -105,6 +125,12 @@ func PinOp(id string, seen Status) Op {
 		}
 		if g.Cyclic(t) {
 			return nil, fmt.Errorf("%s is in a loop; fix its depends_on or parent first", id)
+		}
+		if now := g.Moving(t); strings.Join(now, "\x00") != strings.Join(moving, "\x00") {
+			if len(now) == 0 {
+				return nil, errors.New("the other active task changed in the file; look again")
+			}
+			return nil, fmt.Errorf("%s is active in the file now; look again", strings.Join(now, ", "))
 		}
 		var changes []Change
 		if t.Status != Active {

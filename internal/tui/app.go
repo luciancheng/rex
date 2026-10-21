@@ -150,7 +150,9 @@ func (a *app) composeOptions() ComposeOptions {
 		opt.PlanFooter = a.planFooter()
 	}
 	if a.overlay[a.pane] == overlayPin {
-		opt.Overlay = &Overlay{Lines: pinConfirmLines(a.pinAsk[a.pane], textW), Footer: []string{"pin", "p⏎ move pin", "esc cancel"}}
+		lines := pinConfirmLines(a.pinAsk[a.pane], textW)
+		scroll := min(a.overlayScroll[a.pane], max(0, len(lines)-layoutFor(a.columns, a.lines).bodyH))
+		opt.Overlay = &Overlay{Lines: lines, Scroll: scroll, Footer: []string{"pin", "p⏎ move pin", "esc cancel", "↑↓ scroll"}}
 	}
 	if a.overlay[a.pane] == overlayHelp {
 		other := "tab tape"
@@ -227,6 +229,9 @@ func (a *app) verbHints() string {
 
 // placeholder is the dim hint in an empty composer: what you can type here.
 func (a *app) placeholder() string {
+	if a.overlay[a.pane] == overlayPin {
+		return "p⏎ to move the pin"
+	}
 	if a.overlay[a.pane] != overlayNone {
 		return "esc to close"
 	}
@@ -260,6 +265,9 @@ func (a *app) preview() string {
 		if verb == "pin" && arg == "" && a.overlay[a.pane] == overlayNone {
 			if t := a.pinCandidate(); t != nil {
 				arg = t.ID
+				if target, err := a.doc.plan.Graph().PinTarget(t); err == nil {
+					arg = target.ID // a parent pins its first ready leaf: name that
+				}
 			}
 		}
 		if arg != "" {
@@ -291,7 +299,7 @@ func (a *app) statusLine() StatusLine {
 	if a.doc == nil {
 		return StatusLine{}
 	}
-	return pinStatus(a.doc.plan)
+	return pinStatus(a.doc.plan, a.doc.writable() == "")
 }
 
 // flash shows a toast on row 1 for a few seconds.
@@ -573,8 +581,8 @@ func (a *app) submit(text string) bool {
 	return true
 }
 
-// offers reports which verbs exist yet. The plan verbs (sendoff, brief,
-// done, pin) arrive with their features.
+// offers reports which verbs exist yet. The other plan verbs (sendoff,
+// brief, done) arrive with their features.
 func (a *app) offers(verb string) bool {
 	switch verb {
 	case "help", "breakdance", "pin":
@@ -769,6 +777,11 @@ func (a *app) openedPlan() {
 		a.doc = openDoc(path, now)
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
+		for place := range a.overlay {
+			if a.overlay[place] == overlayPin {
+				a.overlay[place] = overlayNone // it asked about the old plan
+			}
+		}
 	}
 	// Continue on the plan already open keeps its last good copy, its
 	// debounce and its selection.
@@ -919,7 +932,11 @@ func (a *app) overlayKey(key string) bool {
 		// A page keeps two rows of overlap: the ↑/↓ more markers cover them.
 		step := max(1, page-2)
 		delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
-		limit := max(0, len(a.helpBody(PaneTextWidth(a.columns)))-page)
+		lines := a.helpBody(PaneTextWidth(a.columns))
+		if a.overlay[a.pane] == overlayPin {
+			lines = pinConfirmLines(a.pinAsk[a.pane], PaneTextWidth(a.columns))
+		}
+		limit := max(0, len(lines)-page)
 		next := max(0, min(limit, a.overlayScroll[a.pane]+delta))
 		changed := next != a.overlayScroll[a.pane]
 		a.overlayScroll[a.pane] = next
@@ -987,7 +1004,11 @@ func (a *app) pinVerb(arg string) {
 			return
 		}
 	} else if t = a.pinCandidate(); t == nil {
-		a.flash("nothing to pin · "+strings.TrimPrefix(pinStatus(a.doc.plan).Text, "no pin · "), "muted")
+		why := strings.TrimPrefix(pinStatus(a.doc.plan, true).Text, "no pin · ")
+		if why == "" {
+			why = "no tasks yet"
+		}
+		a.flash("nothing to pin · "+why, "muted")
 		return
 	}
 	target, err := g.PinTarget(t)
@@ -1000,12 +1021,14 @@ func (a *app) pinVerb(arg string) {
 		a.flash("▸ "+target.ID+" is already pinned", "muted")
 		return
 	}
+	moving := g.Moving(target)
 	if len(warnings) > 0 {
-		a.pinAsk[a.pane] = pinAsk{id: target.ID, title: target.Title, seen: target.Status, warnings: warnings}
+		a.pinAsk[a.pane] = pinAsk{path: a.doc.path, id: target.ID, title: target.Title, seen: target.Status, moving: moving, warnings: warnings}
 		a.overlay[a.pane] = overlayPin
+		a.overlayScroll[a.pane] = 0
 		return
 	}
-	a.writePin(target.ID, target.Status)
+	a.writePin(target.ID, target.Status, moving)
 }
 
 // confirmPin is ⏎ in Pin confirm: p⏎ writes, a bare ⏎ does nothing, and
@@ -1018,8 +1041,13 @@ func (a *app) confirmPin() bool {
 	ask := a.pinAsk[a.pane]
 	a.overlay[a.pane] = overlayNone
 	a.draft = ""
-	if verb, arg, ok := parseVerb(text); ok && verb == "pin" && (arg == "" || arg == ask.id) {
-		a.writePin(ask.id, ask.seen)
+	if verb, arg, ok := parseVerb(text); ok && verb == "pin" && (arg == "" || strings.EqualFold(arg, ask.id)) {
+		if a.doc == nil || a.doc.path != ask.path {
+			// It was asked about a plan that isn't open any more.
+			a.flash("that pin was for another plan · nothing written", "error")
+			return true
+		}
+		a.writePin(ask.id, ask.seen, ask.moving)
 		return true
 	}
 	a.flash("pin cancelled · nothing written", "muted")
@@ -1027,8 +1055,8 @@ func (a *app) confirmPin() bool {
 }
 
 // writePin writes the pin to the plan file and remembers when it started.
-func (a *app) writePin(id string, seen plan.Status) {
-	saved, err := plan.Edit(a.doc.path, plan.PinOp(id, seen))
+func (a *app) writePin(id string, seen plan.Status, moving []string) {
+	saved, err := plan.Edit(a.doc.path, plan.PinOp(id, seen, moving))
 	if err != nil {
 		a.flash("can't pin: "+err.Error(), "error")
 		return
@@ -1044,8 +1072,8 @@ func (a *app) writePin(id string, seen plan.Status) {
 	}
 	a.flash("▸ "+id+" "+word, "accent")
 	a.tapeLine("plan", word+" "+id)
-	if a.at == atOutline || a.at == atTaskDetail {
-		a.outline.sel = id
+	if a.pane == PanePlans && (a.at == atOutline || a.at == atTaskDetail) {
+		a.outline.sel = id // a pin from the tape leaves PLAN where it was
 	}
 }
 

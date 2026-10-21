@@ -669,15 +669,17 @@ func docStatus(d *planDoc) (StatusLine, bool) {
 
 // pinStatus is row 1's pin line: the pin, a warning about two active
 // tasks, or why there is no pin.
-func pinStatus(p *plan.Plan) StatusLine {
+// pinStatus is row 1's pin line. writable is false when p⏎ would be
+// refused, so the line doesn't offer it.
+func pinStatus(p *plan.Plan, writable bool) StatusLine {
 	if p == nil || len(p.Tasks) == 0 {
 		return StatusLine{}
 	}
 	g := p.Graph()
 	pin := g.Pin()
-	var active []string
+	var active []string // leaves only: a parent marked active is no second pin
 	for i := range p.Tasks {
-		if t := &p.Tasks[i]; t.Status == plan.Active {
+		if t := &p.Tasks[i]; t.Status == plan.Active && g.Leaf(t) && g.Task(t.ID) == t {
 			active = append(active, taskKey(t))
 		}
 	}
@@ -691,6 +693,9 @@ func pinStatus(p *plan.Plan) StatusLine {
 		return StatusLine{Text: "no pin · nothing unblocked", Kind: "muted"}
 	}
 	if pin.Status != plan.Active {
+		if !writable {
+			return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (next up)", Short: "▸ " + pin.ID + " (next up)", Kind: "accent"}
+		}
 		return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (next up · p⏎ pins it)", Short: "▸ " + pin.ID + " (next up · p⏎)", Kind: "accent"}
 	}
 	return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (active)", Short: "▸ " + pin.ID + " (active)", Kind: "accent"}

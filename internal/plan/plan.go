@@ -462,6 +462,12 @@ func (r *reader) check() {
 			r.problem(t.ID, "id is used by %d tasks", n)
 		}
 	}
+	parents := map[string]bool{}
+	for _, t := range p.Tasks {
+		if t.Parent != "" && t.Parent != t.ID {
+			parents[t.Parent] = true
+		}
+	}
 	var active []string
 	for _, t := range p.Tasks {
 		where := t.ID
@@ -476,8 +482,8 @@ func (r *reader) check() {
 				r.problem(where, "depends on %q, which is not a task here", dep)
 			}
 		}
-		if t.Status == Active {
-			active = append(active, where)
+		if t.Status == Active && !parents[t.ID] {
+			active = append(active, where) // a parent marked active is only a label; it is never pinned
 		}
 	}
 	if len(active) > 1 {

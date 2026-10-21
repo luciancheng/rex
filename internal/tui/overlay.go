@@ -13,9 +13,11 @@ const (
 // pinAsk is a pin waiting for its confirm: the task, the status the user
 // saw, and why it needs asking.
 type pinAsk struct {
+	path     string // the plan it was asked about
 	id       string
 	title    string
 	seen     plan.Status
+	moving   []string // the active tasks it takes the pin off
 	warnings []string
 }
 
@@ -34,7 +36,11 @@ func pinConfirmLines(ask pinAsk, width int) []LogLine {
 			lines = append(lines, LogLine{Kind: "error", Text: prefix + clip(row, width-4)})
 		}
 	}
-	return append(lines, LogLine{Kind: "gap"}, LogLine{Kind: "text", Text: "  " + clip("p⏎ pins it anyway · esc cancels, nothing written", width-2)})
+	lines = append(lines, LogLine{Kind: "gap"})
+	for _, row := range wrap("p⏎ pins it anyway · esc cancels, nothing written", width-2) {
+		lines = append(lines, LogLine{Kind: "text", Text: "  " + row})
+	}
+	return lines
 }
 
 // Overlay covers the body of the current place (docs/ux.md §1). Tab leaves

@@ -130,3 +130,109 @@ func TestPinRefusesReadOnlyPlans(t *testing.T) {
 		t.Fatal(b.statusLine().Text)
 	}
 }
+
+func TestPinConfirmRefusesAStaleClaim(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "down")
+	typeText(a, "p")
+	press(a, "\r") // asks: moves the pin off card-highlight
+	// An agent claims another task while the confirm is open.
+	claimed := strings.Replace(demoPlan, `"status": "done",
+      "does": ["Create, open`, `"status": "active",
+      "does": ["Create, open`, 1)
+	os.WriteFile(path, []byte(claimed), 0o644)
+	later(a, c)
+	typeText(a, "p")
+	press(a, "\r")
+	if after, _ := os.ReadFile(path); string(after) != claimed {
+		t.Fatalf("a claim made after the warning was shown is never overwritten\n%s", after)
+	}
+	if !strings.Contains(a.statusLine().Text, "look again") {
+		t.Fatalf("%q", a.statusLine().Text)
+	}
+}
+
+func TestPinConfirmBelongsToItsPlan(t *testing.T) {
+	a, _, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "\t")
+	typeText(a, "pin load-outline")
+	press(a, "\r")
+	if a.overlay[PaneChat] != overlayPin {
+		t.Fatal("the tape asks first")
+	}
+	// Open another plan in PLAN.
+	other := strings.Replace(path, "demo.rex.json", "other.rex.json", 1)
+	os.WriteFile(other, []byte(demoPlan), 0o644)
+	press(a, "\t")
+	a.plans.Current = other
+	a.openedPlan()
+	if a.overlay[PaneChat] == overlayPin {
+		t.Fatal("opening another plan closes a confirm asked about the old one")
+	}
+	if got, _ := os.ReadFile(other); string(got) != demoPlan {
+		t.Fatal("the other plan is untouched")
+	}
+}
+
+func TestPinFromTheTapeLeavesPlanAlone(t *testing.T) {
+	a, _, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "down", "\r") // load-outline's detail
+	if a.at != atTaskDetail || a.outline.sel != "load-outline" {
+		t.Fatalf("at=%v sel=%q", a.at, a.outline.sel)
+	}
+	press(a, "\t")
+	typeText(a, "pin plans-ui")
+	press(a, "\r") // reopening plans-ui moves the pin off card-highlight: asks
+	typeText(a, "p")
+	press(a, "\r")
+	if p, _ := plan.Load(path); p.Task("plans-ui").Status != plan.Active {
+		t.Fatal("the tape pinned plans-ui")
+	}
+	if a.at != atTaskDetail || a.outline.sel != "load-outline" {
+		t.Fatalf("PLAN stays where it was: at=%v sel=%q", a.at, a.outline.sel)
+	}
+}
+
+func TestPinPreviewNamesTheLeaf(t *testing.T) {
+	src := `{"tasks": [{"id": "ui", "title": "UI"}, {"id": "card", "parent": "ui", "title": "Card"}]}`
+	a, _, _ := openDemo(t, src, 120, 32)
+	for a.outline.sel != "ui" {
+		press(a, "up")
+	}
+	typeText(a, "p")
+	if frame := a.frame(); !strings.Contains(frame, "⏎ pin card") {
+		t.Fatalf("p⏎ on a parent pins its first ready leaf; the footer names it\n%s", frame)
+	}
+}
+
+func TestPinConfirmScrollsOnAShortScreen(t *testing.T) {
+	src := `{"tasks": [{"id": "a", "status": "active"}, {"id": "b", "status": "active"}, {"id": "c", "status": "active"}, {"id": "d", "status": "active"}, {"id": "e", "status": "blocked", "depends_on": ["a", "b", "c", "d", "zz"]}]}`
+	a, _, _ := openDemo(t, src, 80, 14)
+	press(a, "end")
+	typeText(a, "p")
+	press(a, "\r")
+	if a.overlay[PanePlans] != overlayPin {
+		t.Fatal("asks")
+	}
+	for i := 0; i < 20; i++ {
+		press(a, "down")
+	}
+	if frame := a.frame(); !strings.Contains(frame, "p⏎ pins it anyway") {
+		t.Fatalf("the confirm's own instruction can be scrolled to\n%s", frame)
+	}
+}
+
+func TestReadOnlyRowOneOffersNoPin(t *testing.T) {
+	a, _, _ := openDemo(t, `{"version": 2, "tasks": [{"id": "a"}]}`, 120, 32)
+	if text := a.statusLine().Text; strings.Contains(text, "p⏎") {
+		t.Fatalf("a read-only plan doesn't offer p⏎: %q", text)
+	}
+}
+
+func TestPinSurvivesARepeatedIdLoop(t *testing.T) {
+	a, _, _ := openDemo(t, `{"tasks":[{"id":"x"},{"id":"y","parent":"x"},{"id":"x","parent":"y"}]}`, 120, 32)
+	typeText(a, "p")
+	press(a, "\r") // used to recurse until the stack overflowed
+	typeText(a, "pin x")
+	press(a, "\r")
+}

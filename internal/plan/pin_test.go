@@ -57,7 +57,7 @@ func TestPinTargetAndWarnings(t *testing.T) {
 
 func TestPinOpChangesOnlyStatuses(t *testing.T) {
 	path := writePlan(t, pinFixture)
-	if _, err := Edit(path, PinOp("b", Pending)); err != nil {
+	if _, err := Edit(path, PinOp("b", Pending, []string{"a"})); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path)
@@ -78,7 +78,7 @@ func TestPinOpChangesOnlyStatuses(t *testing.T) {
 
 func TestPinOpReopensAndRefuses(t *testing.T) {
 	path := writePlan(t, pinFixture)
-	saved, err := Edit(path, PinOp("c", Done))
+	saved, err := Edit(path, PinOp("c", Done, []string{"a"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,20 +87,44 @@ func TestPinOpReopensAndRefuses(t *testing.T) {
 	}
 	before, _ := os.ReadFile(path)
 	for _, c := range []struct {
-		id   string
-		seen Status
-		want string
+		id     string
+		seen   Status
+		moving []string
+		want   string
 	}{
-		{"c", Done, "changed to active in the file"},
-		{"zz", Pending, "no longer in the plan"},
-		{"ui", Active, "has tasks under it"},
-		{"x", Pending, "loop"},
+		{"c", Done, nil, "changed to active in the file"},
+		{"zz", Pending, nil, "no longer in the plan"},
+		{"ui", Active, nil, "has tasks under it"},
+		{"x", Pending, nil, "loop"},
+		// The user agreed to move the pin off nothing; c is active now.
+		{"b", Pending, nil, "c is active in the file now"},
+		{"b", Pending, []string{"a"}, "c is active in the file now"},
 	} {
-		if _, err := Edit(path, PinOp(c.id, c.seen)); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := Edit(path, PinOp(c.id, c.seen, c.moving)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v", c.id, err)
 		}
 	}
 	if after, _ := os.ReadFile(path); string(after) != string(before) {
 		t.Fatal("refused pins write nothing")
+	}
+}
+
+func TestPinTargetSurvivesALoopThroughARepeatedId(t *testing.T) {
+	g := mustParse(t, `{"tasks":[{"id":"x"},{"id":"y","parent":"x"},{"id":"x","parent":"y"}]}`).Graph()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		g.PinTarget(g.Task("x"))
+		g.Pin()
+	}()
+	<-done // a stack overflow would kill the test binary instead
+}
+
+func TestOnlyActiveLeavesCountAsTwoActive(t *testing.T) {
+	p := mustParse(t, `{"tasks":[{"id":"ui","status":"active"},{"id":"a","parent":"ui","status":"active"}]}`)
+	for _, pr := range p.Problems {
+		if strings.Contains(pr.Msg, "active") {
+			t.Fatalf("a parent marked active is no second pin: %s", pr)
+		}
 	}
 }

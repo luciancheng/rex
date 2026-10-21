@@ -92,7 +92,7 @@ func TestHostileAgentTextNeverReachesTheTerminal(t *testing.T) {
 	}
 	for _, width := range []int{80, 120} {
 		frame := ComposeFrame("idle", "yellow", ComposeOptions{
-			Enabled: false, Columns: width, Lines: 30, AnimationName: "idle",
+			Enabled: false, Columns: width, Lines: 30,
 			Log: hostile, Pane: PaneChat, Status: "idle\x1b[2J", PlanRel: "rex/plans/\x1b]52;c;eA==\x07x.rex.json",
 			Draft: "draft \x1b[2J",
 		})
@@ -116,7 +116,7 @@ func TestHostilePlanFileNamesAreCleaned(t *testing.T) {
 		t.Skipf("filesystem refuses the name: %v", err)
 	}
 	b := NewPlanBrowser(repo)
-	frame := ComposeFrame("idle", "yellow", ComposeOptions{Enabled: false, Columns: 120, Lines: 30, AnimationName: "idle", Pane: PanePlans, Plans: b})
+	frame := ComposeFrame("idle", "yellow", ComposeOptions{Enabled: false, Columns: 120, Lines: 30, Pane: PanePlans, Plans: b})
 	assertNoForeignControl(t, frame)
 	if !strings.Contains(frame, "evilname.rex.json") {
 		t.Fatal("cleaned name should still show")

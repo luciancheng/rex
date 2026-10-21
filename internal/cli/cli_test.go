@@ -78,7 +78,7 @@ func TestUnknownCommandIsErrorButNotBlock(t *testing.T) {
 
 func TestComposeFramePutsTextRightOfMascot(t *testing.T) {
 	frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle",
+		Enabled: false, Columns: 80, Lines: 24,
 	})
 	line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
 	if !strings.Contains(line, "REX") {
@@ -88,7 +88,7 @@ func TestComposeFramePutsTextRightOfMascot(t *testing.T) {
 		t.Fatalf("REX not right of mascot: %q", line)
 	}
 	wide := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 120, Lines: 24, AnimationName: "idle",
+		Enabled: false, Columns: 120, Lines: 24,
 	})
 	if !strings.Contains(wide, "ctrl+c×2 quit") {
 		t.Fatal("missing quit hint when the footer has room")
@@ -106,7 +106,7 @@ func TestComposeFramePutsTextRightOfMascot(t *testing.T) {
 
 func TestComposeFrameShowsAgentEvents(t *testing.T) {
 	frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle",
+		Enabled: false, Columns: 80, Lines: 24,
 		Log: []watch.Event{
 			{Source: "cursor", Kind: "thought", Text: "I should inspect sprites.py"},
 			{Source: "cursor", Kind: "command", Text: "pytest -q"},
@@ -137,7 +137,7 @@ func TestComposeFrameShowsAgentEvents(t *testing.T) {
 
 func TestComposeFrameFormatsMarkdownAndUserPrompt(t *testing.T) {
 	frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle",
+		Enabled: false, Columns: 80, Lines: 24,
 		Log: []watch.Event{
 			{Source: "cursor", Kind: "user", Text: "can we format this"},
 			{Source: "cursor", Kind: "text", Text: "## Summary\n- first item\n- **second** item\n"},
@@ -169,10 +169,10 @@ func TestComposeFrameScrollsOlderEvents(t *testing.T) {
 		events = append(events, watch.Event{Source: "cursor", Kind: "thought", Text: fmt.Sprintf("block-%02d", i)})
 	}
 	live := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle", Log: events, Scroll: 0,
+		Enabled: false, Columns: 80, Lines: 24, Log: events, Scroll: 0,
 	})
 	older := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle", Log: events, Scroll: 40,
+		Enabled: false, Columns: 80, Lines: 24, Log: events, Scroll: 40,
 	})
 	if !strings.Contains(live, "block-29") {
 		t.Fatal("live missing newest")
@@ -187,7 +187,7 @@ func TestComposeFrameScrollsOlderEvents(t *testing.T) {
 
 func TestComposeFrameStaysTopAlignedWhenShort(t *testing.T) {
 	frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 6, AnimationName: "idle",
+		Enabled: false, Columns: 80, Lines: 6,
 	})
 	line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
 	if strings.Index(line, "REX") < mascot.StageSize {
@@ -200,7 +200,7 @@ func TestComposeFrameStaysTopAlignedWhenShort(t *testing.T) {
 
 func TestComposeFrameKeepsFullColoredSprite(t *testing.T) {
 	frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: true, Columns: 80, Lines: 24, AnimationName: "idle",
+		Enabled: true, Columns: 80, Lines: 24,
 	})
 	body := strings.Join(mascot.MustRenderRows(
 		mascot.FitStageDefault(mascot.MustSprite("idle").Rows),
@@ -217,10 +217,10 @@ func TestComposeFrameKeepsFullColoredSprite(t *testing.T) {
 
 func TestComposeFrameDoubleCtrlCHint(t *testing.T) {
 	idle := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle",
+		Enabled: false, Columns: 80, Lines: 24,
 	})
 	armed := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, AnimationName: "idle", QuitPending: true,
+		Enabled: false, Columns: 80, Lines: 24, QuitPending: true,
 	})
 	if !strings.Contains(armed, "ctrl+c again to quit") {
 		t.Fatal("missing quit hint")

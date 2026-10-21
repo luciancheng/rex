@@ -428,3 +428,52 @@ func TestNewFolderShowsWhereItGoes(t *testing.T) {
 		t.Fatalf("%s", v)
 	}
 }
+
+func TestFindAndBrowseRowsCarryProgress(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, "rex", "plans")
+	os.MkdirAll(root, 0o755)
+	work := `{"tasks": [{"id": "x", "status": "done"}, {"id": "y"}]}`
+	os.WriteFile(filepath.Join(root, "auth.rex.json"), []byte(work), 0o644)
+	os.WriteFile(filepath.Join(root, "auth-v2.rex.json"), []byte(work), 0o644)
+	b := NewPlanBrowser(repo)
+	b.Current = filepath.Join(root, "auth.rex.json")
+	want := map[string]string{"auth.rex.json": "open · 1/2 · ▸ y", "auth-v2.rex.json": "1/2 · ▸ y"}
+	check := func(where string) {
+		t.Helper()
+		seen := 0
+		for _, row := range b.Rows {
+			if w, ok := want[filepath.Base(row.Path)]; ok && row.Kind == PlanRowPlan {
+				seen++
+				if row.Hint != w {
+					t.Errorf("%s: %s hint %q, want %q", where, filepath.Base(row.Path), row.Hint, w)
+				}
+			}
+		}
+		if seen != len(want) {
+			t.Fatalf("%s: %d plan rows matched: %#v", where, seen, b.Rows)
+		}
+	}
+	b.Screen, b.Dir, b.fresh = ScreenBrowse, root, true
+	b.Rebuild()
+	check("browse")
+	b.Screen, b.Find, b.fresh = ScreenHome, "auth", true
+	b.Rebuild()
+	check("find")
+}
+
+func TestOpenPlanHintNeverDangles(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, "rex", "plans")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "a.rex.json"), []byte("not json"), 0o644)
+	b := NewPlanBrowser(repo)
+	b.Current = filepath.Join(root, "a.rex.json")
+	b.Screen, b.Dir, b.fresh = ScreenBrowse, root, true
+	b.Rebuild()
+	for _, row := range b.Rows {
+		if row.Path == b.Current && row.Hint != "open" {
+			t.Fatalf("hint %q", row.Hint)
+		}
+	}
+}

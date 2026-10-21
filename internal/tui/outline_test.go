@@ -519,3 +519,28 @@ func TestATaskNeverWaitsOnItselfThroughItsParent(t *testing.T) {
 		t.Fatalf("card waits only on ui's other leaves, which are done: %v", unmet)
 	}
 }
+
+func TestFilledPlanSelectsItsPin(t *testing.T) {
+	a, c, path := openDemo(t, string(plan.Stub("demo")), 120, 32)
+	if a.outline.sel != "" {
+		t.Fatal("an empty plan has only the title")
+	}
+	os.WriteFile(path, []byte(demoPlan), 0o644)
+	later(a, c)
+	if a.outline.sel != "card-highlight" {
+		t.Fatalf("when an agent fills the plan the cursor goes to the pin, got %q", a.outline.sel)
+	}
+}
+
+func TestNarrowRuleKeepsProgress(t *testing.T) {
+	a, _, _ := openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "A very long plan title that cannot fit"`, 1), 80, 24)
+	rule := a.frameRows().Rows[2]
+	if !strings.Contains(rule, "── A very") || !strings.Contains(rule, "· active · 1/3") {
+		t.Fatalf("%q", rule)
+	}
+	// a tab is painted as spaces, so it is measured as spaces
+	a, _, _ = openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Tabs\t\t\t\tin a long title"`, 1), 80, 24)
+	if rule := a.frameRows().Rows[2]; !strings.Contains(rule, "── Tabs") || !strings.Contains(rule, "· active · 1/3") {
+		t.Fatalf("%q", rule)
+	}
+}

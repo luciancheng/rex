@@ -3,7 +3,7 @@
   "id": "v1-sendoff-loop",
   "title": "Rex v1: the send-off loop",
   "goal": "Open a plan in Rex, see its outline and pinned task, watch the agent work it on the tape, mark it done with a retrospective, and type sendoff to get a brief you paste into the next chat. Rex stays watch-only: it never sends, approves, or steers.",
-  "status": "active",
+  "status": "done",
   "scope": {
     "in": [
       "v1 plan JSON: parse, show, pin, complete",
@@ -23,27 +23,42 @@
     {
       "id": "plans",
       "title": "Plans you can read",
-      "status": "pending",
+      "status": "done",
       "does": ["A plan file has a frozen v1 shape and Rex shows it as an outline"]
     },
     {
       "id": "plan-schema",
       "title": "Freeze the v1 plan format",
       "parent": "plans",
-      "status": "pending",
+      "status": "done",
       "does": [
         "internal/plan parses v1 and reports problems instead of failing",
         "Create writes an empty v1 stub instead of {}",
         "docs/plan-format.md is the contract"
       ],
       "verify": ["go test ./internal/plan/", "every file under rex/plans parses"],
-      "files": ["internal/plan/plan.go", "docs/plan-format.md", "internal/tui/plans.go"]
+      "files": ["internal/plan/plan.go", "docs/plan-format.md", "internal/tui/plans.go"],
+      "accomplished": [
+        "internal/plan reads v1 with Problems instead of errors; Create writes an empty v1 stub with O_EXCL; docs/plan-format.md is the contract, tested against the code"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test)"
+      ],
+      "modified": [
+        "README.md",
+        "agents.md",
+        "docs/plan-format.md",
+        "internal/plan/plan.go",
+        "internal/plan/plan_test.go",
+        "internal/tui/plans.go",
+        "internal/tui/plans_test.go"
+      ]
     },
     {
       "id": "plan-store",
       "title": "Edit a plan without disturbing it",
       "parent": "plans",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["plan-schema"],
       "needs": ["internal/jsonedit splices one member and keeps every other byte"],
       "does": [
@@ -51,121 +66,322 @@
         "A file changed on disk since it was read is re-checked, never clobbered"
       ],
       "verify": ["golden diffs: a pin changes only status values", "FuzzEdit"],
-      "files": ["internal/plan/edit.go", "internal/plan/state.go"]
+      "files": ["internal/plan/edit.go", "internal/plan/state.go"],
+      "accomplished": [
+        "plan.Edit splices only the changed members through jsonedit, re-runs the op if the file changed underneath, checks the expected tree and renames atomically; ~/.rex/state.json holds the last plan per repo and pin starts"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test)"
+      ],
+      "modified": [
+        "agents.md",
+        "internal/plan/edit.go",
+        "internal/plan/edit_test.go",
+        "internal/plan/state.go"
+      ]
     },
     {
       "id": "plan-outline",
       "title": "Outline, plan detail, task detail",
       "parent": "plans",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["plan-schema"],
       "does": [
         "Opening a plan lands on its outline",
         "External edits reload with a toast; invalid JSON keeps the last good copy"
       ],
       "verify": ["open → outline → task detail → Esc → library in tmux at 78 and 38 columns"],
-      "files": ["internal/tui/outline.go", "internal/tui/plans.go"]
+      "files": ["internal/tui/outline.go", "internal/tui/plans.go"],
+      "accomplished": [
+        "opening a plan lands on its outline with glyphs, rollups, deps and blurbs; plan and task detail; a 500 ms hash poll reloads outside edits with a toast and keeps the last good copy on bad JSON; Continue card"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); tmux at 120x32, 80x24 and 60x20"
+      ],
+      "modified": [
+        "README.md",
+        "agents.md",
+        "internal/plan/graph.go",
+        "internal/plan/graph_test.go",
+        "internal/plan/plan.go",
+        "internal/tui/app.go",
+        "internal/tui/app_test.go",
+        "internal/tui/chrome.go",
+        "internal/tui/input_test.go",
+        "internal/tui/live.go",
+        "internal/tui/outline.go",
+        "internal/tui/outline_test.go",
+        "internal/tui/plans.go"
+      ]
     },
     {
       "id": "loop",
       "title": "Pin, complete, send off",
-      "status": "pending",
+      "status": "done",
       "does": ["The pinned task drives completion, the send-off brief, and drift"]
     },
     {
       "id": "pin-task",
       "title": "Pin one task",
       "parent": "loop",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["plan-store", "plan-outline"],
       "does": ["p⏎ pins the selected leaf task; the status line shows it"],
       "verify": ["pinning writes active on the target and pending on the old pin, nothing else"],
-      "files": ["internal/plan/pin.go", "internal/tui/outline.go"]
+      "files": ["internal/plan/pin.go", "internal/tui/outline.go"],
+      "accomplished": [
+        "p⏎ and pin <id>⏎ write active on the target and pending on other active leaves; a confirm for blocked, waiting or moved pins; reopening keeps the retrospective"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); a pin on disk changes only status values (golden test)"
+      ],
+      "modified": [
+        "agents.md",
+        "internal/plan/pin.go",
+        "internal/plan/pin_test.go",
+        "internal/tui/app.go",
+        "internal/tui/health_test.go",
+        "internal/tui/outline.go",
+        "internal/tui/overlay.go",
+        "internal/tui/pin_test.go",
+        "internal/tui/plans.go"
+      ]
     },
     {
       "id": "task-completion",
       "title": "Mark the pin done with a retrospective",
       "parent": "loop",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["pin-task"],
       "does": ["d⏎ opens a completion overlay prefilled from the agent's trailer and the tape, and writes accomplished, modified, verified_how"],
       "verify": ["git diff shows only that task's lines"],
-      "files": ["internal/plan/complete.go", "internal/tui/complete.go"]
+      "files": ["internal/plan/complete.go", "internal/tui/complete.go"],
+      "accomplished": [
+        "d⏎ opens a form prefilled from the agent's trailer and what Rex saw since the pin; CompleteOp writes done plus only the changed fields"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); tmux walkthrough: the retrospective landed on disk"
+      ],
+      "modified": [
+        "README.md",
+        "agents.md",
+        "internal/plan/complete.go",
+        "internal/plan/complete_test.go",
+        "internal/tui/app.go",
+        "internal/tui/complete.go",
+        "internal/tui/complete_test.go",
+        "internal/tui/evidence.go",
+        "internal/tui/live.go",
+        "internal/tui/overlay.go",
+        "internal/tui/plans.go",
+        "internal/tui/scope_test.go"
+      ]
     },
     {
       "id": "sendoff",
       "title": "Type sendoff, get a brief",
       "parent": "loop",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["pin-task"],
       "does": ["s⏎ builds the issue #9 brief from the JSON and shows it to copy"],
       "verify": ["golden brief from a fixture plan", "an empty plan says nothing to send"],
-      "files": ["internal/plan/sendoff.go", "internal/tui/sendoff.go"]
+      "files": ["internal/plan/sendoff.go", "internal/tui/sendoff.go"],
+      "accomplished": [
+        "s⏎ builds issue #9's brief from the JSON with a Done section, the trailer request and a fingerprint, under 4 KB; b⏎ is the planning brief; o⏎ prints it plain; a pasted brief collapses on the tape"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); golden test against issue #9's own example; o⏎ round trip in tmux"
+      ],
+      "modified": [
+        "README.md",
+        "agents.md",
+        "internal/plan/sendoff.go",
+        "internal/plan/sendoff_test.go",
+        "internal/tui/app.go",
+        "internal/tui/live.go",
+        "internal/tui/outline.go",
+        "internal/tui/overlay.go",
+        "internal/tui/sendoff.go",
+        "internal/tui/sendoff_test.go"
+      ]
     },
     {
       "id": "clipboard",
       "title": "Copy the brief honestly",
       "parent": "loop",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["sendoff"],
       "does": ["The brief is copied with the platform tool or OSC 52, and the view says which"],
-      "files": ["internal/tui/clipboard.go"]
+      "files": ["internal/tui/clipboard.go"],
+      "accomplished": [
+        "pbcopy, clip.exe (UTF-16LE + BOM), wl-copy or xclip/xsel off the UI goroutine, else OSC 52 between frames; the status says copied only when the tool exited 0"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); the real pbcopy path on macOS, clipboard restored after"
+      ],
+      "modified": [
+        "agents.md",
+        "internal/tui/app.go",
+        "internal/tui/clipboard.go",
+        "internal/tui/clipboard_test.go",
+        "internal/tui/live.go",
+        "internal/tui/sendoff.go",
+        "internal/tui/sendoff_test.go"
+      ]
     },
     {
       "id": "prompt-drift",
       "title": "Show drift from the pin",
       "parent": "loop",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["pin-task"],
       "needs": ["completed edits carry repo-relative paths"],
       "does": ["Edits and prompts off the pinned task show soft or hard drift in Rex only"],
       "verify": ["nothing is written to the feed, the plan, or stdout"],
-      "files": ["internal/plan/drift.go"]
+      "files": ["internal/plan/drift.go"],
+      "accomplished": [
+        "CheckEdit and CheckPrompt grade live edits and prompts against the pin (none, soft, hard); row 1 and one tape block per pin; nothing reaches the feed, the plan or the agent"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test)"
+      ],
+      "modified": [
+        "README.md",
+        "agents.md",
+        "internal/plan/drift.go",
+        "internal/plan/drift_test.go",
+        "internal/tui/app.go",
+        "internal/tui/drift.go",
+        "internal/tui/drift_test.go",
+        "internal/tui/live.go"
+      ]
     },
     {
       "id": "harnesses",
       "title": "More agents on the tape",
-      "status": "pending",
+      "status": "done",
       "does": ["Codex and OpenCode report to the same feed, opt-in"]
     },
     {
       "id": "codex-hooks",
       "title": "Codex hooks",
       "parent": "harnesses",
-      "status": "pending",
+      "status": "done",
       "does": ["rex ingest --install codex writes hooks.json; MapCodex reads hook payloads"],
-      "files": ["internal/watch/codex.go"]
+      "files": ["internal/watch/codex.go"],
+      "accomplished": [
+        "rex ingest --install codex writes a byte-stable hooks.json entry and says to trust it in /hooks; MapCodex reads hook payloads, apply_patch by its headers only"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); fixture payloads only (Codex not installed here)"
+      ],
+      "modified": [
+        "README.md",
+        "agents.md",
+        "internal/tui/drift.go",
+        "internal/tui/evidence.go",
+        "internal/watch/adapters.go",
+        "internal/watch/claude.go",
+        "internal/watch/codex.go",
+        "internal/watch/codex_test.go",
+        "internal/watch/files.go"
+      ]
     },
     {
       "id": "opencode-hooks",
       "title": "OpenCode plugin",
       "parent": "harnesses",
-      "status": "pending",
+      "status": "done",
       "does": ["rex ingest --install opencode writes a plugin that pipes events to rex ingest"],
-      "files": ["internal/watch/opencode.go"]
+      "files": ["internal/watch/opencode.go"],
+      "accomplished": [
+        "rex ingest --install opencode writes a generated plugin that pipes events to rex and drops file bodies; MapOpenCode reads them"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); fixture payloads and node --check of the plugin"
+      ],
+      "modified": [
+        "README.md",
+        "agents.md",
+        "internal/cli/cli.go",
+        "internal/watch/adapters.go",
+        "internal/watch/opencode.go",
+        "internal/watch/opencode_test.go"
+      ]
     },
     {
       "id": "plan-skill",
       "title": "rex-plan skill",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["plan-schema"],
       "does": ["Agents that load the skill write v1 plans and end replies with the trailer"],
-      "files": ["assets/skills/rex-plan/SKILL.md"]
+      "files": ["internal/skill/rex-plan/SKILL.md"],
+      "accomplished": [
+        "the rex-plan skill teaches the v1 format and the reply trailer; installed only by rex ingest --install-skill [--project]"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test)"
+      ],
+      "modified": [
+        "README.md",
+        "agents.md",
+        "docs/plan-format.md",
+        "internal/cli/cli.go",
+        "internal/cli/cli_test.go",
+        "internal/skill/rex-plan/SKILL.md",
+        "internal/skill/skill.go",
+        "internal/skill/skill_test.go"
+      ]
     },
     {
       "id": "install-scripts",
       "title": "Install scripts",
-      "status": "pending",
+      "status": "done",
       "does": ["install.sh and install.ps1 build from any ref and print the opt-in commands"],
-      "files": ["scripts/install.sh", "scripts/install.ps1"]
+      "files": ["scripts/install.sh", "scripts/install.ps1"],
+      "accomplished": [
+        "install.sh and install.ps1 use the real module path with errors shown, honor REX_REF through an exact git fetch, wire only Cursor, and print opt-in commands for other agents"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); install.sh run end to end in a sandbox HOME; install.ps1 unverified (no PowerShell)"
+      ],
+      "modified": [
+        "README.md",
+        "internal/cli/cli_test.go",
+        "scripts/install.ps1",
+        "scripts/install.sh"
+      ]
     },
     {
       "id": "cuj-flow",
       "title": "Create → pin → watch → complete → send off",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["task-completion", "sendoff", "clipboard", "prompt-drift"],
       "does": ["The whole loop works end to end in a real terminal"],
-      "verify": ["whole-loop key tests", "a tmux walk of every CUJ step at 80×24 and 60×20"]
+      "verify": ["whole-loop key tests", "a tmux walk of every CUJ step at 80×24 and 60×20"],
+      "accomplished": [
+        "a whole-loop test holds the CUJ (create → open → watch → done → pin → send off → drift → quit) to its keystroke budget, a frame matrix checks 14 screens at 9 sizes, and a tmux walkthrough of the loop found and fixed small gaps"
+      ],
+      "verified_how": [
+        "go test ./... and the pre-PR gate (gofmt, vet for darwin/linux/windows, staticcheck, go test -race, go1.22.12 test); tmux walkthrough of the CUJ with stty identical before and after quitting"
+      ],
+      "modified": [
+        "internal/cli/cli_test.go",
+        "internal/tui/app.go",
+        "internal/tui/chrome_test.go",
+        "internal/tui/cuj_test.go",
+        "internal/tui/live.go",
+        "internal/tui/plans.go",
+        "internal/tui/plans_test.go",
+        "internal/tui/render_test.go",
+        "internal/tui/width_test.go",
+        "agents.md",
+        "docs/ux.md",
+        "internal/tui/library_test.go",
+        "internal/tui/outline.go",
+        "internal/tui/outline_test.go",
+        "internal/tui/testdata/sendoff-demo.rex.json"
+      ]
     }
   ]
 }

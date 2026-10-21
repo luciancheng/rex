@@ -675,7 +675,8 @@ func (b *PlanBrowser) progressHint(path string) string {
 	return text
 }
 
-// addHints puts progress on the cards and recents, and marks the open plan.
+// addHints puts progress on the cards, recents, Find results and Browse
+// rows, and marks the open plan.
 func (b *PlanBrowser) addHints() {
 	for i := range b.Rows {
 		row := &b.Rows[i]
@@ -684,15 +685,14 @@ func (b *PlanBrowser) addHints() {
 			if hint := b.progressHint(row.Path); hint != "" {
 				row.Hint = strings.TrimSpace(row.Hint + " · " + hint)
 			}
-		case PlanRowRecent:
-			row.Hint = b.progressHint(row.Path)
+		case PlanRowPlan, PlanRowRecent:
+			// Find results and Browse rows read like recents: progress, and
+			// "open" on the plan that is open.
+			hint := b.progressHint(row.Path)
 			if row.Path == b.Current {
-				row.Hint = strings.TrimSuffix(strings.TrimSpace("open · "+row.Hint), " ·")
+				hint = strings.TrimSuffix("open · "+hint, " · ")
 			}
-		case PlanRowPlan:
-			if row.Path == b.Current {
-				row.Hint = "open"
-			}
+			row.Hint = hint
 		}
 	}
 }

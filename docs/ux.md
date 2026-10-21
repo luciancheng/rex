@@ -28,9 +28,9 @@ Rex has exactly **two places**. **Tab** switches between them and does nothing e
 
 Each place remembers its screen, its selection, its scroll position, its draft, and any open overlay. Tab away and back, and everything is where you left it.
 - Selection is kept by **identity**: plan path or task id. Row indexes are not used.
-- A reload, resize or rebuild keeps the same plan or task selected. If that item disappears, the selection falls back to the pin, then to the nearest row.
+- A reload, resize or rebuild keeps the same plan or task selected. If that item disappears, the selection falls back to the pin, then to the nearest row. One more exception: when a plan with no tasks (or one that didn't parse) gains its first tasks, the selection goes to the pin, as opening the plan does.
 
-**Events never move you.** Hook events, plan reloads and toasts change what is drawn. They never change the place, screen, selection or draft. Only keys do.
+**Events never move you.** Hook events, plan reloads and toasts change what is drawn. They never change the place, screen, selection or draft. Only keys do. The two selection fallbacks above are the only exceptions.
 
 ---
 
@@ -289,7 +289,7 @@ Layout:
 
 Reload behaviour:
 - **Invalid JSON is debounced.** It shows only after it persists for two polls, because agents save files in pieces.
-- **External edits** (by the agent, a teammate's pull, or your editor) reload live. They show a toast, plus one `── plan ──` line on the tape such as `plans-ui → done (file) · +1 task`. Rex's own writes do not trigger the toast.
+- **External edits** (by the agent, a teammate's pull, or your editor) reload live. They show a toast, plus one `── plan ──` line on the tape such as `plans-ui → done (file) · +1 task`. Rex's own writes do not trigger the toast. When the reload fills a plan that had no tasks, the cursor moves to the pin (§1).
 
 ---
 
@@ -475,7 +475,7 @@ If the pin lists no files, only the `scope.out` rule applies.
 
   Recents follow. The cursor starts on Continue, else Open latest, else Create.
 - **First run (no plans).** Only Create shows, plus `plans are JSON in rex/plans/ · commit them`.
-- **Card hints** show progress, e.g. `2/5 · ▸ card-highlight`. The currently open plan is marked in recents and in Browse.
+- **Hints** show progress on the cards, recents, Find results and Browse rows, e.g. `2/5 · ▸ card-highlight`. The currently open plan reads `open · 2/5 · ▸ card-highlight` in recents, Find and Browse.
 - **Find (typing on Home)** matches across `rex/plans/**`.
   - The first match is selected.
   - The list always ends with `+ Create 'x'` (unless a plan is named exactly `x`). With no match, that row is selected, and ⏎ creates the plan at once and opens its outline. There is no extra prompt.

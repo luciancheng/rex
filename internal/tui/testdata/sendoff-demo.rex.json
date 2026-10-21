@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "id": "sendoff-demo",
+  "title": "Send-off demo",
+  "goal": "A teammate opens this plan in Rex, sees what the work is, pins the next task, and sends it off to a fresh chat without rereading any transcript.",
+  "status": "active",
+  "scope": {
+    "in": ["plan cards in the Library", "selection highlight"],
+    "out": ["extra palettes", "web UI"]
+  },
+  "tasks": [
+    {
+      "id": "plans-ui",
+      "title": "Plans navigator",
+      "status": "done",
+      "does": ["Create, open and browse rex/plans in the TUI"],
+      "verify": ["go test ./internal/tui -run Plan"],
+      "files": ["internal/tui/plans.go"],
+      "accomplished": ["Home cards, folder browser, duplicate names refused"],
+      "modified": ["internal/tui/plans.go", "internal/tui/plans_test.go"],
+      "verified_how": ["go test ./internal/tui -run Plan (passed)"]
+    },
+    {
+      "id": "card-highlight",
+      "title": "Selected plan card is one block",
+      "status": "active",
+      "depends_on": ["plans-ui"],
+      "needs": ["the pick and pickbg colors exist in mascot.UI"],
+      "does": ["Bar, border and fill cover all three rows of the selected card"],
+      "verify": ["go test ./internal/tui -run PlanCardSelection", "Open latest: ▌ on all three card rows"],
+      "files": ["internal/tui/plans.go", "internal/tui/live.go", "internal/tui/plans_test.go"]
+    },
+    {
+      "id": "load-outline",
+      "title": "Outline view",
+      "status": "pending",
+      "depends_on": ["card-highlight"],
+      "does": ["Opening a plan shows its tasks, the pin, and what waits on what"],
+      "verify": ["open → outline → detail → Esc in tmux at 80×24"],
+      "files": ["internal/tui/outline.go"]
+    }
+  ]
+}

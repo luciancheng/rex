@@ -47,7 +47,7 @@ func TestAppStartsOnPlansHome(t *testing.T) {
 	}
 }
 
-func TestAppTabKeepsTheChatDraft(t *testing.T) {
+func TestAppTabKeepsEachPlacesDraft(t *testing.T) {
 	a := testApp(t)
 	typeText(a, "abc")
 	press(a, "\t")
@@ -56,20 +56,24 @@ func TestAppTabKeepsTheChatDraft(t *testing.T) {
 	}
 	typeText(a, "hi")
 	press(a, "\t")
-	if a.pane != PanePlans || a.draft != "" {
-		t.Fatalf("plans draft should start empty, got %q", a.draft)
+	if a.pane != PanePlans || a.draft != "abc" {
+		t.Fatalf("plan draft lost across Tab: %q", a.draft)
 	}
 	press(a, "\t")
 	if a.draft != "hi" {
-		t.Fatalf("chat draft lost: %q", a.draft)
+		t.Fatalf("tape draft lost: %q", a.draft)
 	}
 }
 
-func TestAppEscOnHomeGoesToTape(t *testing.T) {
+func TestAppEscNeverLeavesThePlace(t *testing.T) {
 	a := testApp(t)
-	press(a, "esc")
+	press(a, "esc", "esc")
+	if a.pane != PanePlans {
+		t.Fatal("Esc on Home must not switch to the tape (docs/ux.md §3)")
+	}
+	press(a, "\t", "esc")
 	if a.pane != PaneChat {
-		t.Fatal("today Esc on Home switches to the tape (docs/ux.md changes this)")
+		t.Fatal("Esc on the tape must not switch to PLAN")
 	}
 }
 
@@ -153,7 +157,7 @@ func TestAppComposerNoteIsLoggedLocally(t *testing.T) {
 	press(a, "\t")
 	typeText(a, "a note")
 	press(a, "\r")
-	if len(a.log) != 1 || a.log[0].Source != "user" || a.log[0].Text != "a note" {
+	if len(a.log) != 1 || a.log[0].Source != "rex" || a.log[0].Kind != "note" || a.log[0].Text != "a note" {
 		t.Fatalf("%#v", a.log)
 	}
 	if a.turn != TurnIdle {

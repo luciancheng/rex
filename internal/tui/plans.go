@@ -600,7 +600,7 @@ func (row PlanRow) Color() string {
 }
 
 func composerPrefix(opt ComposeOptions) string {
-	if opt.Pane != PanePlans || opt.Plans == nil {
+	if opt.Overlay != nil || opt.Pane != PanePlans || opt.Plans == nil {
 		return InputPrefix
 	}
 	switch opt.Plans.Screen {

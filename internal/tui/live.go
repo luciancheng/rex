@@ -23,9 +23,11 @@ const (
 	FooterRows      = 1
 	InputPrefix     = " > "
 	MaxLog          = 400
+	maxPromptRows   = 6 // a pasted wall of text must not push the tape away
 )
 
 var kindColor = map[string]string{
+	"note":     "muted",
 	"thought":  "muted",
 	"command":  "accent",
 	"question": "error",
@@ -48,6 +50,7 @@ var kindStatus = map[string]string{
 }
 
 var kindLabel = map[string]string{
+	"note":     "note · local",
 	"thought":  "thinking",
 	"command":  "run",
 	"question": "ask",
@@ -151,6 +154,10 @@ func userRows(text string, width int) []string {
 	}
 	if len(wrapped) == 0 {
 		wrapped = []string{""}
+	}
+	if len(wrapped) > maxPromptRows {
+		more := len(wrapped) - maxPromptRows
+		wrapped = append(wrapped[:maxPromptRows], fmt.Sprintf("(+%d more rows)", more))
 	}
 	contentW := 0
 	for _, line := range wrapped {
@@ -298,8 +305,8 @@ const (
 )
 
 func ApplyTurn(turn Turn, ev watch.Event) Turn {
-	if ev.Source == "user" {
-		return turn
+	if ev.Source == "user" || ev.Source == "rex" {
+		return turn // Rex's own lines never start or end a turn
 	}
 	switch ev.Kind {
 	case "user", "thought":
@@ -389,12 +396,11 @@ func visibleDraft(draft string, room int) string {
 	return "…" + tailCells(clean, room-1)
 }
 
-func inputBox(draft string, width int, enabled bool, prefix string) []string {
+func inputBox(draft string, width int, enabled bool, prefix, placeholder string) []string {
 	if prefix == "" {
 		prefix = InputPrefix
 	}
 	inner := max(0, width-2)
-	content := clip(prefix+visibleDraft(draft, inner-cellLen(prefix)), inner)
 	top := "╭" + strings.Repeat("─", inner) + "╮"
 	bot := "╰" + strings.Repeat("─", inner) + "╯"
 	if width < 4 {
@@ -404,9 +410,14 @@ func inputBox(draft string, width int, enabled bool, prefix string) []string {
 		}
 		return out
 	}
+	middle := mascot.Paint(clip(prefix+visibleDraft(draft, inner-cellLen(prefix)), inner), mascot.UI["text"], enabled)
+	if draft == "" && placeholder != "" {
+		room := max(0, inner-cellLen(prefix))
+		middle = mascot.Paint(prefix, mascot.UI["text"], enabled) + mascot.Paint(clip(hintText(placeholder, enabled), room), mascot.UI["border"], enabled)
+	}
 	return []string{
 		mascot.Paint(top, mascot.UI["border"], enabled),
-		mascot.Paint("│", mascot.UI["border"], enabled) + mascot.Paint(content, mascot.UI["text"], enabled) + mascot.Paint("│", mascot.UI["border"], enabled),
+		mascot.Paint("│", mascot.UI["border"], enabled) + middle + mascot.Paint("│", mascot.UI["border"], enabled),
 		mascot.Paint(bot, mascot.UI["border"], enabled),
 	}
 }
@@ -426,7 +437,11 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	var body []LogLine
 	scroll := opt.Scroll
 	fromTop := false
-	if opt.Pane == PanePlans && opt.Plans != nil {
+	if opt.Overlay != nil {
+		body = opt.Overlay.Lines
+		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
+		fromTop = true
+	} else if opt.Pane == PanePlans && opt.Plans != nil {
 		body = BuildPlanView(opt.Plans, width)
 		scroll = planWindowStart(body, bodyH)
 		fromTop = true
@@ -472,11 +487,14 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 			rows[index] = strings.Repeat(" ", width)
 		}
 	}
-	for offset, line := range composerRows(l, opt.Draft, composerPrefix(opt), enabled) {
+	for offset, line := range composerRows(l, opt.Draft, composerPrefix(opt), opt.Placeholder, enabled) {
 		rows[height-FooterRows-l.composer+offset] = line
 	}
 	if height > 2 {
 		segs, kind := footerSegments(opt, scroll)
+		if opt.Overlay != nil && !opt.QuitPending {
+			segs, kind = opt.Overlay.Footer, "muted"
+		}
 		if !l.typing {
 			segs = withoutEnter(segs)
 		}
@@ -560,6 +578,9 @@ type ComposeOptions struct {
 	LogView       []LogLine // laid-out tape, when the caller already has it
 	PlanRel       string    // open plan, repo-relative, for the header
 	Line          StatusLine
+	Overlay       *Overlay
+	Placeholder   string // dim hint in an empty composer
+	Preview       string // what ⏎ will do with the draft, shown in the footer
 }
 
 // Frame is one screen: full-width rows plus where the cursor goes.
@@ -709,102 +730,6 @@ func isPrintableKey(key string) bool {
 	return len(r) == 1 && unicode.IsPrint(r[0])
 }
 
-func handlePlanKey(b *PlanBrowser, draft *string, key string, page int) (bool, bool) {
-	switch key {
-	case "up":
-		b.Move(-1)
-		return true, false
-	case "down":
-		b.Move(1)
-		return true, false
-	case "pageup":
-		b.Move(-max(1, page))
-		return true, false
-	case "pagedown":
-		b.Move(max(1, page))
-		return true, false
-	case "home":
-		b.Cursor = 0
-		return true, false
-	case "end":
-		if n := len(b.Rows); n > 0 {
-			b.Cursor = n - 1
-		}
-		return true, false
-	case "left":
-		return b.Up(), false
-	case "esc":
-		if b.Prompting() {
-			b.CancelPrompt()
-			*draft = ""
-			return true, false
-		}
-		if b.Up() {
-			*draft = ""
-			return true, false
-		}
-		return true, true
-	case "\r", "\n":
-		if b.Screen == ScreenCreate {
-			act := b.CommitCreate(*draft)
-			if act == PlanOpenChat {
-				*draft = ""
-			}
-			return true, act == PlanOpenChat
-		}
-		if b.Screen == ScreenFolder {
-			_ = b.CommitFolder(*draft)
-			*draft = ""
-			return true, false
-		}
-		act := b.Activate()
-		switch act {
-		case PlanStartCreate:
-			b.Screen = ScreenCreate
-			*draft = ""
-			return true, false
-		case PlanStartFolder:
-			b.Screen = ScreenFolder
-			*draft = ""
-			return true, false
-		case PlanStartBrowse:
-			*draft = ""
-			return true, false
-		case PlanOpenChat:
-			return true, true
-		default:
-			return true, false
-		}
-	case "\x7f", "\x08":
-		if *draft != "" {
-			r := []rune(*draft)
-			*draft = string(r[:len(r)-1])
-			return true, false
-		}
-		if !b.Prompting() {
-			return b.Up(), false
-		}
-		return false, false
-	default:
-		if isPrintableKey(key) && runeLen(*draft) < draftCap {
-			*draft += key
-			return true, false
-		}
-		return false, false
-	}
-}
-
-func ComposerAnimation(text, current string) string {
-	switch strings.ToLower(strings.TrimSpace(text)) {
-	case "breakdance":
-		return "breakdance"
-	case "idle":
-		return "idle"
-	default:
-		return current
-	}
-}
-
 func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.File, eventsPath string) (int, error) {
 	columns, lines := Size()
 	a := newApp(color, enabled, animation, NewPlanBrowser(""), columns, lines)
@@ -812,6 +737,7 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 	if path == "" {
 		path = watch.DefaultEventPath()
 	}
+	a.feed = path
 	tail := watch.NewEventTail(path, true)
 	keys := newKeyReader(stdin)
 	paint := &renderer{full: true}

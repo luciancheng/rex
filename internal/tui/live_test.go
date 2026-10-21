@@ -77,18 +77,31 @@ func TestUserPromptBoxIsLeftAlignedInside(t *testing.T) {
 	}
 }
 
-func TestComposerAnimationBreakdance(t *testing.T) {
-	if ComposerAnimation("breakdance", "idle") != "breakdance" {
-		t.Fatal("expected breakdance")
+func TestParseVerb(t *testing.T) {
+	cases := map[string][3]string{
+		"sendoff":        {"sendoff", "", "y"},
+		" /SendOff ":     {"sendoff", "", "y"},
+		"send off":       {"sendoff", "", "y"},
+		"handoff":        {"sendoff", "", "y"},
+		"s":              {"sendoff", "", "y"},
+		"b":              {"brief", "", "y"},
+		"done":           {"done", "", "y"},
+		"pin plans-ui":   {"pin", "plans-ui", "y"},
+		"p":              {"pin", "", "y"},
+		"?":              {"help", "", "y"},
+		"/help":          {"help", "", "y"},
+		"breakdance":     {"breakdance", "", "y"},
+		"done now":       {"", "", ""},
+		"idle":           {"", "", ""},
+		"sendoff please": {"", "", ""},
+		"what is s":      {"", "", ""},
+		"":               {"", "", ""},
 	}
-	if ComposerAnimation(" BreakDance ", "idle") != "breakdance" {
-		t.Fatal("case/space")
-	}
-	if ComposerAnimation("idle", "breakdance") != "idle" {
-		t.Fatal("idle restore")
-	}
-	if ComposerAnimation("hello", "idle") != "idle" {
-		t.Fatal("plain text should keep current")
+	for in, want := range cases {
+		verb, arg, ok := parseVerb(in)
+		if verb != want[0] || arg != want[1] || ok != (want[2] == "y") {
+			t.Errorf("parseVerb(%q) = %q %q %v", in, verb, arg, ok)
+		}
 	}
 }
 

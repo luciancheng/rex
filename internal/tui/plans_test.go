@@ -255,10 +255,8 @@ func TestPlanCardSelectionSpansBox(t *testing.T) {
 func TestPlanCreateWarnsOnDuplicate(t *testing.T) {
 	repo := t.TempDir()
 	b := NewPlanBrowser(repo)
-	draft := "alpha"
 	b.Screen = ScreenCreate
-	_, open := handlePlanKey(b, &draft, "\r", 4)
-	if !open {
+	if b.CommitCreate("alpha") != PlanOpenChat {
 		t.Fatal("first create should open")
 	}
 	again := NewPlanBrowser(repo)

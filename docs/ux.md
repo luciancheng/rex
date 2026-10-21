@@ -438,7 +438,7 @@ If the pin lists no files, only the `scope.out` rule applies.
 - **Blocks.** `thinking`, `run`, `ask`, `reply`, `error`, plus the ones Rex adds itself: `note · local`, `plan`, `drift`, `sendoff`, `brief`, `done`, `before rex started`. Rex's own blocks exist only in this process and are never appended to the feed.
   - File-look commands and result echoes stay hidden.
   - Each reply is its own block.
-- **Prompt boxes.** User prompt boxes are right-aligned with left-aligned text. They are capped at 6 rows, followed by `(+N lines)`.
+- **Prompt boxes.** User prompt boxes are right-aligned with left-aligned text. They are capped at 6 rows, followed by `(+N more rows)`.
 - **Text cleanup.** Agent text is cleaned before layout:
   - Control characters and escape/OSC sequences are removed, so agent output cannot recolor the screen, retitle the window or write the clipboard.
   - Tabs are expanded.

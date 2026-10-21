@@ -199,7 +199,7 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 		{"browse", ComposeOptions{Pane: PanePlans, Plans: &browse}, []string{"open", "⏎ open", "esc back", "tab tape"}},
 		{"create", ComposeOptions{Pane: PanePlans, Plans: &create}, []string{"new plan", "⏎ create", "esc cancel"}},
 		{"tape", ComposeOptions{Pane: PaneChat}, []string{"tape", "tab plan", "↑↓ scroll"}},
-		{"typing", ComposeOptions{Pane: PaneChat, Draft: "x"}, []string{"tape", "⏎ note (local, not sent)"}},
+		{"typing", ComposeOptions{Pane: PaneChat, Draft: "x", Preview: "⏎ note (local, not sent)"}, []string{"tape", "⏎ note (local, not sent)"}},
 		{"quit", ComposeOptions{Pane: PaneChat, QuitPending: true}, []string{"ctrl+c again to quit"}},
 	}
 	for _, s := range screens {

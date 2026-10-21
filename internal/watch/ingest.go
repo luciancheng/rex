@@ -86,17 +86,9 @@ func isEphemeralGoBuild(exe string) bool {
 	return strings.Contains(filepath.ToSlash(exe), "/go-build")
 }
 
-// InstallCursorHook merges Rex's ingest command into ~/.cursor/hooks.json.
+// installCursor merges Rex's ingest command into ~/.cursor/hooks.json.
 // Other hooks, other keys and their formatting are kept byte for byte; an
 // unparseable file is reported and left alone.
-func InstallCursorHook(stdout io.Writer) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	return installCursor(home, stdout)
-}
-
 func installCursor(home string, stdout io.Writer) error {
 	path := filepath.Join(home, ".cursor", "hooks.json")
 	command := IngestCommand()
@@ -319,13 +311,9 @@ func PayloadsFromRaw(raw string) []map[string]any {
 	return payloads
 }
 
-func IngestRaw(raw, source, path string) []Event {
-	written, _ := ingest(raw, source, path)
-	return written
-}
-
-// ingest is IngestRaw that also returns the first write error, so a hook
-// can report it on stderr. It keeps going after an error.
+// ingest maps raw hook input from source and appends it to the feed at
+// path. It returns what it wrote and the first write error, so a hook can
+// report it on stderr, and it keeps going after an error.
 func ingest(raw, source, path string) ([]Event, error) {
 	var written []Event
 	var first error

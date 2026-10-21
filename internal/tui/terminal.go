@@ -17,7 +17,6 @@ const (
 	WrapOn     = "\033[?7h"
 	Home       = "\033[H"
 	Clear      = "\033[2J"
-	ClearDown  = "\033[J"
 	PasteOn    = "\033[?2004h"
 	PasteOff   = "\033[?2004l"
 	Reset      = "\033[0m"

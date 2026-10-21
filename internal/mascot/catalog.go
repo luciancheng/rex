@@ -18,10 +18,6 @@ func (s Sprite) Width() int {
 	return len(s.Rows[0])
 }
 
-func (s Sprite) Height() int {
-	return len(s.Rows)
-}
-
 type Frame struct {
 	Sprite string
 	Hold   int
@@ -38,7 +34,6 @@ var (
 )
 
 const (
-	DefaultSprite    = "idle"
 	DefaultAnimation = "idle"
 )
 

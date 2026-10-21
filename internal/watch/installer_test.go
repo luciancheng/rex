@@ -36,7 +36,7 @@ func readHooks(t *testing.T, path string) map[string]any {
 
 func TestInstallCursorHookFreshFile(t *testing.T) {
 	home := cursorHome(t)
-	if err := InstallCursorHook(io.Discard); err != nil {
+	if err := InstallHarness("cursor", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(home, ".cursor", "hooks.json")
@@ -80,7 +80,7 @@ func TestInstallCursorHookKeepsTheUsersFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(theirs), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if err := InstallCursorHook(io.Discard); err != nil {
+	if err := InstallHarness("cursor", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -107,7 +107,7 @@ func TestInstallCursorHookKeepsTheUsersFile(t *testing.T) {
 		}
 	}
 	before, _ := os.ReadFile(path)
-	if err := InstallCursorHook(io.Discard); err != nil {
+	if err := InstallHarness("cursor", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(path)
@@ -126,7 +126,7 @@ func TestInstallCursorHookRefusesInvalidJSON(t *testing.T) {
 	if err := os.WriteFile(path, []byte(jsonc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := InstallCursorHook(io.Discard)
+	err := InstallHarness("cursor", io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "not valid JSON") {
 		t.Fatalf("err %v", err)
 	}
@@ -143,7 +143,7 @@ func TestInstallCursorHookRefusesNonObjectHooks(t *testing.T) {
 	path := filepath.Join(home, ".cursor", "hooks.json")
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, []byte(`{"version":1,"hooks":[]}`), 0o644)
-	if err := InstallCursorHook(io.Discard); err == nil {
+	if err := InstallHarness("cursor", io.Discard); err == nil {
 		t.Fatal("expected an error")
 	}
 }
@@ -227,7 +227,7 @@ func TestInstallKeepsUserFieldsAndForeignCommands(t *testing.T) {
 	cmd := IngestCommand()
 	theirs := `{"version":1,"hooks":{"stop":[{"command":` + strconvQuote(cmd) + `,"timeout":5,"matcher":"Stop"},{"command":"rex ingest --source cursor && say done"}]}}`
 	os.WriteFile(path, []byte(theirs), 0o644)
-	if err := InstallCursorHook(io.Discard); err != nil {
+	if err := InstallHarness("cursor", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	got := readHooks(t, path)
@@ -251,7 +251,7 @@ func strconvQuote(s string) string {
 
 func TestFreshInstallIsReadable(t *testing.T) {
 	home := cursorHome(t)
-	if err := InstallCursorHook(io.Discard); err != nil {
+	if err := InstallHarness("cursor", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(home, ".cursor", "hooks.json"))
@@ -267,7 +267,7 @@ func TestInstallTreatsAnEmptyFileAsMissing(t *testing.T) {
 	path := filepath.Join(home, ".cursor", "hooks.json")
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, []byte("  \n"), 0o644)
-	if err := InstallCursorHook(io.Discard); err != nil {
+	if err := InstallHarness("cursor", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if got := readHooks(t, path); got["hooks"] == nil {
@@ -280,7 +280,7 @@ func TestInstallRefusesNonListHookAndBrokenSymlink(t *testing.T) {
 	path := filepath.Join(home, ".cursor", "hooks.json")
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, []byte(`{"version":1,"hooks":{"stop":{"command":"say done"}}}`), 0o644)
-	if err := InstallCursorHook(io.Discard); err == nil || !strings.Contains(err.Error(), "not a list") {
+	if err := InstallHarness("cursor", io.Discard); err == nil || !strings.Contains(err.Error(), "not a list") {
 		t.Fatalf("err %v", err)
 	}
 	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `{"command":"say done"}`) {
@@ -290,7 +290,7 @@ func TestInstallRefusesNonListHookAndBrokenSymlink(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, "nowhere.json"), path); err != nil {
 		t.Skip("symlinks unavailable")
 	}
-	if err := InstallCursorHook(io.Discard); err == nil || !strings.Contains(err.Error(), "broken symlink") {
+	if err := InstallHarness("cursor", io.Discard); err == nil || !strings.Contains(err.Error(), "broken symlink") {
 		t.Fatalf("err %v", err)
 	}
 	if info, _ := os.Lstat(path); info.Mode()&os.ModeSymlink == 0 {
@@ -303,7 +303,7 @@ func TestRetiredSingleRexEntryIsRemoved(t *testing.T) {
 	path := filepath.Join(home, ".cursor", "hooks.json")
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, []byte(`{"version":1,"hooks":{"beforeShellExecution":{"command":"'/old/rex' ingest --source cursor"},"stop":[]}}`), 0o644)
-	if err := InstallCursorHook(io.Discard); err != nil {
+	if err := InstallHarness("cursor", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := readHooks(t, path)["hooks"].(map[string]any)["beforeShellExecution"]; ok {
@@ -316,7 +316,7 @@ func TestUsersEmptyRetiredListIsKept(t *testing.T) {
 	path := filepath.Join(home, ".cursor", "hooks.json")
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, []byte(`{"version":1,"hooks":{"beforeShellExecution":[]}}`), 0o644)
-	if err := InstallCursorHook(io.Discard); err != nil {
+	if err := InstallHarness("cursor", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := readHooks(t, path)["hooks"].(map[string]any)["beforeShellExecution"]; !ok {
@@ -349,7 +349,7 @@ func TestHarnessRegistryCursor(t *testing.T) {
 	}
 	os.MkdirAll(filepath.Join(home, ".cursor"), 0o755)
 	cursorStatus := func() HarnessStatus {
-		for _, s := range HarnessStatuses() {
+		for _, s := range HarnessStatusesFor("") {
 			if s.Name == "cursor" {
 				return s
 			}

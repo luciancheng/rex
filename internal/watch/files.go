@@ -142,42 +142,6 @@ func IsFileLookEvent(ev Event) bool {
 	return p != "" && !strings.Contains(p, "://")
 }
 
-func FileVerb(ev Event) string {
-	if ev.Kind == "error" {
-		return ""
-	}
-	tool := MetaTool(ev)
-	if IsFileEditTool(tool) || IsFileEditEvent(ev) {
-		lower := strings.ToLower(ev.Text + " " + tool)
-		if strings.Contains(lower, "delete") {
-			return "deleted"
-		}
-		if ev.Kind == "command" {
-			return "writing"
-		}
-		return "wrote"
-	}
-	if IsFileLookTool(tool) || IsFileLookEvent(ev) {
-		return "read"
-	}
-	return ""
-}
-
-func VerbRank(verb string) int {
-	switch verb {
-	case "read":
-		return 1
-	case "writing":
-		return 2
-	case "wrote":
-		return 3
-	case "deleted":
-		return 4
-	default:
-		return 0
-	}
-}
-
 func ShortPath(p string) string {
 	p = strings.TrimSpace(p)
 	if p == "" {

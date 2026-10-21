@@ -8,30 +8,6 @@ import (
 
 const Reset = "\033[0m"
 
-func ColorEnabledDefault() bool {
-	return ColorEnabled(os.Stdout, nil)
-}
-
-func ColorEnabled(stdout *os.File, force *bool) bool {
-	if force != nil {
-		return *force
-	}
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	if os.Getenv("FORCE_COLOR") != "" {
-		return true
-	}
-	if stdout == nil {
-		return false
-	}
-	info, err := stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
-
 func ColorEnabledWriter(isTTY bool) bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
@@ -197,25 +173,6 @@ func RenderRows(rows []string, palette Palette, enabled bool) ([]string, error) 
 		lines = append(lines, b.String())
 	}
 	return lines, nil
-}
-
-func RenderSprite(sprite Sprite, color string, enabled bool) (string, error) {
-	if color == "" {
-		color = DefaultPalette
-	}
-	return RenderGrid(sprite.Rows, color, enabled)
-}
-
-func RenderGrid(rows []string, color string, enabled bool) (string, error) {
-	pal, err := PaletteFor(color)
-	if err != nil {
-		return "", err
-	}
-	lines, err := RenderRows(rows, pal, enabled)
-	if err != nil {
-		return "", err
-	}
-	return strings.Join(lines, "\n"), nil
 }
 
 func MustRenderRows(rows []string, palette Palette, enabled bool) []string {

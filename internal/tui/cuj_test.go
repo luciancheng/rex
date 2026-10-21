@@ -248,7 +248,7 @@ func TestFrameMatrix(t *testing.T) {
 			s.setup(a)
 			a.settle(size[0], size[1])
 			f := a.frameRows()
-			name := s.name + " " + strings.Join([]string{itoa(size[0]), itoa(size[1])}, "×")
+			name := s.name + " " + strings.Join([]string{strconv.Itoa(size[0]), strconv.Itoa(size[1])}, "×")
 			if !s.reached(a) {
 				t.Errorf("%s: setup didn't reach the screen", name)
 				continue
@@ -280,5 +280,3 @@ func TestFrameMatrix(t *testing.T) {
 		}
 	}
 }
-
-func itoa(n int) string { return strconv.Itoa(n) }

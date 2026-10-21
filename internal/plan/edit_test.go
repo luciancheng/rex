@@ -128,11 +128,11 @@ func TestDoneAddsLinesOnlyInsideTheTask(t *testing.T) {
 
 func TestEditInlineTaskStaysInline(t *testing.T) {
 	path := writePlan(t, editPlan)
-	if _, err := Edit(path, changes(SetString("b", "completed_notes", "short"))); err != nil {
+	if _, err := Edit(path, changes(SetList("b", "accomplished", []string{"short"}))); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path)
-	if !strings.Contains(string(got), `{"id": "b", "title": "Inline", "status": "pending", "completed_notes": "short"},`) {
+	if !strings.Contains(string(got), `{"id": "b", "title": "Inline", "status": "pending", "accomplished": ["short"]},`) {
 		t.Fatalf("%s", got)
 	}
 }
@@ -187,7 +187,7 @@ func TestEditRefusals(t *testing.T) {
 	if _, err := Edit(path, changes(SetStatus("zz", Done))); err == nil || !strings.Contains(err.Error(), "task zz is gone") {
 		t.Fatal(err)
 	}
-	for _, c := range []Change{SetString("a", "title", "x"), SetString("a", "does", "x"), SetString("", "accomplished", "x")} {
+	for _, c := range []Change{{Task: "a", Field: "title", Value: "x"}, SetList("a", "does", []string{"x"}), SetList("", "accomplished", []string{"x"}), {Task: "a", Field: "completed_notes", Value: "x"}} {
 		if _, err := Edit(path, changes(c)); err == nil || !strings.Contains(err.Error(), "does not write") {
 			t.Fatalf("%+v: %v", c, err)
 		}
@@ -313,14 +313,14 @@ func TestStateMergesAndPrunes(t *testing.T) {
 func FuzzEdit(f *testing.F) {
 	f.Add(editPlan, "a", "accomplished", "did it")
 	f.Add(strings.ReplaceAll(editPlan, "\n", "\r\n"), "b", "status", "done")
-	f.Add(`{"tasks":[{"id":"a","z":{}}]}`, "a", "completed_notes", "")
+	f.Add(`{"tasks":[{"id":"a","z":{}}]}`, "a", "verified_how", "")
 	f.Add("{\"tasks\":[\n\t{\n\t\t\"id\": \"a\"\n\t}\n]}", "a", "modified", "x\ny")
 	f.Fuzz(func(t *testing.T, src, task, field, value string) {
 		p, err := Parse([]byte(src))
 		if err != nil || p.ReadOnly != "" || !writable[field] {
 			return
 		}
-		c := SetString(task, field, value)
+		c := Change{Task: task, Field: field, Value: value}
 		if field == "accomplished" || field == "modified" || field == "verified_how" {
 			c = SetList(task, field, strings.Split(value, "\n"))
 		}

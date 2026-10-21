@@ -115,10 +115,8 @@ type HarnessStatus struct {
 	Here        bool // wired for this repo only
 }
 
-func HarnessStatuses() []HarnessStatus { return HarnessStatusesFor("") }
-
-// HarnessStatusesFor is HarnessStatuses, plus whether repo's own config
-// wires each harness.
+// HarnessStatusesFor is every registered harness: whether it is on this
+// machine, wired for the user, and wired by repo's own config ("" for none).
 func HarnessStatusesFor(repo string) []HarnessStatus {
 	home, err := os.UserHomeDir()
 	if err != nil {

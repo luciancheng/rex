@@ -263,20 +263,20 @@ func TestPrintCardIncludesIdentity(t *testing.T) {
 func TestNoColorEnv(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("FORCE_COLOR", "")
-	if mascot.ColorEnabledDefault() {
+	if mascot.ColorEnabledWriter(true) {
 		t.Fatal("NO_COLOR should disable color")
 	}
 }
 
 func TestUnknownPalette(t *testing.T) {
-	_, err := mascot.RenderSprite(mascot.MustSprite("idle"), "sparkle", true)
+	_, err := mascot.PaletteFor("sparkle")
 	if err == nil || !strings.Contains(err.Error(), "unknown color") {
 		t.Fatalf("%v", err)
 	}
 }
 
 func TestNoColorHasNoANSI(t *testing.T) {
-	out, err := mascot.RenderSprite(mascot.MustSprite("idle"), "yellow", false)
+	out, err := renderIdle(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestNoColorHasNoANSI(t *testing.T) {
 }
 
 func TestColorUsesTruecolor(t *testing.T) {
-	out, err := mascot.RenderSprite(mascot.MustSprite("idle"), "yellow", true)
+	out, err := renderIdle(true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,4 +401,15 @@ func TestHeaderWordAfterFailures(t *testing.T) {
 	if got := statusForTurn(ApplyTurn(TurnRunning, ended), "error"); got != "error" {
 		t.Fatalf("a turn that ended in an error: %q", got)
 	}
+}
+
+// renderIdle is the idle sprite in the yellow palette, as the live loop
+// paints it.
+func renderIdle(enabled bool) (string, error) {
+	pal, err := mascot.PaletteFor("yellow")
+	if err != nil {
+		return "", err
+	}
+	lines, err := mascot.RenderRows(mascot.MustSprite("idle").Rows, pal, enabled)
+	return strings.Join(lines, "\n"), err
 }

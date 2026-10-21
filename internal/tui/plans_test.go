@@ -384,8 +384,8 @@ func TestPlanOpenLatestAndRecents(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := NewPlanBrowser(repo)
-	if b.Latest() != fresh {
-		t.Fatalf("latest %q", b.Latest())
+	if plans := b.plans(); len(plans) == 0 || plans[0].path != fresh {
+		t.Fatalf("newest first: %+v", plans)
 	}
 	view := viewText(BuildPlanView(b, 48))
 	if !strings.Contains(view, "recents") || !strings.Contains(view, "archive/fresh.rex.json") {

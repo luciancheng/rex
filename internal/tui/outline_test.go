@@ -337,3 +337,136 @@ func TestContinueCardAfterRestart(t *testing.T) {
 		t.Fatal("start does not open a plan by itself")
 	}
 }
+
+func TestOutlineRuleStaysAsTheListScrolls(t *testing.T) {
+	var tasks []string
+	for i := 1; i <= 40; i++ {
+		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d"}`, i, i))
+	}
+	a, _, _ := openDemo(t, `{"title": "Big", "tasks": [`+strings.Join(tasks, ",")+`]}`, 120, 24)
+	for i := 0; i < 30; i++ {
+		press(a, "down")
+	}
+	frame := a.frame()
+	if !strings.Contains(frame, "── Big") || !strings.Contains(frame, "tasks 31/40") || !strings.Contains(frame, "↑ more") || !strings.Contains(frame, "▌ ○ t31") {
+		t.Fatalf("deep in the list, the rule and its position stay on screen\n%s", frame)
+	}
+}
+
+func TestContinueKeepsTheOpenPlan(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "down") // load-outline
+	sel := a.outline.sel
+	press(a, "esc") // the Library, Continue selected
+	os.WriteFile(path, []byte(`{"tasks": [`), 0o644)
+	c.t = c.t.Add(docPollEvery + time.Millisecond)
+	press(a, "\r")
+	if a.at != atOutline || a.outline.sel != sel {
+		t.Fatalf("Continue keeps the selection: at=%v sel=%q, want %q", a.at, a.outline.sel, sel)
+	}
+	if a.doc.plan == nil || a.doc.err != "" {
+		t.Fatalf("a half-saved file right after Continue keeps the last good copy: err=%q", a.doc.err)
+	}
+}
+
+func TestTaskDetailKeepsItsTaskWhenItLeaves(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "down", "\r")
+	if a.at != atTaskDetail || a.outline.sel != "load-outline" {
+		t.Fatalf("at=%v sel=%q", a.at, a.outline.sel)
+	}
+	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"id": "load-outline"`, `"id": "renamed"`, 1)), 0o644)
+	later(a, c)
+	if a.outline.sel != "load-outline" || !strings.Contains(a.frame(), "no longer in the file") {
+		t.Fatalf("the detail says its task left instead of showing another\n%s", a.frame())
+	}
+	press(a, "esc")
+	if a.outline.sel == "load-outline" {
+		t.Fatal("back on the outline, the selection falls back to a task that exists")
+	}
+}
+
+func TestNarrowParentsKeepTheirRollup(t *testing.T) {
+	src := `{"tasks": [{"id": "ui", "title": "UI"}, {"id": "a", "parent": "ui", "status": "done"}, {"id": "b", "parent": "ui"}]}`
+	a, _, _ := openDemo(t, src, 80, 24)
+	found := false
+	for _, row := range a.frameRows().Rows {
+		if strings.Contains(row, " ui ") && strings.Contains(row, "UI") {
+			found = true
+			if !strings.Contains(row, "1/2") {
+				t.Fatalf("a parent shows its rollup at 38 columns: %q", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no parent row\n%s", a.frame())
+	}
+}
+
+func TestPlanFilesThatAreNotFilesAreRefused(t *testing.T) {
+	if _, err := os.Stat("/dev/zero"); err != nil {
+		t.Skip("no /dev/zero")
+	}
+	a := testApp(t)
+	root := filepath.Join(a.plans.Repo, "rex", "plans")
+	os.MkdirAll(root, 0o755)
+	if os.Symlink("/dev/zero", filepath.Join(root, "zero.rex.json")) != nil {
+		t.Skip("no symlinks")
+	}
+	done := make(chan struct{})
+	go func() {
+		b := NewPlanBrowser(a.plans.Repo)
+		b.Rebuild()
+		d := openDoc(filepath.Join(root, "zero.rex.json"), time.Now())
+		if d.err == "" {
+			t.Error("a device named .rex.json is not read as a plan")
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading a device named .rex.json hung")
+	}
+}
+
+func TestATornSaveOfTheSameBytesIsQuiet(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	os.WriteFile(path, []byte(""), 0o644)
+	later(a, c)
+	os.WriteFile(path, []byte(demoPlan), 0o644)
+	later(a, c)
+	if strings.Contains(a.statusLine().Text, "plan updated") {
+		t.Fatalf("toast %q", a.statusLine().Text)
+	}
+}
+
+func TestOutlineComposerTakesVerbs(t *testing.T) {
+	a, _, _ := openDemo(t, demoPlan, 120, 32)
+	if frame := a.frame(); !strings.Contains(frame, "│ > ") {
+		t.Fatalf("the outline's composer is the verb prompt\n%s", frame)
+	}
+	typeText(a, "zap")
+	if frame := a.frame(); strings.Contains(frame, "⏎ detail") || !strings.Contains(frame, "⏎ not a verb") {
+		t.Fatalf("the footer previews what ⏎ does with the draft\n%s", frame)
+	}
+}
+
+func TestDependingOnAParentWaitsForItsLeaves(t *testing.T) {
+	p, err := plan.Parse([]byte(`{"tasks": [
+		{"id": "ui", "title": "UI"},
+		{"id": "a", "parent": "ui", "status": "done"},
+		{"id": "b", "parent": "ui", "status": "skipped"},
+		{"id": "next", "depends_on": ["ui"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := p.Graph()
+	if unmet := g.Unmet(p.Task("next")); len(unmet) != 0 {
+		t.Fatalf("every leaf under ui is finished, so next can start: %v", unmet)
+	}
+	if pin := pinOf(p, g); pin == nil || pin.ID != "next" {
+		t.Fatalf("pin %v", pin)
+	}
+}

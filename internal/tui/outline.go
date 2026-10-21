@@ -19,6 +19,7 @@ type planDoc struct {
 	path string
 	plan *plan.Plan // last good read; nil until the file has parsed once
 	hash string     // the bytes on disk at the last read
+	good string     // hash of the bytes behind plan
 	own  string     // hash of Rex's own last write: taken in quietly
 
 	bad      string // why the bytes on disk don't parse, not yet shown
@@ -40,10 +41,18 @@ func openDoc(path string, now time.Time) *planDoc {
 // and what changed in the plan when someone else edited it.
 func (d *planDoc) read(now time.Time, first bool) (changed bool, summary string) {
 	d.polled = now
-	data, err := os.ReadFile(d.path)
-	if err != nil {
+	data, err := plan.ReadFile(d.path)
+	if os.IsNotExist(err) {
 		changed = !d.gone
 		d.gone = true
+		return changed, ""
+	}
+	if err != nil {
+		// There, but not readable as a plan (a folder, a FIFO, too big, no
+		// permission): say so, keep the last good copy.
+		why := "can't read the file: " + err.Error()
+		changed = d.err != why || d.gone
+		d.err, d.gone, d.hash = why, false, ""
 		return changed, ""
 	}
 	if d.gone {
@@ -69,9 +78,11 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, summary string)
 		}
 		return changed, ""
 	}
-	old := d.plan
-	d.plan, d.bad, d.badPolls, d.err = p, "", 0, ""
-	if old == nil || h == d.own {
+	old, oldGood := d.plan, d.good
+	d.plan, d.good, d.bad, d.badPolls, d.err = p, h, "", 0, ""
+	if old == nil || h == d.own || h == oldGood {
+		// First read, Rex's own write, or a save that tore and came back
+		// to the same bytes: nothing to announce.
 		return true, ""
 	}
 	return true, planChanges(old, p)
@@ -235,6 +246,8 @@ func defaultSel(p *plan.Plan) string {
 // keepSel keeps the selection on the same task after a reload; if it is
 // gone, it falls back to the pin, then the title.
 func (v *outlineView) keepSel(p *plan.Plan) {
+	// (Task detail keeps its task even when it leaves the file, so the
+	// screen can say so instead of showing another task.)
 	if p == nil || v.sel == "" || findTask(p, v.sel) != nil {
 		return
 	}
@@ -394,8 +407,8 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 		}
 		indent := indentOf(t)
 		mark, tag, tagKind := glyph(t, g, pin)
-		if !wide && tagKind != "error" {
-			tag = "" // narrow rows keep the title; the glyph still says it
+		if !wide && tagKind != "error" && g.Leaf(t) {
+			tag = "" // narrow rows keep the title; the glyph still says it, and a parent keeps its rollup
 		}
 		name := t.Title
 		if name == "" {
@@ -469,9 +482,12 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 	}
 	lines := []LogLine{{Kind: "command", Text: ruleText}}
 	if v.sel == "" {
-		lines[0] = selectedLine(head, width)
+		lines[0] = selectedLine(ruleText, width)
 	}
 	lines = append(lines, top...)
+	for i := range lines {
+		lines[i].Head = true // the rule, last ✓ and warnings stay put while tasks scroll
+	}
 	return append(lines, tasks...)
 }
 

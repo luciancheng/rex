@@ -177,7 +177,9 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 		body = taskDetail(a.doc, v.sel, width)
 	default:
 		body = outlineBody(a.doc, v, width, viewH)
-		v.view = windowStart(body, viewH, v.view)
+		head := headOf(body)
+		pinned := planHead(body[:head], len(body), viewH)
+		v.view = windowStart(body[head:], viewH-len(pinned), v.view)
 		return body, v.view
 	}
 	v.scroll = max(0, min(v.scroll, len(body)-viewH))
@@ -257,6 +259,9 @@ func (a *app) preview() string {
 	}
 	if a.pane == PaneChat {
 		return "⏎ note (local, not sent)"
+	}
+	if a.pane == PanePlans && a.at != atLibrary && a.overlay[a.pane] == overlayNone {
+		return "⏎ not a verb" // the outline and detail take verbs only
 	}
 	return ""
 }
@@ -738,9 +743,14 @@ func (a *app) planEnter() bool {
 func (a *app) openedPlan() {
 	path := a.plans.Current
 	now := a.now()
-	a.doc = openDoc(path, now)
+	if a.doc == nil || a.doc.path != path {
+		a.doc = openDoc(path, now)
+		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
+		a.toast = StatusLine{} // the last plan's news isn't this one's
+	}
+	// Continue on the plan already open keeps its last good copy, its
+	// debounce and its selection.
 	a.at = atOutline
-	a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 	a.draft = ""
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
 		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
@@ -808,6 +818,7 @@ func (a *app) docKey(key string) bool {
 			return a.toLibrary()
 		}
 		a.at = atOutline
+		a.outline.keepSel(a.doc.plan) // the task read in detail may be gone
 		return true
 	case "\r", "\n":
 		text := strings.TrimSpace(a.draft)
@@ -859,7 +870,9 @@ func (a *app) pollDoc() bool {
 	if !changed {
 		return false
 	}
-	a.outline.keepSel(a.doc.plan)
+	if a.at != atTaskDetail {
+		a.outline.keepSel(a.doc.plan)
+	}
 	if summary != "" {
 		a.flash("plan updated · "+summary, "accent")
 		before := a.logLines()

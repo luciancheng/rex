@@ -77,7 +77,7 @@ func Edit(path string, op Op) (*Saved, error) {
 		path = resolved
 	}
 	for attempt := 0; attempt < 3; attempt++ {
-		data, err := os.ReadFile(path)
+		data, err := ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil, fmt.Errorf("%s is gone", filepath.Base(path))

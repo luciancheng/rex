@@ -710,8 +710,10 @@ func walkPlans(root string) []planStat {
 		if !IsPlanFile(d.Name()) {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil {
+		// Only regular files (or symlinks to one) are plans: a FIFO or a
+		// device named *.rex.json would hang the reads that follow.
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, rerr := filepath.Rel(root, path)
@@ -904,8 +906,8 @@ func (row PlanRow) Color() string {
 }
 
 func composerPrefix(opt ComposeOptions) string {
-	if opt.Overlay != nil || opt.Pane != PanePlans || opt.Plans == nil {
-		return InputPrefix
+	if opt.Overlay != nil || opt.Pane != PanePlans || opt.Plans == nil || opt.PlanView != nil {
+		return InputPrefix // the open plan, like the tape, takes verbs
 	}
 	switch opt.Plans.Screen {
 	case ScreenCreate, ScreenFolder:
@@ -1079,11 +1081,15 @@ func planHead(head []LogLine, total, viewH int) []LogLine {
 		return head
 	}
 	keep := max(0, viewH-3)
-	rank := map[string]int{"error": 0, "idle": 1, "command": 2, "folder": 3}
+	rank := map[string]int{"error": 1, "idle": 2, "command": 3, "folder": 4}
 	picked := make([]bool, len(head))
-	for r, n := 0, 0; r <= 3 && n < keep; r++ {
+	for r, n := 0, 0; r <= 4 && n < keep; r++ {
 		for i, line := range head {
-			if got, ok := rank[line.Kind]; ok && got == r && n < keep {
+			got, ok := rank[line.Kind]
+			if line.Selected {
+				got, ok = 0, true // the selection never leaves the screen
+			}
+			if ok && got == r && n < keep {
 				picked[i] = true
 				n++
 			}

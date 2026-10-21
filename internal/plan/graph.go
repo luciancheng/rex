@@ -74,7 +74,9 @@ func (g *Graph) Depth(t *Task) int {
 func (g *Graph) Cyclic(t *Task) bool { return t.ID != "" && g.cyclic[t.ID] }
 
 // Unmet lists t's dependencies that are not finished, in order. An id
-// that names no task is returned with a leading "?".
+// that names no task is returned with a leading "?". A parent is finished
+// when it is marked so, or when every leaf under it is (Rex never writes a
+// parent's status, so waiting on the mark alone could wait forever).
 func (g *Graph) Unmet(t *Task) []string {
 	var out []string
 	for _, id := range t.DependsOn {
@@ -82,7 +84,12 @@ func (g *Graph) Unmet(t *Task) []string {
 		switch {
 		case dep == nil:
 			out = append(out, "?"+id)
-		case !Finished(dep.Status):
+		case Finished(dep.Status):
+		case !g.Leaf(dep):
+			if done, total := g.Rollup(dep); total == 0 || done < total {
+				out = append(out, id)
+			}
+		default:
 			out = append(out, id)
 		}
 	}

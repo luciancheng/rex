@@ -86,6 +86,51 @@ CI: GitHub Actions, Ubuntu/macOS/Windows, Go 1.22 and 1.24.
 
 After sprite or TUI changes, restart a running `rex start`. Tests do not replace looking at the terminal.
 
+## Code conventions
+
+- Match the code around you. Comments are rare and say *why*. Names are short (`b` for a browser, `ev` for an event, `opt` for compose options).
+- Tests go in a `*_test.go` file in the same package. Use `t.TempDir()` for any repo, plans dir or feed file, and never touch the real `~` or `~/.rex`. Assert on rendered text with `viewText(BuildLogView(...))` / `viewText(BuildPlanView(...))`, and use `NO_COLOR`-style `Enabled: false` frames when you need plain text.
+- `LogLine.Kind` picks the color. It is looked up in `mascot.UI`, then in `kindColor`. A new UI role goes in `mascot.UI`, not in a new palette.
+- Pane width math uses `runeLen` / `clip` / `padRight`, never `len()`.
+- The watch package maps vendor JSON to `watch.Event`; nothing outside the adapters knows vendor names. The TUI paints kinds.
+- Keep stdout clean in `rex ingest`. Hooks treat stdout as agent input, and exit code 2 as "block".
+
+### Go 1.22 floor
+
+`go.mod` says `go 1.22` and CI runs 1.22. Newer toolchains compile code that 1.22 rejects, so do not use:
+
+- range-over-func or the `iter` package; `maps.Keys/Values`, `slices.Collect/Sorted/Chunk` (1.23)
+- `unique`, `os.Root`, `t.Chdir`, `t.Context`, `b.Loop`, `testing/synctest`
+- `strings.Lines/SplitSeq/FieldsSeq`, `bytes.Lines`, `encoding/json/v2`, the `omitzero` tag (1.24+)
+
+`min`/`max`, `clear`, range over an int, and `slices`/`maps` functions from 1.21 are fine.
+
+## Workflow
+
+- **Branches.** Branch from `dev`. When a change depends on unmerged work, stack it: cut the branch from the previous one and open the PR against it. Name branches after the issue: `feature/task_completion`, `fix/key_input`, `docs/ux_spec`.
+- **One branch, one issue.** Each branch closes exactly one issue. Work with no issue gets one first.
+- **PR body.** Include the problem, what changed, why it is needed, how it works, the tests run (with output), terminal captures for TUI changes, and any existing behavior or test that changed on purpose. Stacked PRs say what they sit on: merge them bottom-up and don't squash.
+- **Fixing a lower PR in a stack.** Add a commit to that branch, then rebase the stack with `git rebase --update-refs` and push each branch with `--force-with-lease`.
+- **Before opening a PR,** run the gate and a review pass:
+
+```bash
+test -z "$(gofmt -l .)"
+go vet ./... && GOOS=windows go vet ./...
+staticcheck ./...
+go test -race ./...
+go1.22.12 test ./...               # golang.org/dl/go1.22.12
+git diff --exit-code go.mod go.sum # newer toolchains may add a toolchain line
+```
+
+- **Review pass.** Read-only reviewers, each with one job:
+  - critique the design and how it interacts with the system;
+  - drive the TUI in tmux on its own socket (`tmux -S <dir>/tmux.sock`), only when the UI changed;
+  - try to break it and check for regressions;
+  - lint and format;
+  - a final readiness check after fixes.
+
+  Fix each finding, or say in the PR why it was skipped.
+
 ## Definition of done
 
 - Follows this file and any PNG the human attached.

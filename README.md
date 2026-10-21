@@ -137,6 +137,8 @@ CI runs the same suite on Ubuntu, macOS, and Windows across Go 1.22 and 1.24.
 3. Add `*_test.go` next to the package for new behavior.
 4. Run `go test ./...` before opening a pull request.
 
+Code conventions, the Go 1.22 floor, and the branch / PR workflow are in [agents.md](agents.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

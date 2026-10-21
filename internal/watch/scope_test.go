@@ -82,3 +82,78 @@ func TestScopeDisplayIsRepoRelative(t *testing.T) {
 		t.Fatalf("%q", ev.Text)
 	}
 }
+
+func TestScopeOriginDecidesOverAFile(t *testing.T) {
+	repo, other := t.TempDir(), t.TempDir()
+	s := NewScope(repo)
+	// Another repo's agent reading a file here is still another repo's.
+	ev := Event{Kind: "command", Text: "Read", Meta: map[string]any{"cwd": other, "path": filepath.Join(repo, "a.go")}}
+	if in, known := s.Owns(ev); in || !known {
+		t.Fatalf("in=%v known=%v", in, known)
+	}
+	// An agent started above the repo: its file decides, and with no file
+	// it is in.
+	parent := filepath.Dir(repo)
+	if in, _ := s.Owns(Event{Kind: "command", Meta: map[string]any{"cwd": parent, "path": filepath.Join(repo, "a.go")}}); !in {
+		t.Fatal("a parent-folder agent editing here is in")
+	}
+	if in, _ := s.Owns(Event{Kind: "command", Meta: map[string]any{"cwd": parent, "path": filepath.Join(other, "a.go")}}); in {
+		t.Fatal("a parent-folder agent editing elsewhere is out")
+	}
+	if in, known := s.Owns(Event{Kind: "text", Text: "done", Meta: map[string]any{"cwd": parent}}); !in || !known {
+		t.Fatal("a parent-folder agent's reply is shown")
+	}
+	// Prose is never read for a path.
+	if _, known := s.Owns(Event{Kind: "text", Text: "see " + filepath.Join(other, "x.go"), Meta: map[string]any{}}); known {
+		t.Fatal("a path in a reply is not an origin")
+	}
+}
+
+func TestScopeDisplayLeavesProseAlone(t *testing.T) {
+	repo := t.TempDir()
+	s := NewScope(repo)
+	reply := "see " + repo + "//a/../b and https://x.dev/"
+	if got := s.Display(Event{Kind: "text", Text: reply}).Text; got != reply {
+		t.Fatalf("a reply was rewritten: %q", got)
+	}
+	cmd := s.Display(Event{Kind: "command", Text: "go test " + filepath.Join(repo, "internal") + string(filepath.Separator) + "...", Meta: map[string]any{"command": "x"}})
+	if strings.Contains(cmd.Text, repo) || !strings.Contains(cmd.Text, "internal") {
+		t.Fatalf("a shell line keeps an absolute repo path: %q", cmd.Text)
+	}
+}
+
+func TestScopeDisplayKeepsCaseAndHome(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("case-folding filesystems only")
+	}
+	repo := t.TempDir()
+	os.MkdirAll(filepath.Join(repo, "Internal"), 0o755)
+	s := NewScope(strings.ToUpper(repo)) // the repo spelled in another case
+	abs := filepath.Join(repo, "Internal", "Plans.go")
+	if got := s.Display(Event{Kind: "command", Text: "Write " + abs, Meta: map[string]any{"path": abs}}).Text; got != "Write Internal/Plans.go" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestStampOriginTakesStringsOnly(t *testing.T) {
+	ev := Event{}
+	stampOrigin(&ev, map[string]any{"cwd": map[string]any{"x": 1}, "workspace_roots": []any{"/a", 3, map[string]any{}}})
+	if _, ok := ev.Meta["cwd"]; ok {
+		t.Fatal("an object is no cwd")
+	}
+	if roots := ev.Meta["roots"].([]any); len(roots) != 1 || roots[0] != "/a" {
+		t.Fatalf("roots %v", roots)
+	}
+}
+
+func TestDedupeKeepsTheSameLineFromTwoRepos(t *testing.T) {
+	a := Event{Kind: "command", Text: "go test ./...", TS: 10, Meta: map[string]any{"cwd": "/one"}}
+	b := Event{Kind: "command", Text: "go test ./...", TS: 11, Meta: map[string]any{"cwd": "/two"}}
+	if IsDuplicate(b, []Event{a}, 4) {
+		t.Fatal("two repos running the same command are two events")
+	}
+	b.Meta["cwd"] = "/one"
+	if !IsDuplicate(b, []Event{a}, 4) {
+		t.Fatal("the same repo within the window is a duplicate")
+	}
+}

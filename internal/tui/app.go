@@ -210,16 +210,7 @@ func (a *app) logLines() int {
 // ones worth drawing. A scrolled-up view keeps showing the same lines while
 // new ones arrive below (until MaxLog trims the oldest).
 func (a *app) ingest(fresh []watch.Event) bool {
-	// Rex's own blocks (notes, plan lines) are made here, never read from
-	// the feed: a feed line claiming to be one is dropped.
-	kept := fresh[:0:0]
-	for _, ev := range fresh {
-		if ev.Source != "rex" {
-			kept = append(kept, ev)
-		}
-	}
-	fresh = kept
-	fresh = a.own(fresh)
+	fresh = a.own(fromFeed(fresh))
 	if len(fresh) == 0 {
 		return false
 	}
@@ -264,6 +255,24 @@ func (a *app) keys(pressed []string) bool {
 	return changed
 }
 
+// feedKinds are the kinds an adapter writes (agents.md, "Kinds").
+var feedKinds = map[string]bool{
+	"thought": true, "text": true, "user": true, "command": true,
+	"question": true, "result": true, "idle": true, "error": true,
+}
+
+// fromFeed drops feed lines that claim to be Rex's own blocks (a note,
+// the "before rex started" rule): those are made in this process only.
+func fromFeed(events []watch.Event) []watch.Event {
+	kept := events[:0:0]
+	for _, ev := range events {
+		if ev.Source != "rex" && feedKinds[ev.Kind] {
+			kept = append(kept, ev)
+		}
+	}
+	return kept
+}
+
 // own keeps the events that belong to this repo, with paths shown relative
 // to it, and counts the rest. Events with no known origin are kept.
 func (a *app) own(events []watch.Event) []watch.Event {
@@ -283,7 +292,7 @@ func (a *app) own(events []watch.Event) []watch.Event {
 // is under two minutes old, and the last few events are painted under a
 // "before rex started" rule.
 func (a *app) warmStart(recent []watch.Event, now time.Time) {
-	recent = a.own(recent)
+	recent = a.own(fromFeed(recent))
 	if len(recent) == 0 {
 		return
 	}
@@ -291,18 +300,16 @@ func (a *app) warmStart(recent []watch.Event, now time.Time) {
 	if now.Sub(time.Unix(0, int64(newest*1e9))) < warmTurnAge {
 		for _, ev := range recent {
 			a.turn = ApplyTurn(a.turn, ev)
-			if watch.KeepInPane(ev) {
+			if watch.KeepInPane(ev) || ev.Kind == "idle" { // as in ingest: a turn end clears an old error
 				a.lastKind = ev.Kind
 			}
 		}
 		a.syncTurn()
 	}
+	// The same merging and dedupe as the live tape, so a growing reply is
+	// one block; then the last few blocks.
 	var shown []watch.Event
-	for _, ev := range recent {
-		if watch.KeepInPane(ev) {
-			shown = append(shown, ev)
-		}
-	}
+	ExtendLog(&shown, recent)
 	if len(shown) > warmEvents {
 		shown = shown[len(shown)-warmEvents:]
 	}

@@ -1,7 +1,6 @@
 package watch
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,17 +14,18 @@ func stampOrigin(ev *Event, payload map[string]any) {
 	if ev.Meta == nil {
 		ev.Meta = map[string]any{}
 	}
+	// Only strings count: an object in these fields is no path.
 	for _, key := range []string{"cwd", "directory", "workspace"} {
-		if v := strings.TrimSpace(strField(payload, key)); v != "" {
-			ev.Meta["cwd"] = v
+		if v, _ := payload[key].(string); strings.TrimSpace(v) != "" {
+			ev.Meta["cwd"] = strings.TrimSpace(v)
 			break
 		}
 	}
 	if roots, ok := payload["workspace_roots"].([]any); ok {
 		var list []any
 		for _, r := range roots {
-			if s := strings.TrimSpace(fmt.Sprint(r)); s != "" && s != "<nil>" {
-				list = append(list, s)
+			if s, _ := r.(string); strings.TrimSpace(s) != "" {
+				list = append(list, strings.TrimSpace(s))
 			}
 		}
 		if len(list) > 0 {
@@ -49,12 +49,17 @@ func stampOrigin(ev *Event, payload map[string]any) {
 // Scope decides whether an event belongs to this repo. The feed is one
 // file per machine, so another repo's agent writes to it too.
 type Scope struct {
-	root string
-	fold bool
+	root  string // the repo, symlinks resolved
+	given string // the repo as Rex was started in it
+	fold  bool
 }
 
 func NewScope(repo string) Scope {
-	return Scope{root: resolvePath(repo), fold: runtime.GOOS == "darwin" || runtime.GOOS == "windows"}
+	given := ""
+	if repo != "" {
+		given = filepath.Clean(repo)
+	}
+	return Scope{root: resolvePath(repo), given: given, fold: runtime.GOOS == "darwin" || runtime.GOOS == "windows"}
 }
 
 // resolvePath cleans a path and resolves symlinks (macOS /tmp is
@@ -93,13 +98,24 @@ func (s Scope) Rel(path string) (string, bool) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false
 	}
-	if s.fold {
-		// Hand back the original case for display.
-		if r, err := filepath.Rel(s.root, resolvePath(path)); err == nil && strings.EqualFold(r, rel) {
-			rel = r
+	if orig := resolvePath(path); s.fold && rel != "." && len(orig) >= len(rel) {
+		// Hand back the path's own case for display, not the folded one.
+		if tail := orig[len(orig)-len(rel):]; strings.EqualFold(tail, rel) {
+			rel = tail
 		}
 	}
 	return filepath.ToSlash(rel), true
+}
+
+// under reports whether the repo is inside dir: an agent started in a
+// parent folder of the repo.
+func (s Scope) under(dir string) bool {
+	d, root := resolvePath(dir), s.root
+	if s.fold {
+		d, root = strings.ToLower(d), strings.ToLower(root)
+	}
+	rel, err := filepath.Rel(d, root)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Contains reports whether path is inside the repo.
@@ -108,61 +124,82 @@ func (s Scope) Contains(path string) bool {
 	return ok && filepath.IsAbs(path)
 }
 
-// Owns says whether ev belongs to this repo. known is false when the event
-// carries no working directory, root or absolute path; such events are shown.
+// Owns says whether ev belongs to this repo. Where the event came from
+// decides: its working directory or workspace roots, so another repo's
+// agent reading a file here stays another repo's (its turn end would be
+// hidden too). An agent started in a folder above the repo is decided by
+// the file it touched, and is in when it touched none. Only an event with
+// no origin at all is decided by its file. known is false when there is
+// nothing to go on; such events are shown.
 func (s Scope) Owns(ev Event) (in, known bool) {
-	var dirs []string
-	if cwd, _ := ev.Meta["cwd"].(string); cwd != "" {
-		dirs = append(dirs, cwd)
+	var origins []string
+	if cwd, _ := ev.Meta["cwd"].(string); filepath.IsAbs(cwd) {
+		origins = append(origins, cwd)
 	}
 	if roots, ok := ev.Meta["roots"].([]any); ok {
 		for _, r := range roots {
-			if s, ok := r.(string); ok {
-				dirs = append(dirs, s)
+			if s, ok := r.(string); ok && filepath.IsAbs(s) {
+				origins = append(origins, s)
 			}
 		}
 	}
-	if p := EventPath(ev); filepath.IsAbs(p) {
-		dirs = append(dirs, p)
-	}
-	for _, d := range dirs {
-		if !filepath.IsAbs(d) {
-			continue
-		}
-		known = true
-		if s.Contains(d) || s.inside(d) {
+	above := false
+	for _, d := range origins {
+		if s.Contains(d) {
 			return true, true
 		}
+		above = above || s.under(d)
 	}
-	return false, known
+	if len(origins) > 0 && !above {
+		return false, true
+	}
+	if file := s.eventFile(ev); file != "" {
+		return s.Contains(file), true
+	}
+	return above, above
 }
 
-// inside covers a cwd that is the repo root itself or a folder above a
-// path in it (an agent started in a parent folder of the repo).
-func (s Scope) inside(dir string) bool {
-	d := resolvePath(dir)
-	root := s.root
-	if s.fold {
-		d, root = strings.ToLower(d), strings.ToLower(root)
+// eventFile is the absolute file an event is about: its meta path, or for
+// a tool line, the path in its text. Prose (a reply, a thought, a prompt)
+// is never read for paths.
+func (s Scope) eventFile(ev Event) string {
+	p, _ := ev.Meta["path"].(string)
+	if p = strings.TrimSpace(p); p == "" && !isProse(ev.Kind) {
+		p = pathFromText(ev.Text)
 	}
-	return d == root
+	if len(p) > 4096 || !filepath.IsAbs(p) {
+		return ""
+	}
+	return p
 }
 
-// Display rewrites absolute paths inside the repo to repo-relative ones and
-// paths under home to ~, for the tape.
+func isProse(kind string) bool { return kind == "text" || kind == "thought" || kind == "user" }
+
+// Display rewrites absolute paths for the tape: inside the repo to
+// repo-relative, under home to ~. Only tool lines are touched, and only at
+// their real paths; a reply, thought or prompt is shown as written.
 func (s Scope) Display(ev Event) Event {
-	p := EventPath(ev)
-	if p == "" || !filepath.IsAbs(p) {
+	if isProse(ev.Kind) {
 		return ev
 	}
-	short := ShortPath(p)
-	if rel, ok := s.Rel(p); ok {
-		short = rel
-	} else if home, err := os.UserHomeDir(); err == nil {
-		if r, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(r, "..") {
-			short = "~/" + filepath.ToSlash(r)
+	if p := s.eventFile(ev); p != "" {
+		short := ShortPath(p)
+		if rel, ok := s.Rel(p); ok {
+			short = rel
+		} else if home, err := os.UserHomeDir(); err == nil {
+			if r, err := filepath.Rel(home, p); err == nil && r == "." {
+				short = "~"
+			} else if err == nil && !strings.HasPrefix(r, "..") {
+				short = "~/" + filepath.ToSlash(r)
+			}
+		}
+		ev.Text = strings.ReplaceAll(ev.Text, p, short)
+	}
+	// Any other mention of the repo in a command line drops the repo prefix.
+	for _, root := range []string{s.given, s.root} {
+		if root != "" && root != string(filepath.Separator) {
+			ev.Text = strings.ReplaceAll(ev.Text, root+string(filepath.Separator), "")
 		}
 	}
-	ev.Text = strings.ReplaceAll(ev.Text, p, short)
 	return ev
 }

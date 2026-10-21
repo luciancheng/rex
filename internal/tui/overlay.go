@@ -90,7 +90,9 @@ func helpLines(width int, feed string, hidden int) []LogLine {
 		if hidden == 1 {
 			noun = "event"
 		}
-		lines = append(lines, LogLine{Kind: "idle", Text: "  " + fmt.Sprintf("%d %s from other folders hidden", hidden, noun)})
+		for _, w := range wrap(fmt.Sprintf("%d %s from other folders hidden", hidden, noun), max(8, width-2)) {
+			lines = append(lines, LogLine{Kind: "idle", Text: "  " + w})
+		}
 	}
 	return lines
 }

@@ -60,7 +60,7 @@ func IsDuplicate(event Event, recent []Event, window float64) bool {
 	}
 	for i := len(recent) - 1; i >= 0; i-- {
 		prev := recent[i]
-		if prev.Kind != event.Kind {
+		if prev.Kind != event.Kind || !sameOrigin(prev, event) {
 			continue
 		}
 		if NormalizeText(prev.Text) != key {
@@ -179,4 +179,12 @@ func compactLines(lines []string) []string {
 		return []string{""}
 	}
 	return compacted
+}
+
+// sameOrigin is false when both events say where they came from and the
+// places differ: the same command run in two repos is two events.
+func sameOrigin(a, b Event) bool {
+	ca, _ := a.Meta["cwd"].(string)
+	cb, _ := b.Meta["cwd"].(string)
+	return ca == "" || cb == "" || ca == cb
 }

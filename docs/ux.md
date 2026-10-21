@@ -475,7 +475,7 @@ If the pin lists no files, only the `scope.out` rule applies.
 
   Recents follow. The cursor starts on Continue, else Open latest, else Create.
 - **First run (no plans).** Only Create shows, plus `plans are JSON in rex/plans/ · commit them`.
-- **Card hints** show progress, e.g. `2/5 · ▸ card-highlight`. The currently open plan is marked in recents and in Browse.
+- **Hints** show progress on the cards, recents, Find results and Browse rows, e.g. `2/5 · ▸ card-highlight`. The currently open plan reads `open · 2/5 · ▸ card-highlight` in recents, Find and Browse.
 - **Find (typing on Home)** matches across `rex/plans/**`.
   - The first match is selected.
   - The list always ends with `+ Create 'x'` (unless a plan is named exactly `x`). With no match, that row is selected, and ⏎ creates the plan at once and opens its outline. There is no extra prompt.

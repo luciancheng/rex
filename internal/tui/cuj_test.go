@@ -50,8 +50,8 @@ func (k *keys) spent(t *testing.T, budget int, what string) {
 	k.n = 0
 }
 
-// The journey: open → watch a turn → done → pin next → send off → drift →
-// back to the Library → quit.
+// The journey: create → open → watch a turn → done → pin next → send off
+// → drift → back to the Library → quit.
 func TestCUJWholeLoop(t *testing.T) {
 	a, c, path := cujApp(t)
 	k := &keys{a: a}
@@ -61,10 +61,9 @@ func TestCUJWholeLoop(t *testing.T) {
 	if a.pane != PanePlans || a.plans.Screen != ScreenHome || !strings.Contains(a.frame(), "Open latest") {
 		t.Fatal("A. starts on the plans home")
 	}
-	k.press("home", "\r")
 	k.typ("scratch")
 	k.press("\r")
-	k.spent(t, 2+len("scratch")+1, "create")
+	k.spent(t, len("scratch")+1, "create through find") // docs/ux.md §14
 	stub, err := plan.Load(filepath.Join(a.plans.Root, "scratch.rex.json"))
 	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || !strings.Contains(a.frame(), "No tasks yet") {
 		t.Fatalf("B. create writes a v1 stub and opens it: %v %+v\n%s", err, stub, a.frame())

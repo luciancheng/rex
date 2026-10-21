@@ -675,7 +675,8 @@ func (b *PlanBrowser) progressHint(path string) string {
 	return text
 }
 
-// addHints puts progress on the cards and recents, and marks the open plan.
+// addHints puts progress on the cards, recents, Find results and Browse
+// rows, and marks the open plan.
 func (b *PlanBrowser) addHints() {
 	for i := range b.Rows {
 		row := &b.Rows[i]

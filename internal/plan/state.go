@@ -57,8 +57,8 @@ func LoadState(path string) State {
 	return s
 }
 
-// UpdateState re-reads path, applies mutate, prunes entries for plans and
-// repos that are gone or untouched for 90 days, and writes it atomically,
+// UpdateState re-reads path, applies mutate, prunes repos that are gone or
+// untouched for 90 days and pins whose plan is gone, and writes it atomically,
 // private to the user. Re-reading first keeps what another Rex window
 // wrote in the meantime.
 func UpdateState(path string, now time.Time, mutate func(*State)) error {
@@ -73,8 +73,17 @@ func UpdateState(path string, now time.Time, mutate func(*State)) error {
 			delete(s.Repos, repo)
 		}
 	}
+	// A pin can run for months, so a plan's newest pin is kept whatever its
+	// age; older ones go after 90 days, and all of them when the plan does.
+	newest := map[string]float64{}
 	for key, started := range s.Pins {
-		if started < cutoff || !exists(pinPlan(key)) {
+		if plan := pinPlan(key); plan != "" && started > newest[plan] {
+			newest[plan] = started
+		}
+	}
+	for key, started := range s.Pins {
+		plan := pinPlan(key)
+		if plan == "" || (started < cutoff && started < newest[plan]) {
 			delete(s.Pins, key)
 		}
 	}
@@ -107,16 +116,20 @@ func UpdateState(path string, now time.Time, mutate func(*State)) error {
 	return nil
 }
 
+// pinPlan is the plan path in a PinKey, if that plan is still there. Both
+// a path and a task id may hold '#', so every split is tried.
 func pinPlan(key string) string {
-	for i := len(key) - 1; i >= 0; i-- {
-		if key[i] == '#' {
+	for i := 0; i < len(key); i++ {
+		if key[i] == '#' && exists(key[:i]) {
 			return key[:i]
 		}
 	}
-	return key
+	return ""
 }
 
+// exists is false only for a path that is known to be gone; an unreadable
+// or unmounted one is kept.
 func exists(path string) bool {
 	_, err := os.Stat(path)
-	return err == nil
+	return !os.IsNotExist(err)
 }

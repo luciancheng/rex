@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"time"
 
@@ -128,6 +129,9 @@ func Apply(data []byte, changes []Change) ([]byte, error) {
 		if !writable[c.Field] || (c.Task == "" && c.Field != "status") {
 			return nil, fmt.Errorf("rex does not write %q", c.Field)
 		}
+		if err := checkValue(c); err != nil {
+			return nil, err
+		}
 		doc, err := jsonedit.Parse(out)
 		if err != nil {
 			return nil, err
@@ -148,6 +152,27 @@ func Apply(data []byte, changes []Change) ([]byte, error) {
 		return nil, errors.New("rex's edit did not come out as planned; nothing written")
 	}
 	return out, nil
+}
+
+// checkValue refuses a value Rex would never write: a status that isn't
+// one of the five, a list field that isn't a list of strings, notes that
+// aren't text.
+func checkValue(c Change) error {
+	switch c.Field {
+	case "status":
+		if s, ok := c.Value.(string); !ok || !statuses[Status(s)] {
+			return fmt.Errorf("%v is not a status", c.Value)
+		}
+	case "completed_notes":
+		if _, ok := c.Value.(string); !ok {
+			return fmt.Errorf("%s must be text", c.Field)
+		}
+	default:
+		if _, ok := c.Value.([]string); !ok {
+			return fmt.Errorf("%s must be a list of text", c.Field)
+		}
+	}
+	return nil
 }
 
 // target finds the object a change applies to: the root, or the one task
@@ -172,7 +197,8 @@ func target(doc *jsonedit.Doc, task string) (*jsonedit.Node, int, error) {
 			continue
 		}
 		var s string
-		if doc.Decode(id, &s) != nil || s != task {
+		// The same id rule as Parse: surrounding spaces don't count.
+		if doc.Decode(id, &s) != nil || strings.TrimSpace(s) != strings.TrimSpace(task) {
 			continue
 		}
 		if found != nil {
@@ -230,6 +256,9 @@ func replace(path string, before, out []byte) error {
 	if err != nil {
 		return err
 	}
+	if info.Mode().Perm()&0o200 == 0 {
+		return fmt.Errorf("%w: %s is read-only on disk", ErrReadOnly, filepath.Base(path))
+	}
 	dir, base := filepath.Dir(path), filepath.Base(path)
 	clearStale(dir, base)
 	tmp, err := os.CreateTemp(dir, "."+base+".rex-*")
@@ -256,8 +285,18 @@ func replace(path string, before, out []byte) error {
 		return errChanged
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		// Windows refuses to replace a file another process has open.
-		return os.WriteFile(path, out, info.Mode().Perm())
+		if runtime.GOOS != "windows" {
+			return err
+		}
+		// Windows refuses to replace a file another process has open
+		// (an editor, an indexer). Write in place instead, after checking
+		// once more that nobody wrote it meanwhile.
+		if now, rerr := os.ReadFile(path); rerr != nil || !bytes.Equal(now, before) {
+			return errChanged
+		}
+		if werr := os.WriteFile(path, out, info.Mode().Perm()); werr != nil {
+			return fmt.Errorf("%v (and writing in place failed: %v)", err, werr)
+		}
 	}
 	return nil
 }

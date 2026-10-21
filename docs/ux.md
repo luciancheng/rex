@@ -296,7 +296,7 @@ Reload behaviour:
 ## 7. Pin
 
 - **The effective pin.** It is the first `active` leaf task, else the first `pending` leaf whose `depends_on` are all `done` or `skipped`. With no tasks there is no pin; drift is then off and send-off says the plan is empty.
-- **`p⏎` writes.** It writes `"status": "active"` on the target and `"pending"` on **every** other active task. Only those status values change in the file. On the tape, a bare `p⏎` pins the next-up task; `pin <id>⏎` pins any task.
+- **`p⏎` writes.** It writes `"status": "active"` on the target and `"pending"` on **every** other active task, and the plan's own `status` becomes `active` if it was `pending` or `done`. Only those status values change in the file. On the tape, a bare `p⏎` pins the next-up task; `pin <id>⏎` pins any task.
 - **Confirmation.** Pinning a task whose status is `blocked` or that has an unmet dependency, or moving the pin while another task is `active`, opens Pin confirm:
   - `p⏎` writes.
   - Esc, Ctrl+C or any other submitted draft cancels.
@@ -640,5 +640,6 @@ These `agents.md` and README lines change when the slice that implements them sh
 | `refactor/harness_registry` | README Usage/Install: `rex ingest --install <harness>` (`--install-cursor-hook` stays as an alias) |
 | `feature/harness_hooks` | "Assume Claude Code or Codex are wired. Mappers exist; only Cursor hooks are installed." → which harnesses are wired, and that the others are opt-in. Mascot turn mapping: Claude `Stop` → reply text, or idle |
 | `feature/plan_schema` | "Build plan JSON schema, drift detection… unless asked" → the schema is v1 in `docs/plan-format.md`. README: "new plans start as `{}`" and the send-off line (F34) |
+| `feature/plan_store` | New Plans paragraph: Rex writes a plan only through `plan.Edit` (task status, completion fields, the plan's own status); `~/.rex/state.json` for what Rex remembers |
 | `feature/plan_outline` | "Opening a plan is a no-op load" → opening parses the plan read-only and shows the outline |
 | `feature/sendoff`, `feature/prompt_drift` | Send-off is generated from the JSON; drift is display-only and never written anywhere |

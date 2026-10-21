@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -349,4 +350,59 @@ func FuzzEdit(f *testing.F) {
 			t.Fatalf("bytes outside the task changed\nsrc %q\nout %q", src, out)
 		}
 	})
+}
+
+func TestStateKeepsALongPinAndOddIds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	planPath := writePlan(t, editPlan)
+	now := time.Unix(1_800_000_000, 0)
+	long := float64(now.Add(-200 * 24 * time.Hour).Unix())
+	UpdateState(path, now, func(s *State) {
+		s.Pins[PinKey(planPath, "a")] = long
+		s.Pins[PinKey(planPath, "issue#12")] = long - 1
+	})
+	s := LoadState(path)
+	if _, ok := s.Pins[PinKey(planPath, "a")]; !ok {
+		t.Fatalf("a plan's newest pin is kept however long it runs: %+v", s.Pins)
+	}
+	UpdateState(path, now, func(s *State) { s.Pins[PinKey(planPath, "issue#12")] = float64(now.Unix()) })
+	if _, ok := LoadState(path).Pins[PinKey(planPath, "issue#12")]; !ok {
+		t.Fatal("a task id with # survives the write that adds it")
+	}
+}
+
+func TestEditMatchesIdsLikeParse(t *testing.T) {
+	path := writePlan(t, `{"tasks":[{"id":" a ","status":"pending"}]}`)
+	p, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Edit(path, func(*Plan) ([]Change, error) { return []Change{SetStatus(p.Tasks[0].ID, Active)}, nil }); err != nil {
+		t.Fatalf("a padded id is the task Parse shows: %v", err)
+	}
+	dup := writePlan(t, `{"tasks":[{"id":"a ","status":"pending"},{"id":"a","status":"done"}]}`)
+	if _, err := Edit(dup, func(*Plan) ([]Change, error) { return []Change{SetStatus("a", Active)}, nil }); err == nil || !strings.Contains(err.Error(), "two tasks") {
+		t.Fatalf("ids that differ only by spaces are duplicates: %v", err)
+	}
+}
+
+func TestEditRefusesBadValuesAndReadOnlyFiles(t *testing.T) {
+	path := writePlan(t, editPlan)
+	for _, c := range []Change{SetStatus("a", "wip"), {Task: "a", Field: "modified", Value: "x.go"}, {Task: "a", Field: "completed_notes", Value: []string{"x"}}} {
+		if _, err := Edit(path, func(*Plan) ([]Change, error) { return []Change{c}, nil }); err == nil {
+			t.Errorf("%+v was written", c)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	os.Chmod(path, 0o444)
+	defer os.Chmod(path, 0o644)
+	before, _ := os.ReadFile(path)
+	if _, err := Edit(path, func(*Plan) ([]Change, error) { return []Change{SetStatus("b", Active)}, nil }); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("a read-only file: %v", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("a read-only file was rewritten")
+	}
 }

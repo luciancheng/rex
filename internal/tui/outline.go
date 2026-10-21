@@ -88,6 +88,14 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, summary string)
 	return true, planChanges(old, p)
 }
 
+// took records a plan Rex just wrote, so the next poll doesn't report
+// Rex's own edit as someone else's.
+func (d *planDoc) took(saved *plan.Saved) {
+	d.own = plan.Hash(saved.Data)
+	d.hash, d.good, d.plan = d.own, d.own, saved.Plan // so going back to the old bytes reads as an edit
+	d.bad, d.badPolls, d.err, d.gone = "", 0, "", false
+}
+
 func (d *planDoc) poll(now time.Time) (bool, string) {
 	if now.Sub(d.polled) < docPollEvery {
 		return false, ""
@@ -215,29 +223,13 @@ func findTask(p *plan.Plan, key string) *plan.Task {
 	return nil
 }
 
-// pinOf is the effective pin (docs/ux.md §7): the first active leaf, else
-// the first ready one. nil when nothing can be pinned.
-func pinOf(p *plan.Plan, g *plan.Graph) *plan.Task {
-	for i := range p.Tasks {
-		if t := &p.Tasks[i]; t.Status == plan.Active && t.ID != "" && g.Leaf(t) && !g.Cyclic(t) {
-			return t
-		}
-	}
-	for i := range p.Tasks {
-		if t := &p.Tasks[i]; g.Ready(t) {
-			return t
-		}
-	}
-	return nil
-}
-
 // defaultSel is where the cursor lands on a freshly opened plan: the pin,
 // else the first task, else the title.
 func defaultSel(p *plan.Plan) string {
 	if p == nil || len(p.Tasks) == 0 {
 		return ""
 	}
-	if pin := pinOf(p, p.Graph()); pin != nil {
+	if pin := p.Graph().Pin(); pin != nil {
 		return taskKey(pin)
 	}
 	return taskKey(&p.Tasks[0])
@@ -370,7 +362,7 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 	}
 	p := d.plan
 	g := p.Graph()
-	pin := pinOf(p, g)
+	pin := g.Pin()
 	done, total := g.Progress()
 	title, tail := planTitle(p, d.path), " · "+string(p.Status)+" · "+fmt.Sprintf("%d/%d", done, total)
 	// fit is the rule's label for room cells: when it is narrow, the title
@@ -585,7 +577,7 @@ func taskDetail(d *planDoc, key string, width int) []LogLine {
 		return []LogLine{{Kind: "command", Text: rule(key, width)}, {Kind: "idle", Text: "  " + clip("this task is no longer in the file", width-2)}}
 	}
 	g := p.Graph()
-	pin := pinOf(p, g)
+	pin := g.Pin()
 	status := string(t.Status)
 	if t == pin {
 		status += " · pinned"
@@ -676,16 +668,17 @@ func docStatus(d *planDoc) (StatusLine, bool) {
 }
 
 // pinStatus is row 1's pin line: the pin, a warning about two active
-// tasks, or why there is no pin.
-func pinStatus(p *plan.Plan) StatusLine {
+// tasks, or why there is no pin. writable is false when p⏎ would be
+// refused, so the line doesn't offer it.
+func pinStatus(p *plan.Plan, writable bool) StatusLine {
 	if p == nil || len(p.Tasks) == 0 {
 		return StatusLine{}
 	}
 	g := p.Graph()
-	pin := pinOf(p, g)
-	var active []string
+	pin := g.Pin()
+	var active []string // leaves only: a parent marked active is no second pin
 	for i := range p.Tasks {
-		if t := &p.Tasks[i]; t.Status == plan.Active {
+		if t := &p.Tasks[i]; t.Status == plan.Active && g.Leaf(t) && g.Task(t.ID) == t {
 			active = append(active, taskKey(t))
 		}
 	}
@@ -698,9 +691,11 @@ func pinStatus(p *plan.Plan) StatusLine {
 		}
 		return StatusLine{Text: "no pin · nothing unblocked", Kind: "muted"}
 	}
-	state := "active"
 	if pin.Status != plan.Active {
-		state = "next up"
+		if !writable {
+			return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (next up)", Short: "▸ " + pin.ID + " (next up)", Kind: "accent"}
+		}
+		return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (next up · p⏎ pins it)", Short: "▸ " + pin.ID + " (next up · p⏎)", Kind: "accent"}
 	}
-	return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (" + state + ")", Short: "▸ " + pin.ID + " (" + state + ")", Kind: "accent"}
+	return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (active)", Short: "▸ " + pin.ID + " (active)", Kind: "accent"}
 }

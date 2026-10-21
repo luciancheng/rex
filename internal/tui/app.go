@@ -57,6 +57,8 @@ type app struct {
 	toastUntil time.Time
 	now        func() time.Time
 	statePath  string
+	pinAsk     [2]pinAsk            // per place, while Pin confirm is open
+	pinSeen    map[string]time.Time // when this session first saw each pin
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -69,7 +71,7 @@ type logViewCache struct {
 
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
 	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
-		now: time.Now, statePath: plan.StatePath()}
+		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}}
 	if plans.Current == "" {
 		// The Continue card offers the plan last opened in this repo.
 		if last := plan.LoadState(a.statePath).Repos[plans.Repo].Plan; last != "" && IsPlanFile(last) {
@@ -147,6 +149,11 @@ func (a *app) composeOptions() ComposeOptions {
 		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
 		opt.PlanFooter = a.planFooter()
 	}
+	if a.overlay[a.pane] == overlayPin {
+		lines := pinConfirmLines(a.pinAsk[a.pane], textW)
+		scroll := min(a.overlayScroll[a.pane], max(0, len(lines)-layoutFor(a.columns, a.lines).bodyH))
+		opt.Overlay = &Overlay{Lines: lines, Scroll: scroll, Footer: []string{"pin", "p⏎ move pin", "esc cancel", "↑↓ scroll"}}
+	}
 	if a.overlay[a.pane] == overlayHelp {
 		other := "tab tape"
 		if a.pane == PaneChat {
@@ -222,6 +229,9 @@ func (a *app) verbHints() string {
 
 // placeholder is the dim hint in an empty composer: what you can type here.
 func (a *app) placeholder() string {
+	if a.overlay[a.pane] == overlayPin {
+		return "p⏎ to move the pin"
+	}
 	if a.overlay[a.pane] != overlayNone {
 		return "esc to close"
 	}
@@ -252,6 +262,14 @@ func (a *app) preview() string {
 		return ""
 	}
 	if verb, arg, ok := parseVerb(text); ok && a.offers(verb) {
+		if verb == "pin" && arg == "" && a.overlay[a.pane] == overlayNone {
+			if t := a.pinCandidate(); t != nil {
+				arg = t.ID
+				if target, err := a.doc.plan.Graph().PinTarget(t); err == nil {
+					arg = target.ID // a parent pins its first ready leaf: name that
+				}
+			}
+		}
 		if arg != "" {
 			return "⏎ " + verb + " " + arg
 		}
@@ -281,7 +299,7 @@ func (a *app) statusLine() StatusLine {
 	if a.doc == nil {
 		return StatusLine{}
 	}
-	return pinStatus(a.doc.plan)
+	return pinStatus(a.doc.plan, a.doc.writable() == "")
 }
 
 // flash shows a toast on row 1 for a few seconds.
@@ -295,9 +313,16 @@ const toastFor = 3 * time.Second
 // exitLine is printed once the screen is restored, so the terminal keeps a
 // trace of where you were.
 func (a *app) exitLine() string {
-	// Printed after the terminal is restored: a plan's file name must not
-	// reach it raw.
-	if rel := strings.TrimSpace(strings.ReplaceAll(watch.CleanText(a.plans.CurrentRel()), "\n", " ")); rel != "" {
+	// Printed after the terminal is restored: plan text must not reach it raw.
+	clean := func(s string) string { return strings.TrimSpace(strings.ReplaceAll(watch.CleanText(s), "\n", " ")) }
+	if rel := clean(a.plans.CurrentRel()); rel != "" {
+		if a.doc != nil && a.doc.plan != nil {
+			if pin := a.doc.plan.Graph().Pin(); pin != nil && pin.Status == plan.Active {
+				return "rex: " + rel + " · pinned " + clean(pin.ID)
+			} else if pin != nil {
+				return "rex: " + rel + " · next up " + clean(pin.ID)
+			}
+		}
 		return "rex: " + rel
 	}
 	return "rex: no plan open"
@@ -556,18 +581,20 @@ func (a *app) submit(text string) bool {
 	return true
 }
 
-// offers reports which verbs exist yet. The plan verbs (sendoff, brief,
-// done, pin) arrive with their features.
+// offers reports which verbs exist yet. The other plan verbs (sendoff,
+// brief, done) arrive with their features.
 func (a *app) offers(verb string) bool {
 	switch verb {
-	case "help", "breakdance":
+	case "help", "breakdance", "pin":
 		return true
 	}
 	return false
 }
 
-func (a *app) runVerb(verb, _ string) {
+func (a *app) runVerb(verb, arg string) {
 	switch verb {
+	case "pin":
+		a.pinVerb(arg)
 	case "help":
 		a.overlay[a.pane] = overlayHelp
 		a.overlayScroll[a.pane] = 0
@@ -750,11 +777,17 @@ func (a *app) openedPlan() {
 		a.doc = openDoc(path, now)
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
+		for place := range a.overlay {
+			if a.overlay[place] == overlayPin {
+				a.overlay[place] = overlayNone // it asked about the old plan
+			}
+		}
 	}
 	// Continue on the plan already open keeps its last good copy, its
 	// debounce and its selection.
 	a.at = atOutline
 	a.draft = ""
+	a.notePin()
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
 		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
 	})
@@ -876,14 +909,10 @@ func (a *app) pollDoc() bool {
 	if a.at != atTaskDetail {
 		a.outline.keepSel(a.doc.plan)
 	}
+	a.notePin()
 	if summary != "" {
 		a.flash("plan updated · "+summary, "accent")
-		before := a.logLines()
-		a.log = append(a.log, watch.NewEvent("rex", "plan", summary, nil))
-		a.logRev++
-		if a.scroll > 0 {
-			a.scroll += max(0, a.logLines()-before)
-		}
+		a.tapeLine("plan", summary)
 	}
 	return true
 }
@@ -903,12 +932,19 @@ func (a *app) overlayKey(key string) bool {
 		// A page keeps two rows of overlap: the ↑/↓ more markers cover them.
 		step := max(1, page-2)
 		delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
-		limit := max(0, len(a.helpBody(PaneTextWidth(a.columns)))-page)
+		lines := a.helpBody(PaneTextWidth(a.columns))
+		if a.overlay[a.pane] == overlayPin {
+			lines = pinConfirmLines(a.pinAsk[a.pane], PaneTextWidth(a.columns))
+		}
+		limit := max(0, len(lines)-page)
 		next := max(0, min(limit, a.overlayScroll[a.pane]+delta))
 		changed := next != a.overlayScroll[a.pane]
 		a.overlayScroll[a.pane] = next
 		return changed
 	case "\r", "\n":
+		if a.overlay[a.pane] == overlayPin {
+			return a.confirmPin()
+		}
 		// Only the overlay's own inputs work in it; Help has none, so a
 		// typed word is dropped, never run underneath.
 		if strings.TrimSpace(a.draft) != "" {
@@ -924,6 +960,146 @@ func (a *app) helpBody(width int) []LogLine {
 	help := append(helpLines(width), LogLine{Kind: "gap"})
 	a.health.refresh(time.Now())
 	return append(help, a.health.lines(width, a.hidden, time.Now(), false)...)
+}
+
+// pinCandidate is the task a bare p⏎ would pin here: the selected task on
+// the outline or its detail, else the next-up task.
+func (a *app) pinCandidate() *plan.Task {
+	if a.doc == nil || a.doc.plan == nil {
+		return nil
+	}
+	p := a.doc.plan
+	if a.pane == PanePlans && (a.at == atOutline || a.at == atTaskDetail) && a.outline.sel != "" {
+		if t := findTask(p, a.outline.sel); t != nil {
+			return t
+		}
+	}
+	return p.Graph().Pin()
+}
+
+// pinVerb is p⏎ / pin <id>⏎ (docs/ux.md §7). A pin that is blocked,
+// waits on unfinished work, or moves the pin off another task asks first.
+func (a *app) pinVerb(arg string) {
+	if a.doc == nil {
+		a.flash("no plan open · tab to plan and open one", "error")
+		return
+	}
+	if why := a.doc.writable(); why != "" {
+		a.flash("can't pin: "+why, "error")
+		return
+	}
+	g := a.doc.plan.Graph()
+	var t *plan.Task
+	if arg != "" {
+		if t = g.Task(arg); t == nil {
+			for i := range a.doc.plan.Tasks {
+				if strings.EqualFold(a.doc.plan.Tasks[i].ID, arg) {
+					t = &a.doc.plan.Tasks[i]
+					break
+				}
+			}
+		}
+		if t == nil {
+			a.flash("no task "+arg+" in this plan", "error")
+			return
+		}
+	} else if t = a.pinCandidate(); t == nil {
+		why := strings.TrimPrefix(pinStatus(a.doc.plan, true).Text, "no pin · ")
+		if why == "" {
+			why = "no tasks yet"
+		}
+		a.flash("nothing to pin · "+why, "muted")
+		return
+	}
+	target, err := g.PinTarget(t)
+	if err != nil {
+		a.flash("can't pin: "+err.Error(), "error")
+		return
+	}
+	warnings := g.PinWarnings(target)
+	if target.Status == plan.Active && len(warnings) == 0 {
+		a.flash("▸ "+target.ID+" is already pinned", "muted")
+		return
+	}
+	moving := g.Moving(target)
+	if len(warnings) > 0 {
+		a.pinAsk[a.pane] = pinAsk{path: a.doc.path, id: target.ID, title: target.Title, seen: target.Status, moving: moving, warnings: warnings}
+		a.overlay[a.pane] = overlayPin
+		a.overlayScroll[a.pane] = 0
+		return
+	}
+	a.writePin(target.ID, target.Status, moving)
+}
+
+// confirmPin is ⏎ in Pin confirm: p⏎ writes, a bare ⏎ does nothing, and
+// any other submitted text cancels.
+func (a *app) confirmPin() bool {
+	text := strings.TrimSpace(a.draft)
+	if text == "" {
+		return false
+	}
+	ask := a.pinAsk[a.pane]
+	a.overlay[a.pane] = overlayNone
+	a.draft = ""
+	if verb, arg, ok := parseVerb(text); ok && verb == "pin" && (arg == "" || strings.EqualFold(arg, ask.id)) {
+		if a.doc == nil || a.doc.path != ask.path {
+			// It was asked about a plan that isn't open any more.
+			a.flash("that pin was for another plan · nothing written", "error")
+			return true
+		}
+		a.writePin(ask.id, ask.seen, ask.moving)
+		return true
+	}
+	a.flash("pin cancelled · nothing written", "muted")
+	return true
+}
+
+// writePin writes the pin to the plan file and remembers when it started.
+func (a *app) writePin(id string, seen plan.Status, moving []string) {
+	saved, err := plan.Edit(a.doc.path, plan.PinOp(id, seen, moving))
+	if err != nil {
+		a.flash("can't pin: "+err.Error(), "error")
+		return
+	}
+	a.doc.took(saved)
+	now := a.now()
+	key := plan.PinKey(a.doc.path, id)
+	a.pinSeen[key] = now
+	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) { s.Pins[key] = float64(now.Unix()) })
+	word := "pinned"
+	if seen == plan.Done {
+		word = "reopened and pinned"
+	}
+	a.flash("▸ "+id+" "+word, "accent")
+	a.tapeLine("plan", word+" "+id)
+	if a.pane == PanePlans && (a.at == atOutline || a.at == atTaskDetail) {
+		a.outline.sel = id // a pin from the tape leaves PLAN where it was
+	}
+}
+
+// notePin remembers when this session first saw the current pin, for
+// completion evidence when Rex didn't see the pin start.
+func (a *app) notePin() {
+	if a.doc == nil || a.doc.plan == nil {
+		return
+	}
+	if pin := a.doc.plan.Graph().Pin(); pin != nil {
+		key := plan.PinKey(a.doc.path, pin.ID)
+		if _, ok := a.pinSeen[key]; !ok {
+			a.pinSeen[key] = a.now()
+		}
+	}
+}
+
+// tapeLine adds one local line to the tape. It is never written to the
+// feed and never sent anywhere.
+func (a *app) tapeLine(kind, text string) {
+	before := a.logLines()
+	a.log = append(a.log, watch.NewEvent("rex", kind, text, nil))
+	a.logRev++
+	if a.scroll > 0 {
+		a.scroll += max(0, a.logLines()-before)
+	}
 }
 
 // syncPlanInput hands the plan draft to the screen that reads it: Browse

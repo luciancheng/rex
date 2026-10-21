@@ -21,7 +21,9 @@ func (p *Plan) Graph() *Graph {
 	}
 	for i := range p.Tasks {
 		t := &p.Tasks[i]
-		if t.Parent != "" && t.Parent != t.ID && g.byID[t.Parent] != nil {
+		// A task with a repeated id is reachable only by position, never
+		// as anyone's child, so a parent loop through it can't form.
+		if t.Parent != "" && t.Parent != t.ID && g.byID[t.Parent] != nil && (t.ID == "" || g.byID[t.ID] == t) {
 			g.children[t.Parent] = append(g.children[t.Parent], t)
 		}
 	}

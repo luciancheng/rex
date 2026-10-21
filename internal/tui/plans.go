@@ -660,7 +660,7 @@ func (b *PlanBrowser) progressHint(path string) string {
 			text = fmt.Sprintf("%d/%d · all done", done, total)
 		default:
 			text = fmt.Sprintf("%d/%d", done, total)
-			if pin := pinOf(p, g); pin != nil {
+			if pin := g.Pin(); pin != nil {
 				text += " · ▸ " + pin.ID
 			}
 		}

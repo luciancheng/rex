@@ -33,7 +33,7 @@ func TestFeedHealthOnTheEmptyTape(t *testing.T) {
 	}
 	typeText(a, "?")
 	press(a, "\r")
-	if !strings.Contains(viewText(a.helpBody(PaneTextWidth(a.columns))), "rex ingest --install claude") {
+	if a.overlay[PaneChat] != overlayHelp || !strings.Contains(viewText(a.helpBody(PaneTextWidth(a.columns))), "rex ingest --install claude") {
 		t.Fatal("help shows feed health too")
 	}
 }

@@ -296,7 +296,7 @@ Reload behaviour:
 ## 7. Pin
 
 - **The effective pin.** It is the first `active` leaf task, else the first `pending` leaf whose `depends_on` are all `done` or `skipped`. With no tasks there is no pin; drift is then off and send-off says the plan is empty.
-- **`p⏎` writes.** It writes `"status": "active"` on the target and `"pending"` on **every** other active task, and the plan's own `status` becomes `active` if it was `pending` or `done`. Only those status values change in the file. On the tape, a bare `p⏎` pins the next-up task; `pin <id>⏎` pins any task.
+- **`p⏎` writes.** It writes `"status": "active"` on the target and `"pending"` on **every** other active leaf task (a parent's status is never written; a parent marked `active` is only a label and is not a second pin), and the plan's own `status` becomes `active` if it was `pending` or `done`. Only those status values change in the file. On the tape, a bare `p⏎` pins the next-up task; `pin <id>⏎` pins any task.
 - **Confirmation.** Pinning a task whose status is `blocked` or that has an unmet dependency, or moving the pin while another task is `active`, opens Pin confirm:
   - `p⏎` writes.
   - Esc, Ctrl+C or any other submitted draft cancels.

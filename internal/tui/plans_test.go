@@ -59,7 +59,7 @@ func TestEnsurePlansDirKeepsAFileNamedRex(t *testing.T) {
 	if !strings.Contains(b.Notice, "rex/ is a file here") {
 		t.Fatalf("notice %q", b.Notice)
 	}
-	if act := b.CommitCreate("alpha"); act != PlanStay || !strings.Contains(b.Err, "rex/ is a file here") {
+	if act := b.CommitCreate("alpha"); act != PlanStay || !strings.Contains(b.Err, "move the file named rex") {
 		t.Fatalf("create should refuse: act=%d err=%q", act, b.Err)
 	}
 	data, err := os.ReadFile(clash)
@@ -104,39 +104,91 @@ func TestOutsideGitShowsWherePlansGo(t *testing.T) {
 	}
 }
 
-func TestLegacyMigrationNeverLosesPlans(t *testing.T) {
+func TestStartLeavesLegacyPlansAlone(t *testing.T) {
 	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
 	legacy := filepath.Join(repo, "rex-plans")
-	root := filepath.Join(repo, "rex", "plans")
-	for _, dir := range []string{legacy, root} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write := func(path, body string) {
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(filepath.Join(legacy, "clash.rex.json"), `{"id":"legacy"}`)
-	write(filepath.Join(root, "clash.rex.json"), `{"id":"current"}`)
-	write(filepath.Join(legacy, "moved.rex.json"), `{"id":"moved"}`)
-	NewPlanBrowser(repo)
-	if data, _ := os.ReadFile(filepath.Join(root, "moved.rex.json")); string(data) != `{"id":"moved"}` {
-		t.Fatalf("moved plan missing: %q", data)
-	}
-	if data, _ := os.ReadFile(filepath.Join(legacy, "clash.rex.json")); string(data) != `{"id":"legacy"}` {
-		t.Fatalf("colliding legacy plan was lost: %q", data)
-	}
-	if data, _ := os.ReadFile(filepath.Join(root, "clash.rex.json")); string(data) != `{"id":"current"}` {
-		t.Fatalf("current plan overwritten: %q", data)
-	}
-	if err := os.Remove(filepath.Join(legacy, "clash.rex.json")); err != nil {
+	if err := os.MkdirAll(filepath.Join(legacy, "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	NewPlanBrowser(repo)
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("empty legacy dir should be removed: %v", err)
+	os.WriteFile(filepath.Join(legacy, "old.rex.json"), []byte(`{}`), 0o644)
+	os.WriteFile(filepath.Join(legacy, "src", "main.go"), []byte("package main"), 0o644)
+	b := NewPlanBrowser(repo)
+	if _, err := os.Stat(filepath.Join(repo, "rex")); !os.IsNotExist(err) {
+		t.Fatal("start must not create rex/ because rex-plans/ exists")
+	}
+	for _, p := range []string{"rex-plans/old.rex.json", "rex-plans/src/main.go"} {
+		if _, err := os.Stat(filepath.Join(repo, p)); err != nil {
+			t.Fatalf("start moved %s: %v", p, err)
+		}
+	}
+	if !strings.Contains(b.Notice, "rex-plans/ has 1 old plan") {
+		t.Fatalf("notice %q", b.Notice)
+	}
+}
+
+func TestNewFolderCreatesPlansDirAndRespectsARexFile(t *testing.T) {
+	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	b := NewPlanBrowser(repo)
+	b.Screen = ScreenBrowse
+	b.Rebuild()
+	if b.CommitFolder("grp") != PlanStay || b.Err != "" {
+		t.Fatalf("err %q", b.Err)
+	}
+	for _, p := range []string{"rex/plans/.gitkeep", "rex/plans/grp"} {
+		if _, err := os.Stat(filepath.Join(repo, p)); err != nil {
+			t.Fatalf("missing %s", p)
+		}
+	}
+	other := t.TempDir()
+	os.WriteFile(filepath.Join(other, "rex"), []byte("bin"), 0o755)
+	c := NewPlanBrowser(other)
+	c.Screen = ScreenBrowse
+	if c.CommitFolder("grp") != PlanStay || !strings.Contains(c.Err, "move the file named rex") {
+		t.Fatalf("err %q", c.Err)
+	}
+	if strings.Count(viewText(BuildPlanView(c, 80)), "rex/ is a file here") != 1 {
+		t.Fatal("the notice and the error must not say the same thing twice")
+	}
+}
+
+func TestRexFileNoticeClearsWhenMovedAway(t *testing.T) {
+	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	clash := filepath.Join(repo, "rex")
+	os.WriteFile(clash, []byte("bin"), 0o755)
+	b := NewPlanBrowser(repo)
+	if b.Notice != rexFileNotice {
+		t.Fatalf("%q", b.Notice)
+	}
+	os.Rename(clash, clash+".bin")
+	b.Rebuild()
+	if b.Notice != "" {
+		t.Fatalf("stale notice %q", b.Notice)
+	}
+}
+
+func TestDanglingRexSymlinkTurnsPlansOff(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Symlink(filepath.Join(repo, "nowhere"), filepath.Join(repo, "rex")); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	b := NewPlanBrowser(repo)
+	if b.Notice != rexFileNotice {
+		t.Fatalf("%q", b.Notice)
+	}
+}
+
+func TestOutsideGitNoticeKeepsWherePlansGo(t *testing.T) {
+	deep := filepath.Join(t.TempDir(), "a", "very", "deep", "folder", "that", "does", "not", "fit")
+	os.MkdirAll(deep, 0o755)
+	b := NewPlanBrowser(deep)
+	for _, width := range []int{40, 60, 80} {
+		view := viewText(BuildPlanView(b, width))
+		if !strings.Contains(view, "git") || !strings.Contains(view, "/rex/plans") {
+			t.Fatalf("width %d\n%s", width, view)
+		}
 	}
 }
 

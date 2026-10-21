@@ -153,8 +153,9 @@ func TestIngestCommandQuoting(t *testing.T) {
 		{"/Users/me/.local/bin/rex", "darwin", "'/Users/me/.local/bin/rex' ingest --source cursor"},
 		{"/home/o'brien/$HOME/rex", "linux", `'/home/o'\''brien/$HOME/rex' ingest --source cursor`},
 		{`C:\Users\me\.local\bin\rex.exe`, "windows", "C:/Users/me/.local/bin/rex.exe ingest --source cursor"},
-		{`C:\Users\Jane Doe\bin\rex.exe`, "windows", `& "C:/Users/Jane Doe/bin/rex.exe" ingest --source cursor`},
-		{`C:\Users\O'Neil\rex.exe`, "windows", `& "C:/Users/O'Neil/rex.exe" ingest --source cursor`},
+		{`C:\Users\Jane Doe\bin\rex.exe`, "windows", `& 'C:/Users/Jane Doe/bin/rex.exe' ingest --source cursor`},
+		{`C:\Users\O'Neil\rex.exe`, "windows", `& 'C:/Users/O''Neil/rex.exe' ingest --source cursor`},
+		{`C:\Users\$env\rex.exe`, "windows", `& 'C:/Users/$env/rex.exe' ingest --source cursor`},
 	}
 	for _, c := range cases {
 		if got := ingestCommand("cursor", c.exe, c.goos); got != c.want {
@@ -166,6 +167,7 @@ func TestIngestCommandQuoting(t *testing.T) {
 		`"/old/rex" ingest --source cursor`, `'/new/rex' ingest --source cursor`, `/usr/local/bin/rex ingest --source cursor`,
 		`& "C:/Users/Jane Doe/bin/rex.exe" ingest --source cursor`, `C:/bin/rex.exe ingest --source cursor`,
 		`'/home/o'\''brien/rex' ingest --source cursor`,
+		`& 'C:/Users/Jane Doe/bin/rex.exe' ingest --source cursor`, `& 'C:/Users/O''Neil/rex.exe' ingest --source cursor`,
 	} {
 		if !isRexIngestCommand(cmd, ours, "cursor") {
 			t.Errorf("should recognise %q", cmd)
@@ -306,6 +308,19 @@ func TestRetiredSingleRexEntryIsRemoved(t *testing.T) {
 	}
 	if _, ok := readHooks(t, path)["hooks"].(map[string]any)["beforeShellExecution"]; ok {
 		t.Fatal("retired rex entry should be gone")
+	}
+}
+
+func TestUsersEmptyRetiredListIsKept(t *testing.T) {
+	home := cursorHome(t)
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(`{"version":1,"hooks":{"beforeShellExecution":[]}}`), 0o644)
+	if err := InstallCursorHook(io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readHooks(t, path)["hooks"].(map[string]any)["beforeShellExecution"]; !ok {
+		t.Fatal("an empty list Rex never wrote to is the user's; leave it")
 	}
 }
 

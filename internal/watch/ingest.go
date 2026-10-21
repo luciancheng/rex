@@ -41,14 +41,15 @@ func IngestCommand() string {
 
 // ingestCommand is the shell command a hook runs. Cursor runs hooks through
 // a shell, so the path is quoted for one: single quotes on POSIX. On
-// Windows a plain forward-slash path works in cmd, PowerShell and Git Bash;
-// a path that needs quoting gets PowerShell's call operator (& "…"), which
-// is what Cursor uses to run hooks there.
+// Windows a plain forward-slash path works in cmd, PowerShell and Git Bash.
+// A path that needs quoting gets PowerShell's call operator with a literal
+// single-quoted path (& '…', ' doubled), so $ and ` stay literal; that form
+// needs PowerShell.
 func ingestCommand(source, exe, goos string) string {
 	if goos == "windows" {
 		exe = strings.ReplaceAll(exe, `\`, "/")
-		if strings.ContainsAny(exe, " \t&'()^%!;,") {
-			return `& "` + exe + `" ingest --source ` + source
+		if strings.ContainsAny(exe, " \t&'()^%!;,$`\"") {
+			return `& '` + strings.ReplaceAll(exe, "'", "''") + `' ingest --source ` + source
 		}
 		return exe + " ingest --source " + source
 	}
@@ -121,8 +122,8 @@ func mergeCursorHooks(d *jsonedit.Doc, command string) ([]byte, error) {
 	ours := map[string]any{"command": command, "timeout": cursorHookTimeout}
 	switch hooks := e.doc.Root().Member("hooks"); {
 	case hooks == nil || (hooks.Kind == '{' && len(hooks.Members) == 0):
-		// A fresh or empty hooks object is written whole, one event per
-		// line, instead of growing an inline {} one key at a time.
+		// A missing or empty hooks object is written whole instead of
+		// growing an inline {} one key at a time.
 		fresh := map[string]any{}
 		for _, name := range CursorHookEvents {
 			fresh[name] = []any{ours}
@@ -170,7 +171,7 @@ func mergeHookList(e *editor, name string, ours map[string]any, want bool) error
 		}
 		return fmt.Errorf(`"hooks.%s" in hooks.json is not a list; fix it by hand, rex did not change it`, name)
 	}
-	kept := false
+	kept, removed := false, false
 	for i := len(node.Elems) - 1; i >= 0; i-- {
 		var entry map[string]any
 		if e.doc.Decode(node.Elems[i], &entry) != nil {
@@ -198,13 +199,15 @@ func mergeHookList(e *editor, name string, ours map[string]any, want bool) error
 			return d.RemoveElem(hooks(d).Member(name), i)
 		}); err != nil {
 			return err
+		} else {
+			removed = true
 		}
 		node = hooks(e.doc).Member(name)
 	}
 	if want && !kept {
 		return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Append(hooks(d).Member(name), ours) })
 	}
-	if !want && len(node.Elems) == 0 {
+	if !want && removed && len(node.Elems) == 0 {
 		return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Remove(hooks(d), name) })
 	}
 	return nil
@@ -217,9 +220,10 @@ func sameJSON(a, b any) bool {
 }
 
 // rexCommand matches a whole hook command that only runs rex ingest: an
-// optional PowerShell "&", one path (bare, 'single' or "double" quoted)
-// whose file name starts with rex, then "ingest --source <source>".
-var rexCommand = regexp.MustCompile(`^\s*(?:&\s*)?(?:"([^"]+)"|'((?:[^']|'\\'')+)'|(\S+))\s+ingest\s+--source\s+(\S+)\s*$`)
+// optional PowerShell "&", one path (bare, 'single' quoted the POSIX or the
+// PowerShell way, or "double" quoted) whose file name starts with rex, then
+// "ingest --source <source>".
+var rexCommand = regexp.MustCompile(`^\s*(?:&\s*)?(?:"([^"]+)"|'((?:[^']|'\\''|'')+)'|(\S+))\s+ingest\s+--source\s+(\S+)\s*$`)
 
 // isRexIngestCommand recognizes Rex's own hook command, from this install
 // (an exact match) or any earlier one. A user's compound command or a

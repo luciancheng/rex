@@ -309,7 +309,7 @@ func stackLines(line func(string, ...any), p *Plan, g *Graph, pin *Task) {
 		}
 		line("- PRs above it, already done: %s. Once this branch is pushed, rebase them onto it from the top of the stack (git rebase --autostash --update-refs %s; leave out any whose PR merged), push each moved branch with --force-with-lease, and retarget the PR of %s to %s.", list(names, ", "), head, clip(clean(names[0]), idCap), head)
 	}
-	line("- The plan file is the stack's, not this PR's: never stage or commit it on a stack branch (git add only your task's files, not -A or commit -a). Its changes then follow you across git switch and git rebase --autostash, so Rex keeps reading the current plan. If a rebase stops on a conflict, finish it before acting in Rex.")
+	line("- The plan file is the stack's, not this PR's: never stage or commit it while the stack is in flight, on this branch or any other (git add only your task's files, not -A or commit -a). Its changes then follow you across git switch and git rebase --autostash, so Rex keeps reading the current plan. If a rebase stops on a conflict, finish it before acting in Rex.")
 	line(`- Repo rules on branches and PRs win: if you use another branch, write it into this task as "branch".`)
 }
 

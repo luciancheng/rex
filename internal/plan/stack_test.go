@@ -107,7 +107,7 @@ func TestSendoffStack(t *testing.T) {
 			"gh pr create --base feature/plans_ui --head feature/card_highlight",
 			"gh stack link --base dev feature/plans_ui feature/card_highlight, leaving out any whose PR merged",
 			"if it isn't on the base yet, rebase it onto the base (--autostash) and retarget its PR",
-			"never stage or commit it on a stack branch (git add only your task's files, not -A or commit -a)",
+			"never stage or commit it while the stack is in flight, on this branch or any other (git add only your task's files, not -A or commit -a)",
 			"If a rebase stops on a conflict, finish it before acting in Rex.",
 		}, []string{"Below it", "PRs above it"}},
 		// third up: --base names the bottom's base, so the whole done chain is listed

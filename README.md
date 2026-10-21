@@ -49,7 +49,9 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/luciancheng/rex/main/scripts/install.ps1 | iex
 ```
 
-That builds a binary into `~/.local/bin`, puts `rex` on your PATH, and wires Cursor so this machine's agent chat is watched. You need [Go 1.22+](https://go.dev/dl/). Open a new terminal, then `rex start` from the repo you want to send off.
+That builds a binary into `~/.local/bin`, puts `rex` on your PATH, and wires Cursor (if it's installed) so this machine's agent chat is watched. Claude Code, Codex and OpenCode are opt-in: the script prints the one command for each one it finds. You need [Go 1.22+](https://go.dev/dl/). Open a new terminal, then `cd` into the repo you want to send off and run `rex start`.
+
+To install a specific tag, branch or commit, set `REX_REF` (for example `curl -fsSL …/install.sh | REX_REF=v0.2.0 bash`).
 
 Already have Go?
 

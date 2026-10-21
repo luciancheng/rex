@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -480,5 +482,39 @@ func TestSkillFlagsGoOnTheirOwn(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(plain, ".claude")); err == nil {
 		t.Fatal("nothing is written outside a repo")
+	}
+}
+
+// The install scripts: the real module path (no .git suffix), go install
+// errors shown, REX_REF fetched exactly, Cursor the only agent wired, and
+// both scripts in step.
+func TestInstallScripts(t *testing.T) {
+	sh, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"install.sh": string(sh), "install.ps1": string(ps)} {
+		for _, want := range []string{"REX_REF", "fetch -q --depth 1 origin", "FETCH_HEAD", "ingest --install cursor", "rex ingest --install claude", "rex ingest --install codex", "rex ingest --install opencode", "cd <your-repo>"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: missing %q", name, want)
+			}
+		}
+		for _, bad := range []string{"rex.git/cmd/rex", "clone --branch", "--install auto", "go build -o rex "} {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s: must not contain %q", name, bad)
+			}
+		}
+	}
+	if strings.Contains(string(sh), "go install") && strings.Contains(string(sh), "@latest\" 2>/dev/null") {
+		t.Error("go install errors are shown, not swallowed")
+	}
+	if bash, err := exec.LookPath("bash"); err == nil && runtime.GOOS != "windows" {
+		if out, err := exec.Command(bash, "-n", filepath.Join("..", "..", "scripts", "install.sh")).CombinedOutput(); err != nil {
+			t.Fatalf("bash -n: %v\n%s", err, out)
+		}
 	}
 }

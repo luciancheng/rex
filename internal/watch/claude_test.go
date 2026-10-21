@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -138,7 +139,7 @@ func TestInstallClaudeKeepsSettingsAndOtherHooks(t *testing.T) {
 	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
 		t.Fatal("reinstall must be idempotent")
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+	if info, _ := os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 { // Windows has no Unix modes
 		t.Fatalf("mode %o", info.Mode().Perm())
 	}
 	out.Reset()

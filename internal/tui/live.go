@@ -435,7 +435,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	bodyTop := 2
 	bodyBottom := height - FooterRows - l.composer
 	bodyH := max(0, bodyBottom-bodyTop)
-	var body []LogLine
+	var body, pinned []LogLine
 	scroll := opt.Scroll
 	fromTop := false
 	if opt.Overlay != nil {
@@ -443,7 +443,14 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
 		fromTop = true
 	} else if opt.Pane == PanePlans && opt.Plans != nil {
-		body = BuildPlanView(opt.Plans, width)
+		// The Library's title, folder, notice and error stay put; only the
+		// list under them scrolls.
+		all := BuildPlanView(opt.Plans, width)
+		head := min(len(all), opt.Plans.headLen())
+		pinned = planHead(all[:head], len(all), bodyH)
+		body = all[head:]
+		bodyTop += len(pinned)
+		bodyH -= len(pinned)
 		scroll = opt.Plans.window(body, bodyH)
 		fromTop = true
 	} else {
@@ -485,6 +492,9 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	rows[0] = headerRow(width, placeWord(opt.Pane), opt.Status, opt.PlanRel, enabled)
 	if height > 1 {
 		rows[1] = statusRow(opt.Line, width, enabled)
+	}
+	for offset, line := range pinned {
+		rows[bodyTop-len(pinned)+offset] = paintLine(line, width, enabled)
 	}
 	for offset, line := range visible {
 		if bodyTop+offset >= bodyBottom {

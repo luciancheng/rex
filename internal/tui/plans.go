@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -66,8 +67,9 @@ type PlanBrowser struct {
 	Rows    []PlanRow
 	View    int // first visible body line, kept between frames
 
-	fresh bool // the screen just changed: put the cursor on its default row
-	walk  planWalk
+	fresh    bool // the screen just changed: put the cursor on its default row
+	walk     planWalk
+	findMore int // find matches past maxMatches, left out
 
 	inGit bool
 }
@@ -205,19 +207,6 @@ func PlanFileName(name string) string {
 	return name + ".rex.json"
 }
 
-func FolderName(name string) string {
-	name = strings.TrimSpace(name)
-	name = strings.ReplaceAll(name, "\\", "/")
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
-	}
-	name = strings.TrimSpace(name)
-	if name == "" || name == "." || name == ".." {
-		return ""
-	}
-	return name
-}
-
 func NewPlanBrowser(start string) *PlanBrowser {
 	repo, inGit := findRepo(start)
 	b := &PlanBrowser{Repo: repo, Screen: ScreenHome, inGit: inGit, fresh: true}
@@ -272,7 +261,11 @@ func (b *PlanBrowser) plans() []planStat {
 }
 
 func (b *PlanBrowser) RelDir() string {
-	rel, err := filepath.Rel(b.Repo, b.Dir)
+	dir := b.Dir
+	if b.Screen == ScreenHome {
+		dir = b.Root // Home finds and creates from rex/plans
+	}
+	rel, err := filepath.Rel(b.Repo, dir)
 	if err != nil {
 		return "rex/plans"
 	}
@@ -314,14 +307,15 @@ func (b *PlanBrowser) Rebuild() {
 	case ScreenBrowse:
 		b.Rows = buildBrowseRows(b.Root, b.Dir, b.Filter)
 	default:
-		b.Rows = buildHomeRows(b.plans(), b.Find)
+		b.Rows, b.findMore = buildHomeRows(b.plans(), b.Find)
 	}
 	switch {
 	case b.fresh:
 		b.Cursor = b.defaultRow()
 		b.View = 0
 	case keep != "":
-		b.Cursor = b.defaultRow()
+		// Keep the selected row; if it is gone, stay at the same place
+		// in the list (clamped below), next to where it was.
 		for i, row := range b.Rows {
 			if row.key() == keep {
 				b.Cursor = i
@@ -481,7 +475,7 @@ func (b *PlanBrowser) CommitCreate(name string) PlanAction {
 		return PlanStay
 	}
 	if _, err := os.Stat(path); err == nil {
-		b.Err = filepath.Base(path) + " already exists"
+		b.Err = b.relName(path) + " already exists"
 		return PlanStay
 	}
 	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
@@ -497,9 +491,10 @@ func (b *PlanBrowser) CommitCreate(name string) PlanAction {
 	return b.open(path)
 }
 
-// createTarget is where a typed name will be created. "a/b" makes plan b
-// inside folder a; names may not climb out of rex/plans.
-func (b *PlanBrowser) createTarget(name string) (string, error) {
+// planName is a typed name as a slash path under the folder it is created
+// in: "a/b" is plan b.rex.json inside folder a. Names may not climb out
+// of rex/plans.
+func planName(name string) (string, error) {
 	parts := strings.Split(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"), "/")
 	var dirs []string
 	for _, part := range parts[:len(parts)-1] {
@@ -516,26 +511,44 @@ func (b *PlanBrowser) createTarget(name string) (string, error) {
 	if file == "" {
 		return "", errors.New("type a name first")
 	}
+	return path.Join(append(dirs, file)...), nil
+}
+
+// createTarget is where a typed name will be created: under the folder
+// being browsed, or under rex/plans from Home.
+func (b *PlanBrowser) createTarget(name string) (string, error) {
+	rel, err := planName(name)
+	if err != nil {
+		return "", err
+	}
 	base := b.Dir
 	if b.From == ScreenHome || base == "" {
 		base = b.Root
 	}
-	return filepath.Join(append(append([]string{base}, dirs...), file)...), nil
+	return filepath.Join(base, filepath.FromSlash(rel)), nil
+}
+
+// relName is path relative to rex/plans, with "/" separators.
+func (b *PlanBrowser) relName(path string) string {
+	if rel, err := filepath.Rel(b.Root, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.Base(path)
 }
 
 func (b *PlanBrowser) CommitFolder(name string) PlanAction {
-	folder := FolderName(name)
-	if folder == "" {
-		b.Err = "type a folder name first"
+	rel, err := folderPath(name)
+	if err != nil {
+		b.Err = err.Error()
 		return PlanStay
 	}
 	if _, err := EnsurePlansDir(b.Repo); err != nil {
 		b.Err = err.Error()
 		return PlanStay
 	}
-	path := filepath.Join(b.Dir, folder)
+	path := filepath.Join(b.Dir, filepath.FromSlash(rel))
 	if _, err := os.Stat(path); err == nil {
-		b.Err = folder + " already exists"
+		b.Err = b.relName(path) + " already exists"
 		return PlanStay
 	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
@@ -550,6 +563,25 @@ func (b *PlanBrowser) CommitFolder(name string) PlanAction {
 	b.fresh = true
 	b.Rebuild()
 	return PlanStay
+}
+
+// folderPath is a typed folder name as a slash path: "a/b" makes b
+// inside a. Like plan names, it may not climb out of rex/plans.
+func folderPath(name string) (string, error) {
+	var parts []string
+	for _, part := range strings.Split(strings.ReplaceAll(name, "\\", "/"), "/") {
+		switch part = strings.TrimSpace(part); part {
+		case "", ".":
+		case "..":
+			return "", errors.New("folder names stay inside rex/plans")
+		default:
+			parts = append(parts, part)
+		}
+	}
+	if len(parts) == 0 {
+		return "", errors.New("type a folder name first")
+	}
+	return path.Join(parts...), nil
 }
 
 func (b *PlanBrowser) CancelPrompt() {
@@ -622,36 +654,64 @@ func recentRows(plans []planStat, limit int) []PlanRow {
 const maxMatches = 30
 
 // buildHomeRows is the Library home. With a find query it is the matching
-// plans across rex/plans/**, then "+ Create '<query>'" unless that exact
-// plan exists. On first run only Create is offered.
-func buildHomeRows(plans []planStat, find string) []PlanRow {
-	if q := strings.ToLower(strings.TrimSpace(find)); q != "" {
-		var rows []PlanRow
+// plans across rex/plans/**, best match first, then "+ Create '<query>'"
+// unless that exact plan exists; more counts the matches left out. On
+// first run only Create is offered.
+func buildHomeRows(plans []planStat, find string) (rows []PlanRow, more int) {
+	if q := findKey(find); q != "" {
+		// An exact name or path ranks first, then a name or path that
+		// starts with the query, then any other match; newest first within
+		// each. The .rex.json suffix is not matched, so "json" finds nothing.
+		var ranked [3][]planStat
 		exact := false
-		want := strings.ToLower(PlanFileName(find))
+		want, err := planName(find)
+		want = strings.ToLower(want)
 		for _, p := range plans {
 			lower := strings.ToLower(p.rel)
-			if lower == want {
+			if err == nil && lower == want {
 				exact = true // + Create would make this same file
 			}
-			if strings.Contains(lower, q) && len(rows) < maxMatches {
+			name := strings.TrimSuffix(lower, ".rex.json")
+			base := path.Base(name)
+			switch {
+			case name == q || base == q:
+				ranked[0] = append(ranked[0], p)
+			case strings.HasPrefix(name, q) || strings.HasPrefix(base, q):
+				ranked[1] = append(ranked[1], p)
+			case strings.Contains(name, q):
+				ranked[2] = append(ranked[2], p)
+			}
+		}
+		for _, group := range ranked {
+			for _, p := range group {
+				if len(rows) == maxMatches {
+					more++
+					continue
+				}
 				rows = append(rows, PlanRow{Kind: PlanRowPlan, Name: p.rel, Path: p.path})
 			}
 		}
-		if !exact && PlanFileName(find) != "" {
+		if !exact && err == nil {
 			rows = append(rows, PlanRow{Kind: PlanRowCreateNamed, Name: strings.TrimSpace(find)})
 		}
-		return rows
+		return rows, more
 	}
-	rows := []PlanRow{{Kind: PlanRowNew, Name: "Create a plan", Hint: "New .rex.json in rex/plans"}}
+	rows = []PlanRow{{Kind: PlanRowNew, Name: "Create a plan", Hint: "New .rex.json in rex/plans"}}
 	if len(plans) == 0 {
-		return rows
+		return rows, 0
 	}
 	rows = append(rows,
 		PlanRow{Kind: PlanRowOpen, Name: "Open a plan", Hint: "Browse folders and files"},
 		PlanRow{Kind: PlanRowLatest, Name: "Open latest", Hint: plans[0].rel, Path: plans[0].path},
 	)
-	return append(rows, recentRows(plans, maxRecents)...)
+	return append(rows, recentRows(plans, maxRecents)...), 0
+}
+
+// findKey is a Home find query as matched: lowercase, "/" separators,
+// without a typed .rex.json.
+func findKey(find string) string {
+	q := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(find, "\\", "/")))
+	return strings.TrimSuffix(q, ".rex.json")
 }
 
 // buildBrowseRows lists one folder: "..", folders, plans and other files,
@@ -743,10 +803,8 @@ func composerPrefix(opt ComposeOptions) string {
 	switch opt.Plans.Screen {
 	case ScreenCreate, ScreenFolder:
 		return " + "
-	case ScreenBrowse:
-		return " / "
 	default:
-		return "   "
+		return " / " // Home finds, Browse filters
 	}
 }
 
@@ -785,11 +843,8 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 				target = "Creates " + filepath.ToSlash(rel)
 			}
 		}
-		lines = append(lines,
-			LogLine{Kind: "text", Text: "  " + clip("Name the plan, then enter. a/b makes it in folder a.", inner)},
-			LogLine{Kind: "idle", Text: "  " + clip(target, inner)},
-		)
-		return lines
+		lines = appendWrapped(lines, "text", "Name the plan, then enter. a/b makes it in folder a.", inner)
+		return appendWrapped(lines, "idle", target, inner)
 	case ScreenFolder:
 		lines = append(lines,
 			LogLine{Kind: "text", Text: "  " + clip("Name the folder, then enter.", inner)},
@@ -799,15 +854,17 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 	case ScreenBrowse:
 		items := 0
 		for i, row := range b.Rows {
-			if row.Kind == PlanRowMkdir && i > 0 {
-				lines = append(lines, LogLine{Kind: "idle", Text: "  " + strings.Repeat("─", max(8, inner-2))})
+			if row.Kind == PlanRowMkdir {
+				noMatch := items == 0 && b.Filter != ""
+				if noMatch {
+					lines = append(lines, LogLine{Kind: "idle", Text: "  " + clip("no match for '"+b.Filter+"' in "+b.RelDir(), inner)})
+				}
+				if i > 0 || noMatch {
+					lines = append(lines, LogLine{Kind: "idle", Text: "  " + strings.Repeat("─", max(8, inner-2))})
+				}
 			}
 			if row.Kind != PlanRowMkdir && row.Kind != PlanRowNew && row.Kind != PlanRowUp {
 				items++
-			}
-			if row.Kind == PlanRowMkdir && items == 0 && b.Filter != "" {
-				lines = append(lines[:len(lines)-1], LogLine{Kind: "idle", Text: "  " + clip("no match for '"+b.Filter+"' in "+b.RelDir(), inner)},
-					LogLine{Kind: "idle", Text: "  " + strings.Repeat("─", max(8, inner-2))})
 			}
 			lines = append(lines, browseLine(row, i == b.Cursor, inner))
 		}
@@ -818,6 +875,9 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 			lines = append(lines, LogLine{Kind: "idle", Text: "  " + clip("no match for '"+b.Find+"'", inner)})
 		}
 		for i, row := range b.Rows {
+			if row.Kind == PlanRowCreateNamed && b.findMore > 0 {
+				lines = append(lines, LogLine{Kind: "idle", Text: "  " + clip(fmt.Sprintf("+%d more · keep typing", b.findMore), inner)})
+			}
 			lines = append(lines, browseLine(row, i == b.Cursor, inner))
 		}
 		return lines
@@ -841,7 +901,16 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 		}
 	}
 	if len(b.Rows) == 1 && b.Notice != rexFileNotice {
-		lines = append(lines, LogLine{Kind: "gap", Text: ""}, LogLine{Kind: "idle", Text: "  " + clip("plans are JSON in rex/plans/ · commit them", inner)})
+		lines = appendWrapped(append(lines, LogLine{Kind: "gap", Text: ""}), "idle", "plans are JSON in rex/plans/ · commit them", inner)
+	}
+	return lines
+}
+
+// appendWrapped adds text as indented lines wrapped to inner cells, so a
+// hint or a target path isn't cut off in a narrow pane.
+func appendWrapped(lines []LogLine, kind, text string, inner int) []LogLine {
+	for _, part := range wrap(text, max(1, inner-2)) {
+		lines = append(lines, LogLine{Kind: kind, Text: "  " + part})
 	}
 	return lines
 }
@@ -875,6 +944,48 @@ func fitNotice(notice string, width int) string {
 		}
 	}
 	return variants[len(variants)-1]
+}
+
+// headLen is how many lines BuildPlanView puts above the list: the title
+// rule, the folder, a gap, then the notice and the error with their gaps.
+// They don't scroll with the list.
+func (b *PlanBrowser) headLen() int {
+	n := 3
+	if b.Notice != "" {
+		n += 2
+	}
+	if b.Err != "" {
+		n += 2
+	}
+	return n
+}
+
+// planHead is the part of head that stays on screen above a list of total
+// lines in viewH rows. When the list would get fewer than three rows, the
+// gaps go first, then the folder and title; the error and notice stay
+// longest, so ⏎ on a far-down row still says what went wrong.
+func planHead(head []LogLine, total, viewH int) []LogLine {
+	if total <= viewH || viewH-len(head) >= 3 {
+		return head
+	}
+	keep := max(0, viewH-3)
+	rank := map[string]int{"error": 0, "idle": 1, "command": 2, "folder": 3}
+	picked := make([]bool, len(head))
+	for r, n := 0, 0; r <= 3 && n < keep; r++ {
+		for i, line := range head {
+			if got, ok := rank[line.Kind]; ok && got == r && n < keep {
+				picked[i] = true
+				n++
+			}
+		}
+	}
+	var out []LogLine
+	for i, line := range head {
+		if picked[i] {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 // window picks the first body line to show so the selected row stays

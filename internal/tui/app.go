@@ -261,6 +261,14 @@ func (a *app) keys(pressed []string) bool {
 
 // handleKey applies one key. It sets a.quit on the second Ctrl+C.
 func (a *app) handleKey(key string) bool {
+	// A Library error stays only until the next key, whatever that key
+	// does (docs/ux.md §11); the key may set a new one.
+	cleared := a.plans.Err != ""
+	a.plans.Err = ""
+	return a.applyKey(key) || cleared
+}
+
+func (a *app) applyKey(key string) bool {
 	if l := layoutFor(a.columns, a.lines); !l.typing && key != CtrlC && key != "\x0c" {
 		_, paste := IsPaste(key)
 		edits := paste || isPrintableKey(key) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
@@ -314,9 +322,6 @@ func (a *app) handleKey(key string) bool {
 
 // handleKeyArmed applies a key once quit is not armed.
 func (a *app) handleKeyArmed(key string) bool {
-	if a.pane == PanePlans {
-		a.plans.Err = "" // an error stays only until the next key
-	}
 	if text, ok := IsPaste(key); ok {
 		// A paste is typed into the draft as one line; it never submits.
 		next := capDraft(a.draft + text)
@@ -525,10 +530,16 @@ func (a *app) planEnter() bool {
 		a.draft = ""
 		return true
 	}
+	filter := b.Filter
 	switch b.Activate() {
 	case PlanStartCreate:
+		// From a Browse filter, what was typed becomes the name to edit.
 		b.Screen = ScreenCreate
 		a.draft = ""
+		if b.From == ScreenBrowse {
+			a.draft = filter
+		}
+		b.Name = a.draft
 	case PlanStartFolder:
 		b.Screen = ScreenFolder
 		a.draft = ""
@@ -561,7 +572,9 @@ func (a *app) overlayKey(key string) bool {
 		return true
 	case "up", "down", "pageup", "pagedown":
 		page := PaneBodyHeight(a.lines)
-		delta := map[string]int{"up": -1, "down": 1, "pageup": -page, "pagedown": page}[key]
+		// A page keeps two rows of overlap: the ↑/↓ more markers cover them.
+		step := max(1, page-2)
+		delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
 		limit := max(0, len(a.helpBody(PaneTextWidth(a.columns)))-page)
 		next := max(0, min(limit, a.overlayScroll[a.pane]+delta))
 		changed := next != a.overlayScroll[a.pane]
@@ -592,6 +605,8 @@ func (a *app) syncPlanInput() bool {
 	if forcedVerb(text) {
 		text = ""
 	}
+	// Spaces alone don't filter or find anything.
+	text = strings.TrimSpace(text)
 	switch b.Screen {
 	case ScreenBrowse:
 		if b.Filter == text {

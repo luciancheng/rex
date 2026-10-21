@@ -175,3 +175,226 @@ func TestLongListScrollsWithTheSelection(t *testing.T) {
 		t.Fatal("a scrolled list says there is more above")
 	}
 }
+
+func TestFindComparesTheWholeName(t *testing.T) {
+	// A root plan b doesn't count as a/b: + Create 'a/b' is offered, and
+	// ⏎ makes it in folder a.
+	a, root := libraryApp(t, "b.rex.json")
+	typeText(a, "a/b")
+	b := a.plans
+	if len(b.Rows) == 0 || b.Rows[len(b.Rows)-1].Kind != PlanRowCreateNamed {
+		t.Fatalf("rows %#v", b.Rows)
+	}
+	press(a, "end", "\r")
+	if _, err := os.Stat(filepath.Join(root, "a", "b.rex.json")); err != nil {
+		t.Fatal("+ Create 'a/b' creates b in folder a")
+	}
+
+	// An existing a/b is an exact match: no + Create, and it is selected.
+	a, _ = libraryApp(t, "a/b.rex.json", "b.rex.json")
+	typeText(a, "a/b")
+	b = a.plans
+	for _, row := range b.Rows {
+		if row.Kind == PlanRowCreateNamed {
+			t.Fatalf("a/b exists, so no + Create: %#v", b.Rows)
+		}
+	}
+	if b.Rows[b.Cursor].Name != "a/b.rex.json" {
+		t.Fatalf("selected %#v", b.Rows[b.Cursor])
+	}
+}
+
+func TestFindRanksTheExactNameFirst(t *testing.T) {
+	a, root := libraryApp(t, "auth.rex.json", "oauth.rex.json", "authz-later.rex.json")
+	typeText(a, "auth")
+	b := a.plans
+	var got []string
+	for _, row := range b.Rows {
+		got = append(got, row.Name)
+	}
+	want := []string{"auth.rex.json", "authz-later.rex.json", "oauth.rex.json"}
+	for i, name := range want {
+		if i >= len(got) || got[i] != name {
+			t.Fatalf("order %v, want %v first", got, want)
+		}
+	}
+	press(a, "\r")
+	if b.Current != filepath.Join(root, "auth.rex.json") {
+		t.Fatalf("name⏎ opened %q", b.Current)
+	}
+}
+
+func TestFindIgnoresTheSuffixAndBlankQueries(t *testing.T) {
+	a, _ := libraryApp(t, "alpha.rex.json", "beta.rex.json")
+	typeText(a, "json")
+	if rows := a.plans.Rows; len(rows) != 1 || rows[0].Kind != PlanRowCreateNamed {
+		t.Fatalf("the .rex.json suffix matched: %#v", rows)
+	}
+	press(a, "\x15")
+	typeText(a, "   ")
+	if a.plans.Find != "" || a.plans.Rows[a.plans.Cursor].Kind != PlanRowLatest {
+		t.Fatalf("spaces alone keep the cards: find=%q row=%#v", a.plans.Find, a.plans.Rows[a.plans.Cursor])
+	}
+}
+
+func TestFindSaysWhenMatchesAreLeftOut(t *testing.T) {
+	var names []string
+	for i := 0; i < maxMatches+5; i++ {
+		names = append(names, "p"+string(rune('a'+i%26))+string(rune('a'+i/26))+".rex.json")
+	}
+	a, _ := libraryApp(t, names...)
+	typeText(a, "p")
+	if !strings.Contains(viewText(BuildPlanView(a.plans, 60)), "+5 more · keep typing") {
+		t.Fatal("left-out matches are counted")
+	}
+}
+
+func TestLibraryHeaderNeverScrollsAway(t *testing.T) {
+	var names []string
+	for i := 0; i < 30; i++ {
+		names = append(names, "many/p"+string(rune('a'+i%26))+string(rune('a'+i/26))+".rex.json")
+	}
+	a, root := libraryApp(t, names...)
+	os.WriteFile(filepath.Join(root, "many", "zz-notes.txt"), []byte("x"), 0o644)
+	a.settle(110, 20)
+	if frame := a.frame(); !strings.Contains(frame, "── plans") || !strings.Contains(frame, "rex/plans") {
+		t.Fatalf("first frame keeps the title and folder\n%s", frame)
+	}
+	for i, row := range a.plans.Rows {
+		if row.Kind == PlanRowOpen {
+			a.plans.Cursor = i
+		}
+	}
+	press(a, "\r", "\r") // Browse, then into many/
+	for i := 0; i < 40; i++ {
+		press(a, "down")
+		a.frame()
+	}
+	for i := 0; i < 40; i++ {
+		press(a, "up")
+		a.frame()
+	}
+	if frame := a.frame(); !strings.Contains(frame, "── open") || !strings.Contains(frame, "rex/plans/many") {
+		t.Fatalf("back at the top, the title and folder show\n%s", frame)
+	}
+	// ⏎ on a file far down the list says why, on screen.
+	for a.plans.Rows[a.plans.Cursor].Kind != PlanRowFile {
+		press(a, "down")
+		a.frame()
+	}
+	press(a, "\r")
+	if frame := a.frame(); !strings.Contains(frame, "not a .rex.json") {
+		t.Fatalf("the error is drawn above the scrolled list\n%s", frame)
+	}
+}
+
+func TestOutsideGitNoticeShowsOnASmallScreen(t *testing.T) {
+	repo := t.TempDir()
+	seedPlans(t, repo, "one.rex.json")
+	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 60, 20)
+	a.settle(60, 20)
+	if frame := a.frame(); !strings.Contains(frame, "not in") {
+		t.Fatalf("the outside-git notice is on the first frame\n%s", frame)
+	}
+}
+
+func TestErrorsClearOnAnyKey(t *testing.T) {
+	a, _ := libraryApp(t, "x.rex.json")
+	for _, key := range []string{"\t", CtrlC, "\x0c"} {
+		a.pane = PanePlans
+		a.quitPending = false
+		a.plans.Err = "boom"
+		press(a, key)
+		if a.plans.Err != "" {
+			t.Fatalf("%q left the error", key)
+		}
+	}
+}
+
+func TestBrowseNewPlanKeepsTheFilter(t *testing.T) {
+	a, root := libraryApp(t, "alpha.rex.json")
+	for i, row := range a.plans.Rows {
+		if row.Kind == PlanRowOpen {
+			a.plans.Cursor = i
+		}
+	}
+	press(a, "\r")
+	typeText(a, "roadmap")
+	press(a, "\r")
+	if a.plans.Screen != ScreenCreate || a.draft != "roadmap" {
+		t.Fatalf("screen=%v draft=%q", a.plans.Screen, a.draft)
+	}
+	if !strings.Contains(a.frame(), "Creates rex/plans/roadmap.rex.json") {
+		t.Fatal("the target is shown")
+	}
+	press(a, "\r")
+	if _, err := os.Stat(filepath.Join(root, "roadmap.rex.json")); err != nil {
+		t.Fatal("⏎ creates the filtered name")
+	}
+}
+
+func TestNewFolderTakesAPath(t *testing.T) {
+	a, root := libraryApp(t, "alpha.rex.json")
+	b := a.plans
+	b.Screen, b.Dir = ScreenBrowse, root
+	if b.CommitFolder("team/q3") != PlanStay || b.Err != "" {
+		t.Fatalf("err %q", b.Err)
+	}
+	if info, err := os.Stat(filepath.Join(root, "team", "q3")); err != nil || !info.IsDir() {
+		t.Fatal("a/b makes b inside a")
+	}
+	b.Dir = root
+	if b.CommitFolder("../out"); !strings.Contains(b.Err, "inside rex/plans") {
+		t.Fatalf("err %q", b.Err)
+	}
+	b.Dir = root
+	if b.CommitFolder("team/q3"); b.Err != "team/q3 already exists" {
+		t.Fatalf("err %q", b.Err)
+	}
+}
+
+func TestDuplicateCreateNamesTheFolder(t *testing.T) {
+	a, _ := libraryApp(t, "team/alpha.rex.json")
+	b := a.plans
+	b.From = ScreenHome
+	if b.CommitCreate("team/alpha"); b.Err != "team/alpha.rex.json already exists" {
+		t.Fatalf("err %q", b.Err)
+	}
+}
+
+func TestHelpPagesOverlapUnderTheMarkers(t *testing.T) {
+	a := testApp(t)
+	a.settle(80, 12)
+	typeText(a, "?")
+	press(a, "\r")
+	page := PaneBodyHeight(a.lines)
+	press(a, "pagedown")
+	if got := a.overlayScroll[a.pane]; got != page-2 {
+		t.Fatalf("pagedown moved %d, want %d", got, page-2)
+	}
+}
+
+func TestHomeTakesWordsLiterally(t *testing.T) {
+	// In the Library a verb is just a name (docs/ux.md §2): done⏎ finds or
+	// creates "done", and only /done would run the verb.
+	a, root := libraryApp(t, "alpha.rex.json")
+	typeText(a, "done")
+	if !strings.Contains(a.frame(), "⏎ create") {
+		t.Fatalf("the footer says ⏎ creates\n%s", a.frame())
+	}
+	press(a, "\r")
+	if _, err := os.Stat(filepath.Join(root, "done.rex.json")); err != nil {
+		t.Fatal("done⏎ on Home creates done.rex.json")
+	}
+}
+
+func TestHomeFolderLineIsThePlansRoot(t *testing.T) {
+	a, _ := libraryApp(t, "team/alpha.rex.json")
+	b := a.plans
+	b.Screen, b.From, b.Dir = ScreenCreate, ScreenBrowse, filepath.Join(b.Root, "team")
+	b.CommitCreate("beta")
+	b.Screen = ScreenHome
+	if got := b.RelDir(); got != "rex/plans" {
+		t.Fatalf("Home says %q", got)
+	}
+}

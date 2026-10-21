@@ -2,15 +2,23 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/luciancheng/rex/internal/watch"
 )
 
+// testApp runs in a throwaway git repo so a plan created by a test can
+// never land in whatever repo holds the temp dir.
 func testApp(t *testing.T) *app {
 	t.Helper()
-	return newApp("yellow", false, "idle", NewPlanBrowser(t.TempDir()), 120, 32)
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
 }
 
 func press(a *app, keys ...string) {

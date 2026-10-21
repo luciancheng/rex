@@ -30,7 +30,6 @@ type app struct {
 	scroll   int
 	turn     Turn
 	lastKind string
-	status   string
 
 	quitPending bool
 	quitTicks   int
@@ -44,7 +43,6 @@ func newApp(color string, enabled bool, animation string, plans *PlanBrowser, co
 	a.hold = a.sequence.Frames[0].Hold
 	a.spriteName = a.sequence.Frames[0].Sprite
 	a.animated = len(a.sequence.Frames) > 1
-	a.status = a.sequence.Name
 	return a
 }
 
@@ -106,7 +104,8 @@ func (a *app) logLines() int {
 }
 
 // ingest applies hook events: turn state for every event, the tape for the
-// ones worth drawing. A scrolled-up view stays put on the lines it shows.
+// ones worth drawing. A scrolled-up view keeps showing the same lines while
+// new ones arrive below (until MaxLog trims the oldest).
 func (a *app) ingest(fresh []watch.Event) bool {
 	if len(fresh) == 0 {
 		return false
@@ -124,7 +123,6 @@ func (a *app) ingest(fresh []watch.Event) bool {
 		a.scroll += max(0, a.logLines()-before)
 	}
 	if len(added) > 0 || a.turn != prevTurn {
-		a.status = statusForTurn(a.turn, a.lastKind)
 		a.syncTurn()
 		return true
 	}
@@ -203,7 +201,6 @@ func (a *app) handleKey(key string) bool {
 				a.turn = TurnIdle
 			}
 			a.play(next)
-			a.status = a.sequence.Name
 		}
 		a.log = append(a.log, watch.NewEvent("user", "text", text, nil))
 		a.draft = ""
@@ -250,7 +247,6 @@ func (a *app) tick() bool {
 	a.frameIndex, a.hold, finished = advance(a.sequence.Frames, a.frameIndex, a.hold, animationLoops(a.sequence.Name))
 	if finished {
 		a.play(AnimationForTurn(a.turn))
-		a.status = statusForTurn(a.turn, "")
 		return true
 	}
 	if next := a.sequence.Frames[a.frameIndex].Sprite; next != a.spriteName {

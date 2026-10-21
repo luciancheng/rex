@@ -16,8 +16,15 @@ func browseApp(t *testing.T) *app {
 	if err := os.MkdirAll(filepath.Join(root, "team"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "seed.rex.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
-	a.plans.Cursor = 1 // Open a plan
+	for i, row := range a.plans.Rows {
+		if row.Kind == PlanRowOpen {
+			a.plans.Cursor = i
+		}
+	}
 	press(a, "\r")
 	if !a.plans.Browsing() {
 		t.Fatal("setup: browse")
@@ -237,12 +244,6 @@ func TestSlashWordIsOnlyEverAVerb(t *testing.T) {
 	press(a, "\r")
 	if a.plans.Current != "" || a.plans.Screen != ScreenHome || !strings.Contains(a.plans.Err, "'/zap' is not a verb") {
 		t.Fatalf("screen %d current %q err %q", a.plans.Screen, a.plans.Current, a.plans.Err)
-	}
-	b := testApp(t)
-	typeText(b, "breakdance")
-	press(b, "\r")
-	if b.plans.Screen != ScreenHome || b.sequence.Name == "breakdance" || !strings.Contains(b.plans.Err, "start with /") {
-		t.Fatalf("a bare word on Home must not fire the card: screen %d err %q", b.plans.Screen, b.plans.Err)
 	}
 }
 

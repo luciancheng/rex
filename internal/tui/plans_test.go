@@ -211,14 +211,28 @@ func TestNoticesFitNarrowPanes(t *testing.T) {
 	}
 }
 
+func seedPlans(t *testing.T, repo string, names ...string) string {
+	t.Helper()
+	root := filepath.Join(repo, "rex", "plans")
+	for _, name := range names {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return root
+}
+
 func TestPlanHomeShowsActions(t *testing.T) {
 	repo := t.TempDir()
+	seedPlans(t, repo, "alpha.rex.json")
 	b := NewPlanBrowser(repo)
 	if b.Screen != ScreenHome {
 		t.Fatal("home first")
-	}
-	if _, err := os.Stat(b.Root); !os.IsNotExist(err) {
-		t.Fatalf("start must not create the plans dir: %v", err)
 	}
 	view := viewText(BuildPlanView(b, 48))
 	for _, needle := range []string{"Create a plan", "Open a plan", "Open latest", "rex/plans"} {
@@ -226,10 +240,27 @@ func TestPlanHomeShowsActions(t *testing.T) {
 			t.Fatalf("missing %q in\n%s", needle, view)
 		}
 	}
+	if b.Rows[b.Cursor].Kind != PlanRowLatest {
+		t.Fatal("with plans, the cursor starts on Open latest")
+	}
+}
+
+func TestFirstRunShowsOnlyCreate(t *testing.T) {
+	b := NewPlanBrowser(t.TempDir())
+	if len(b.Rows) != 1 || b.Rows[0].Kind != PlanRowNew {
+		t.Fatalf("rows %#v", b.Rows)
+	}
+	if _, err := os.Stat(b.Root); !os.IsNotExist(err) {
+		t.Fatalf("start must not create the plans dir: %v", err)
+	}
+	if !strings.Contains(viewText(BuildPlanView(b, 60)), "plans are JSON in rex/plans/") {
+		t.Fatal("first-run hint")
+	}
 }
 
 func TestPlanCardSelectionSpansBox(t *testing.T) {
 	repo := t.TempDir()
+	seedPlans(t, repo, "alpha.rex.json")
 	b := NewPlanBrowser(repo)
 	b.Cursor = 2
 	view := BuildPlanView(b, 48)
@@ -243,7 +274,7 @@ func TestPlanCardSelectionSpansBox(t *testing.T) {
 		t.Fatalf("want 3 highlighted card rows, got %d\n%s", len(selected), viewText(view))
 	}
 	for _, line := range selected {
-		if line.Kind != "pick" || line.Fill != "pickbg" {
+		if line.Kind != "pick" || line.Fill != "pickbg" || !line.Selected {
 			t.Fatalf("incomplete highlight %#v", line)
 		}
 		if !strings.HasPrefix(line.Text, "▌ ") {

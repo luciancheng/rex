@@ -219,9 +219,10 @@ func bodyRows(kind, text string, width, inner int) []string {
 }
 
 type LogLine struct {
-	Kind string
-	Text string
-	Fill string
+	Kind     string
+	Text     string
+	Fill     string
+	Selected bool // part of the selected row; the plan pane keeps it in view
 }
 
 func BuildLogView(log []watch.Event, width int) []LogLine {
@@ -443,7 +444,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		fromTop = true
 	} else if opt.Pane == PanePlans && opt.Plans != nil {
 		body = BuildPlanView(opt.Plans, width)
-		scroll = planWindowStart(body, bodyH)
+		scroll = opt.Plans.window(body, bodyH)
 		fromTop = true
 	} else {
 		body = opt.LogView
@@ -468,7 +469,16 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		if start > end {
 			start = end
 		}
-		visible = body[start:end]
+		visible = append([]LogLine(nil), body[start:end]...)
+		if fromTop && len(visible) > 2 {
+			// Say when the list goes on past the window, without covering the selection.
+			if start > 0 && !visible[0].Selected {
+				visible[0] = LogLine{Kind: "idle", Text: "  ↑ more"}
+			}
+			if end < len(body) && !visible[len(visible)-1].Selected {
+				visible[len(visible)-1] = LogLine{Kind: "idle", Text: "  ↓ more"}
+			}
+		}
 	}
 	enabled := opt.Enabled
 	rows := make([]string, height)
@@ -538,29 +548,6 @@ func paintLine(line LogLine, width int, enabled bool) string {
 		return mascot.PaintFill(text, rgb, fill, enabled)
 	}
 	return mascot.Paint(text, rgb, enabled)
-}
-
-func planWindowStart(body []LogLine, viewH int) int {
-	if viewH <= 0 || len(body) <= viewH {
-		return 0
-	}
-	sel := 0
-	for i, line := range body {
-		trimmed := strings.TrimLeft(line.Text, " ")
-		if strings.HasPrefix(line.Text, "▌") || strings.HasPrefix(trimmed, "▌") || strings.HasPrefix(line.Text, "> ") {
-			sel = i
-			break
-		}
-	}
-	start := sel - viewH + 1
-	if start < 0 {
-		start = 0
-	}
-	maxStart := len(body) - viewH
-	if start > maxStart {
-		start = maxStart
-	}
-	return start
 }
 
 type ComposeOptions struct {

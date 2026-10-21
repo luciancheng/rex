@@ -139,11 +139,11 @@ func (a *app) placeholder() string {
 	case ScreenBrowse:
 		return "type to filter"
 	case ScreenCreate:
-		return "plan name"
+		return "plan name (a/b for a folder)"
 	case ScreenFolder:
 		return "folder name"
 	}
-	return "?⏎ help"
+	return "find or create a plan"
 }
 
 // preview says what ⏎ will do with the current draft, for the footer.
@@ -314,6 +314,9 @@ func (a *app) handleKey(key string) bool {
 
 // handleKeyArmed applies a key once quit is not armed.
 func (a *app) handleKeyArmed(key string) bool {
+	if a.pane == PanePlans {
+		a.plans.Err = "" // an error stays only until the next key
+	}
 	if text, ok := IsPaste(key); ok {
 		// A paste is typed into the draft as one line; it never submits.
 		next := capDraft(a.draft + text)
@@ -432,6 +435,12 @@ func (a *app) tapeKey(key string) bool {
 func (a *app) planKey(key string) bool {
 	b := a.plans
 	bodyH := PaneBodyHeight(a.lines)
+	dir := b.Dir
+	defer func() {
+		if b.Dir != dir {
+			a.draft = "" // a new folder starts unfiltered
+		}
+	}()
 	switch key {
 	case "up":
 		b.Move(-1)
@@ -478,12 +487,6 @@ func (a *app) planKey(key string) bool {
 			if !a.submit(a.draft) {
 				b.Err = "'" + strings.TrimSpace(a.draft) + "' is not a verb · ?⏎ for help"
 			}
-			return true
-		}
-		if b.Screen == ScreenHome && strings.TrimSpace(a.draft) != "" {
-			// Home has no find yet: typed text must not fire the card under
-			// the cursor.
-			b.Err = "verbs here start with / · try /breakdance or ?⏎"
 			return true
 		}
 		return a.planEnter()
@@ -580,6 +583,40 @@ func (a *app) helpBody(width int) []LogLine {
 	return helpLines(width, a.feed)
 }
 
+// syncPlanInput hands the plan draft to the screen that reads it: Browse
+// filters, Home finds, the name prompt previews where it will create. A
+// new query puts the cursor on its first match.
+func (a *app) syncPlanInput() bool {
+	b := a.plans
+	text := a.draft
+	if forcedVerb(text) {
+		text = ""
+	}
+	switch b.Screen {
+	case ScreenBrowse:
+		if b.Filter == text {
+			return false
+		}
+		b.Filter = text
+	case ScreenHome:
+		if b.Find == text {
+			return false
+		}
+		b.Find = text
+	case ScreenCreate, ScreenFolder:
+		if b.Name == a.draft {
+			return false
+		}
+		b.Name = a.draft
+		return true
+	default:
+		return false
+	}
+	b.fresh = true
+	b.Rebuild()
+	return true
+}
+
 // tick runs on the frame clock: the quit window counts down and the
 // mascot advances a frame.
 func (a *app) tick() bool {
@@ -613,13 +650,7 @@ func (a *app) settle(columns, lines int) bool {
 	changed := false
 	// An open overlay owns the composer: nothing typed in it filters the
 	// list underneath.
-	filter := a.draft
-	if forcedVerb(filter) {
-		filter = "" // "?" or "/verb" is a verb on its way, not a filter
-	}
-	if a.pane == PanePlans && a.overlay[PanePlans] == overlayNone && a.plans.Browsing() && a.plans.Filter != filter {
-		a.plans.Filter = filter
-		a.plans.Rebuild()
+	if a.pane == PanePlans && a.overlay[PanePlans] == overlayNone && a.syncPlanInput() {
 		changed = true
 	}
 	if columns != a.columns || lines != a.lines {

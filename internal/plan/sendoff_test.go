@@ -176,6 +176,14 @@ func TestSendoffAlwaysEndsWithItsFingerprint(t *testing.T) {
 	}
 }
 
+func TestSendoffSurvivesAHugePinID(t *testing.T) {
+	id := strings.Repeat("x", 5000)
+	got, err := Sendoff(mustParse(t, `{"tasks": [{"id": "`+id+`", "does": ["work"]}]}`), "p.rex.json")
+	if err != nil || len(got) > sendoffCap {
+		t.Fatalf("%v, %d bytes", err, len(got))
+	}
+}
+
 func TestSendoffClipsAHugeTitle(t *testing.T) {
 	got, _ := Sendoff(mustParse(t, `{"title": "`+strings.Repeat("x", 9000)+`", "tasks": [{"id": "pin", "does": ["work"]}]}`), "p.rex.json")
 	if len(got) > sendoffCap || !strings.Contains(got, "### pin") || !strings.HasSuffix(got, "rex-sendoff: p.rex.json#pin\n") {

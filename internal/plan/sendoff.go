@@ -53,6 +53,9 @@ func keepTail(s string, n int) string {
 	if j := strings.LastIndex(s, "\nFor the next chat\n"); j >= 0 {
 		s, foot = s[:j], s[j:]
 	}
+	if len(foot)+len(cut)+64 > n { // a huge pin id or path: no room to keep it whole
+		return capBytes(s+foot, n)
+	}
 	n -= len(foot)
 	if len(s) <= n {
 		return s + foot

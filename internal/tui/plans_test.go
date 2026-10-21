@@ -46,19 +46,97 @@ func TestEnsurePlansDirCreatesFolder(t *testing.T) {
 	}
 }
 
-func TestEnsurePlansDirReplacesBinaryClash(t *testing.T) {
+func TestEnsurePlansDirKeepsAFileNamedRex(t *testing.T) {
 	repo := t.TempDir()
 	clash := filepath.Join(repo, "rex")
-	if err := os.WriteFile(clash, []byte("bin"), 0o755); err != nil {
+	if err := os.WriteFile(clash, []byte("#!/bin/sh\necho mine\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	root, err := EnsurePlansDir(repo)
-	if err != nil {
+	if _, err := EnsurePlansDir(repo); err == nil {
+		t.Fatal("expected an error instead of replacing the file")
+	}
+	b := NewPlanBrowser(repo)
+	if !strings.Contains(b.Notice, "rex/ is a file here") {
+		t.Fatalf("notice %q", b.Notice)
+	}
+	if act := b.CommitCreate("alpha"); act != PlanStay || !strings.Contains(b.Err, "rex/ is a file here") {
+		t.Fatalf("create should refuse: act=%d err=%q", act, b.Err)
+	}
+	data, err := os.ReadFile(clash)
+	if err != nil || string(data) != "#!/bin/sh\necho mine\n" {
+		t.Fatalf("the user's rex file was touched: %v %q", err, data)
+	}
+}
+
+func TestStartCreatesNothing(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		t.Fatalf("expected plans dir, got %v", err)
+	b := NewPlanBrowser(repo)
+	if b.Notice != "" {
+		t.Fatalf("notice in a repo: %q", b.Notice)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "rex")); !os.IsNotExist(err) {
+		t.Fatalf("start created rex/: %v", err)
+	}
+	if act := b.CommitCreate("first"); act != PlanOpenChat {
+		t.Fatalf("create act=%d err=%q", act, b.Err)
+	}
+	for _, p := range []string{"rex/plans/.gitkeep", "rex/plans/first.rex.json"} {
+		if _, err := os.Stat(filepath.Join(repo, p)); err != nil {
+			t.Fatalf("create should make %s: %v", p, err)
+		}
+	}
+}
+
+func TestOutsideGitShowsWherePlansGo(t *testing.T) {
+	dir := t.TempDir()
+	b := NewPlanBrowser(dir)
+	if !strings.Contains(b.Notice, "not in a git repo") || !strings.Contains(b.Notice, "rex/plans") {
+		t.Fatalf("notice %q", b.Notice)
+	}
+	if !strings.Contains(viewText(BuildPlanView(b, 80)), "not in a git repo") {
+		t.Fatal("notice not rendered")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rex")); !os.IsNotExist(err) {
+		t.Fatalf("start outside git created rex/: %v", err)
+	}
+}
+
+func TestLegacyMigrationNeverLosesPlans(t *testing.T) {
+	repo := t.TempDir()
+	legacy := filepath.Join(repo, "rex-plans")
+	root := filepath.Join(repo, "rex", "plans")
+	for _, dir := range []string{legacy, root} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, body string) {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(legacy, "clash.rex.json"), `{"id":"legacy"}`)
+	write(filepath.Join(root, "clash.rex.json"), `{"id":"current"}`)
+	write(filepath.Join(legacy, "moved.rex.json"), `{"id":"moved"}`)
+	NewPlanBrowser(repo)
+	if data, _ := os.ReadFile(filepath.Join(root, "moved.rex.json")); string(data) != `{"id":"moved"}` {
+		t.Fatalf("moved plan missing: %q", data)
+	}
+	if data, _ := os.ReadFile(filepath.Join(legacy, "clash.rex.json")); string(data) != `{"id":"legacy"}` {
+		t.Fatalf("colliding legacy plan was lost: %q", data)
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, "clash.rex.json")); string(data) != `{"id":"current"}` {
+		t.Fatalf("current plan overwritten: %q", data)
+	}
+	if err := os.Remove(filepath.Join(legacy, "clash.rex.json")); err != nil {
+		t.Fatal(err)
+	}
+	NewPlanBrowser(repo)
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("empty legacy dir should be removed: %v", err)
 	}
 }
 
@@ -68,8 +146,8 @@ func TestPlanHomeShowsActions(t *testing.T) {
 	if b.Screen != ScreenHome {
 		t.Fatal("home first")
 	}
-	if _, err := os.Stat(b.Root); err != nil {
-		t.Fatalf("plans dir: %v", err)
+	if _, err := os.Stat(b.Root); !os.IsNotExist(err) {
+		t.Fatalf("start must not create the plans dir: %v", err)
 	}
 	view := viewText(BuildPlanView(b, 48))
 	for _, needle := range []string{"Create a plan", "Open a plan", "Open latest", "rex/plans"} {

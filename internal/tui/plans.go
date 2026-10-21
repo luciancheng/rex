@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,6 +58,7 @@ type PlanBrowser struct {
 	From    PlanScreen
 	Current string
 	Err     string
+	Notice  string
 	Rows    []PlanRow
 }
 
@@ -74,21 +76,28 @@ const (
 const maxRecents = 6
 
 func FindRepoRoot(start string) string {
+	root, _ := findRepo(start)
+	return root
+}
+
+// findRepo walks up from start to the directory holding .git. Outside a
+// repo it returns start itself and false.
+func findRepo(start string) (string, bool) {
 	if start == "" {
 		start, _ = os.Getwd()
 	}
 	dir, err := filepath.Abs(start)
 	if err != nil {
-		return start
+		return start, false
 	}
 	orig := dir
 	for {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
+			return dir, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return orig
+			return orig, false
 		}
 		dir = parent
 	}
@@ -98,19 +107,19 @@ func PlansDir(repo string) string {
 	return filepath.Join(repo, "rex", "plans")
 }
 
+// errRexFile means a regular file named rex sits where the plans folder
+// goes. Rex never deletes it; plans stay off until the human moves it.
+var errRexFile = errors.New("rex/ is a file here · plans off")
+
+// EnsurePlansDir creates rex/plans when the human creates a plan or
+// folder. Starting Rex never calls it, and it never deletes anything.
 func EnsurePlansDir(repo string) (string, error) {
 	root := PlansDir(repo)
-	rexPath := filepath.Join(repo, "rex")
-	if info, err := os.Stat(rexPath); err == nil && !info.IsDir() {
-		_ = os.Remove(rexPath)
+	if rexIsFile(repo) {
+		return root, errRexFile
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return root, err
-	}
-	legacy := filepath.Join(repo, "rex-plans")
-	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
-		_ = migrateLegacyPlans(legacy, root)
-		_ = os.RemoveAll(legacy)
 	}
 	keep := filepath.Join(root, ".gitkeep")
 	if _, err := os.Stat(keep); err != nil {
@@ -119,6 +128,27 @@ func EnsurePlansDir(repo string) (string, error) {
 		}
 	}
 	return root, nil
+}
+
+func rexIsFile(repo string) bool {
+	info, err := os.Stat(filepath.Join(repo, "rex"))
+	return err == nil && !info.IsDir()
+}
+
+// migrateLegacy moves plans from the old rex-plans/ folder. It skips any
+// name that already exists in rex/plans and removes rex-plans/ only once
+// it is empty, so nothing is lost.
+func migrateLegacy(repo string) {
+	legacy := filepath.Join(repo, "rex-plans")
+	if info, err := os.Stat(legacy); err != nil || !info.IsDir() {
+		return
+	}
+	root, err := EnsurePlansDir(repo)
+	if err != nil {
+		return
+	}
+	_ = migrateLegacyPlans(legacy, root)
+	_ = os.Remove(legacy)
 }
 
 func migrateLegacyPlans(from, to string) error {
@@ -137,7 +167,9 @@ func migrateLegacyPlans(from, to string) error {
 			if rerr != nil {
 				continue
 			}
-			_ = os.WriteFile(dst, data, 0o644)
+			if os.WriteFile(dst, data, 0o644) == nil {
+				_ = os.Remove(src)
+			}
 		}
 	}
 	return nil
@@ -181,13 +213,16 @@ func FolderName(name string) string {
 }
 
 func NewPlanBrowser(start string) *PlanBrowser {
-	repo := FindRepoRoot(start)
+	repo, inGit := findRepo(start)
 	b := &PlanBrowser{Repo: repo, Screen: ScreenHome}
-	root, err := EnsurePlansDir(repo)
-	b.Root, b.Dir = root, root
-	if err != nil {
-		b.Err = err.Error()
+	b.Root, b.Dir = PlansDir(repo), PlansDir(repo)
+	switch {
+	case rexIsFile(repo):
+		b.Notice = errRexFile.Error()
+	case !inGit:
+		b.Notice = "not in a git repo · plans go to " + filepath.ToSlash(filepath.Join(repo, "rex", "plans"))
 	}
+	migrateLegacy(repo)
 	b.Rebuild()
 	return b
 }
@@ -366,6 +401,10 @@ func (b *PlanBrowser) CommitFolder(name string) PlanAction {
 	folder := FolderName(name)
 	if folder == "" {
 		b.Err = "type a folder name first"
+		return PlanStay
+	}
+	if _, err := EnsurePlansDir(b.Repo); err != nil {
+		b.Err = err.Error()
 		return PlanStay
 	}
 	path := filepath.Join(b.Dir, folder)
@@ -583,6 +622,9 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 		{Kind: "command", Text: rule(title, width)},
 		{Kind: "folder", Text: "  " + clip(b.RelDir(), inner)},
 		{Kind: "gap", Text: ""},
+	}
+	if b.Notice != "" {
+		lines = append(lines, LogLine{Kind: "idle", Text: "  " + clip(b.Notice, inner)}, LogLine{Kind: "gap", Text: ""})
 	}
 	if b.Err != "" {
 		lines = append(lines, LogLine{Kind: "error", Text: "  " + clip(b.Err, inner)}, LogLine{Kind: "gap", Text: ""})

@@ -93,7 +93,7 @@ Do not `go build -o rex` at the repo root — `rex/` is the plans directory.
 Idle Rex is the 40×40 PNG at `assets/idle.png`, converted pixel-for-pixel into terminal art. `assets/rex.png` is the same drawing, scaled up for this README.
 
 ```bash
-go run ./cmd/importsprite assets/idle.png --apply
+go run ./cmd/importsprite --apply assets/idle.png
 ```
 
 `--apply` writes the grid into `internal/mascot/sprites.go` and the sampled RGB values into the `yellow` palette. Restart `rex start` after that. Idle and future poses should stay 40×40.
@@ -127,6 +127,7 @@ internal/plan/              plan format, edits, pin, completion, send-off, drift
 internal/watch/             agent event feed (hooks → JSONL → pane), harness installers
 internal/jsonedit/          byte-preserving JSON edits for configs and plans
 internal/skill/             the rex-plan agent skill (installed on request)
+internal/version/           the version rex --version prints
 docs/                       plan format (plan-format.md) and UX spec (ux.md)
 scripts/install.sh          user install (macOS/Linux)
 scripts/install.ps1         user install (Windows)

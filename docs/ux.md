@@ -622,5 +622,3 @@ Found in the same audit, outside the UI:
 | H2 | high | The Cursor installer overwrites `hooks.json` it can't parse; writes non-atomically; quotes with Go syntax; registers shell commands twice | Safe merge, `.bak`, atomic write, shell quoting | `fix/cursor_installer` |
 | H3 | med | Every hook call reads the whole feed file | Seek-based tail read | `fix/ingest_fail_open` |
 | H4 | med | After the feed is truncated, the tail keeps a stale partial line and glues the next event to it, which is then dropped | Clear the pending fragment on truncation | `fix/ingest_fail_open` |
-
----

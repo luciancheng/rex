@@ -2,10 +2,13 @@
 /dist/
 /rex.exe
 /rex/rex
+/rex/rex.exe
 # Go test and profile output
 *.test
 *.prof
 coverage.out
+# plans keep any name, even one these patterns match
+!/rex/plans/**
 # the pre-PR gate script (agents.md, Workflow)
 /gate.sh
 # editors and OS

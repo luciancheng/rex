@@ -211,7 +211,10 @@ func TestColor256QuantizesTheSamePalette(t *testing.T) {
 	if got := BG(RGB{18, 42, 58}); !strings.HasPrefix(got, "\033[48;5;") {
 		t.Fatalf("%q", got)
 	}
-	pal, _ := PaletteFor(DefaultPalette)
+	pal, err := PaletteFor(DefaultPalette)
+	if err != nil {
+		t.Fatal(err)
+	}
 	lines, err := RenderRows(MustSprite("idle").Rows, pal, true)
 	out := strings.Join(lines, "\n")
 	if err != nil || strings.Contains(out, "38;2;") || !strings.Contains(out, "38;5;") {

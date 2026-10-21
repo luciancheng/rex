@@ -45,7 +45,7 @@ Keep rendering separate from watch/TUI logic.
 To change idle: replace `assets/idle.png`, then:
 
 ```bash
-go run ./cmd/importsprite assets/idle.png --apply
+go run ./cmd/importsprite --apply assets/idle.png
 ```
 
 That writes the idle `Pixels(...)` grid and the yellow palette 1:1. **Leave blink, glance, and squat as transforms** on `IdleRows` (`PaintPixels` / `ShiftBody`). Do not hand-edit a second grid that drifts from the PNG.

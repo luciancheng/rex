@@ -2,7 +2,7 @@ package mascot
 
 // Idle pixel grid. Rebuild from assets/idle.png with:
 //
-//	go run ./cmd/importsprite assets/idle.png --apply
+//	go run ./cmd/importsprite --apply assets/idle.png
 //
 // Blink, glance, and squat are transforms of this grid — do not hand-edit them.
 

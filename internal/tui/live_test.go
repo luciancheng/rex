@@ -276,7 +276,7 @@ func TestUnknownPalette(t *testing.T) {
 }
 
 func TestNoColorHasNoANSI(t *testing.T) {
-	out, err := renderIdle(false)
+	out, err := staticCard(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestNoColorHasNoANSI(t *testing.T) {
 }
 
 func TestColorUsesTruecolor(t *testing.T) {
-	out, err := renderIdle(true)
+	out, err := staticCard(true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,13 +403,10 @@ func TestHeaderWordAfterFailures(t *testing.T) {
 	}
 }
 
-// renderIdle is the idle sprite in the yellow palette, as the live loop
-// paints it.
-func renderIdle(enabled bool) (string, error) {
-	pal, err := mascot.PaletteFor("yellow")
-	if err != nil {
-		return "", err
-	}
-	lines, err := mascot.RenderRows(mascot.MustSprite("idle").Rows, pal, enabled)
-	return strings.Join(lines, "\n"), err
+// staticCard is the card rex start prints for TERM=dumb, pipes and
+// --static: the idle sprite in the default palette, with its title.
+func staticCard(enabled bool) (string, error) {
+	var b strings.Builder
+	err := PrintCard("idle", mascot.DefaultPalette, enabled, &b)
+	return b.String(), err
 }

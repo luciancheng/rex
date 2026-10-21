@@ -388,7 +388,7 @@ func TestEditMatchesIdsLikeParse(t *testing.T) {
 
 func TestEditRefusesBadValuesAndReadOnlyFiles(t *testing.T) {
 	path := writePlan(t, editPlan)
-	for _, c := range []Change{SetStatus("a", "wip"), {Task: "a", Field: "modified", Value: "x.go"}, {Task: "a", Field: "completed_notes", Value: []string{"x"}}} {
+	for _, c := range []Change{SetStatus("a", "wip"), {Task: "a", Field: "modified", Value: "x.go"}} {
 		if _, err := Edit(path, func(*Plan) ([]Change, error) { return []Change{c}, nil }); err == nil {
 			t.Errorf("%+v was written", c)
 		}

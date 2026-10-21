@@ -19,7 +19,8 @@ import (
 
 // Change sets one field of one task, or of the plan when Task is "".
 // Rex only ever writes status and the completion lists it fills
-// (accomplished, modified, verified_how); completed_notes is the agent's.
+// (accomplished, modified, verified_how); completed_notes is the agent's or
+// a human's.
 type Change struct {
 	Task  string
 	Field string

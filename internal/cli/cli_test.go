@@ -528,6 +528,13 @@ func TestInstallScripts(t *testing.T) {
 					t.Errorf("%s: go install errors are shown, not swallowed: %q", name, line)
 				}
 			}
+			// An install on a code line is only ever printed for the human
+			// (a hint, or say / Write-Host), or it is the Cursor hook.
+			if strings.Contains(code, "ingest --install") && !strings.Contains(code, "--install-cursor-hook") &&
+				!strings.Contains(code, `hints+=("`) && !strings.Contains(code, `$hints += "`) &&
+				!strings.HasPrefix(code, "say ") && !strings.HasPrefix(code, "Write-Host ") {
+				t.Errorf("%s: only Cursor is wired; other installs are printed: %q", name, line)
+			}
 			// Every run of the new binary: its version, or the Cursor hook
 			// through the alias every binary knows. Nothing else is wired.
 			if i := strings.Index(code, rex+" "); i >= 0 {

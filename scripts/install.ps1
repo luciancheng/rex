@@ -97,7 +97,8 @@ if (Test-Path -PathType Container $claude) { $hints += "rex ingest --install cla
 if (Test-Path -PathType Container $codex) { $hints += "rex ingest --install codex         # Codex, then trust the hooks in /hooks" }
 if (Test-Path -PathType Container $opencode) { $hints += "rex ingest --install opencode      # OpenCode" }
 # The skill lives in ~/.claude/skills: offered only where that folder is.
-if (Test-Path -PathType Container $claude) { $hints += "rex ingest --install-skill         # teach Claude Code, Cursor and OpenCode the plan format" }
+$skillFor = if ($env:CLAUDE_CONFIG_DIR) { 'Claude Code (it goes in $env:CLAUDE_CONFIG_DIR)' } else { "Claude Code, Cursor and OpenCode" }
+if (Test-Path -PathType Container $claude) { $hints += "rex ingest --install-skill         # teach $skillFor the plan format" }
 if ($hints.Count -gt 0) {
     Write-Host ""
     Write-Host "Other agents (opt-in):"

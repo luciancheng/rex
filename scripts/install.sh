@@ -80,7 +80,9 @@ claude="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 [[ -d "${CODEX_HOME:-$HOME/.codex}" ]] && hints+=("rex ingest --install codex         # Codex, then trust the hooks in /hooks")
 [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/opencode" ]] && hints+=("rex ingest --install opencode      # OpenCode")
 # The skill lives in ~/.claude/skills: offered only where that folder is.
-[[ -d "$claude" ]] && hints+=("rex ingest --install-skill         # teach Claude Code, Cursor and OpenCode the plan format")
+skill_for="Claude Code, Cursor and OpenCode"
+[[ -n "${CLAUDE_CONFIG_DIR:-}" ]] && skill_for="Claude Code (it goes in \$CLAUDE_CONFIG_DIR)"
+[[ -d "$claude" ]] && hints+=("rex ingest --install-skill         # teach $skill_for the plan format")
 if ((${#hints[@]})); then
   say
   say "Other agents (opt-in):"

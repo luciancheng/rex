@@ -49,7 +49,8 @@ append an agent event to the watch feed
 
 When run from a hook, ingest always exits 0 and writes nothing to stdout,
 so it cannot block or steer the agent; problems go to stderr. Only
--h/--help, --version, --install, --uninstall and --install-cursor-hook print to stdout.
+-h/--help, --version, --install, --uninstall and --install-cursor-hook
+print to stdout.
 
 options:
   -h, --help              show this help message and exit
@@ -168,9 +169,17 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if *install != "" && *uninstall != "" {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if (set["install"] || *installCursor) && set["uninstall"] {
 		fmt.Fprintln(stderr, "rex: use --install or --uninstall, not both")
 		return 1
+	}
+	for _, name := range []string{"install", "uninstall"} {
+		if set[name] && fs.Lookup(name).Value.String() == "" {
+			fmt.Fprintf(stderr, "rex: --%s needs a harness name\n", name)
+			return 1
+		}
 	}
 	if *installCursor && *install == "" {
 		*install = "cursor"

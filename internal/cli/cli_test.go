@@ -375,3 +375,23 @@ func TestIngestInstallFlags(t *testing.T) {
 		t.Fatalf("auto hid a failed install: %d %q", code, stderr)
 	}
 }
+
+func TestInstallFlagsRefuseMixedOrEmptyNames(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	os.MkdirAll(filepath.Join(home, ".cursor"), 0o755)
+	for _, args := range [][]string{
+		{"--install-cursor-hook", "--uninstall", "cursor"},
+		{"--install="},
+		{"--uninstall="},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Main(append([]string{"ingest"}, args...), bytes.NewReader(nil), &stdout, &stderr); code != 1 {
+			t.Errorf("%v: code %d, want 1 (%q)", args, code, stderr.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "hooks.json")); err == nil {
+		t.Fatal("a refused command wrote hooks")
+	}
+}

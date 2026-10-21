@@ -57,9 +57,9 @@ func HarnessNames() []string {
 	return append(names, "auto")
 }
 
-// InstallHarness installs one harness by name, or every present one for
-// "auto". A harness that isn't on this machine is skipped with a message.
-// With auto, one failure doesn't stop the others, but it is returned.
+// InstallHarness installs one harness by name, or for "auto" every one
+// found on this machine. With auto, one failure doesn't stop the others,
+// and every failure is returned.
 func InstallHarness(name string, out io.Writer) error {
 	home, err := os.UserHomeDir()
 	if err != nil {

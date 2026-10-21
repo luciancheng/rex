@@ -414,3 +414,20 @@ func TestProjectInstallsAreClaudeOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallSkillCLI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"ingest", "--install-skill"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("%d %s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "rex-plan", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if code := Main([]string{"ingest", "--uninstall-skill"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("%d %s", code, stderr.String())
+	}
+}

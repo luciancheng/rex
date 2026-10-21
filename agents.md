@@ -29,6 +29,7 @@ Idle and future poses are **40×40**. Ctrl+C twice to quit. Respect `NO_COLOR`. 
 | Live UI / keys | `internal/tui/` |
 | Event feed | `internal/watch/` |
 | Plan files | `internal/plan/` · format in `docs/plan-format.md` |
+| Agent skill | `internal/skill/rex-plan/SKILL.md` (embedded; installed only by `rex ingest --install-skill [--project]`) |
 | Idle PNG | `assets/idle.png` |
 | Breakdance sheet | `assets/breakdance.png` (40×40 cells) |
 | Typing sheet | `assets/typing.png` (40×40 cells) |

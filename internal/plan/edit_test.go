@@ -87,7 +87,7 @@ func TestPinChangesOnlyStatusValues(t *testing.T) {
 	if saved.Plan.Task("b").Status != Active || !bytes.Equal(saved.Data, []byte(want)) {
 		t.Fatal("Saved reports what was written")
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o640 {
+	if info, _ := os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 { // Windows has no Unix modes
 		t.Fatalf("mode %o", info.Mode().Perm())
 	}
 }
@@ -301,7 +301,7 @@ func TestStateMergesAndPrunes(t *testing.T) {
 	if _, ok := s.Pins[PinKey(planPath, "old")]; ok {
 		t.Fatal("old pin kept")
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+	if info, _ := os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 { // Windows has no Unix modes
 		t.Fatalf("mode %o", info.Mode().Perm())
 	}
 	os.WriteFile(path, []byte("not json"), 0o600)

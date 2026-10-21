@@ -156,7 +156,10 @@ func TestOpenCodeSessionErrorsAndExitCodes(t *testing.T) {
 		t.Fatalf("an error with nothing in it still reads whole: %#v", ev)
 	}
 	if ev := openCodeMap(t, `{"type":"message.part.updated","part":{"type":"tool","tool":"question","state":{"status":"running","input":{}}}}`); ev != nil {
-		t.Fatalf("question.asked carries the question; its tool part adds nothing: %#v", ev)
+		t.Fatalf("question.asked carries the question; its running tool part adds nothing: %#v", ev)
+	}
+	if ev := openCodeMap(t, `{"type":"message.part.updated","part":{"type":"tool","tool":"question","state":{"status":"completed","input":{}}}}`); ev == nil || ev.Kind != "result" {
+		t.Fatalf("the answered question is a result, so the turn leaves ask: %#v", ev)
 	}
 	if ev := openCodeMap(t, `{"type":"session.error","error":{"name":"ContextOverflowError","message":"too long"}}`); ev != nil {
 		t.Fatalf("OpenCode compacts and goes on: %#v", ev)

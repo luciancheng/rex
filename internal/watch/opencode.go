@@ -305,8 +305,8 @@ func MapOpenCode(payload map[string]any) *Event {
 
 func openCodeTool(part map[string]any, abs func(string) string, event func(string, string, map[string]any) *Event) *Event {
 	tool := strField(part, "tool")
-	if tool == "question" {
-		return nil // question.asked carries the question itself
+	if tool == "question" && strField(asDict(part["state"]), "status") == "running" {
+		return nil // question.asked carries the question; its answer still ends the ask
 	}
 	state := asDict(part["state"])
 	input := asDict(state["input"])

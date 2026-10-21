@@ -73,10 +73,17 @@ func newKeyReader(stream *os.File) *keyReader {
 }
 
 // Read waits up to timeout for input and returns the keys it decoded.
+// When the input is gone (EOF, EIO after a hangup) it resolves whatever
+// is pending and waits out the timeout, so the caller's loop still reaches
+// its signal checks instead of spinning on a dead terminal.
 func (k *keyReader) Read(timeout time.Duration) []string {
 	var out []string
 	if waitRead(k.fd, timeout) {
-		out = append(out, k.read()...)
+		toks, ok := k.read()
+		out = append(out, toks...)
+		if !ok {
+			return k.gone(out, timeout)
+		}
 	}
 	for {
 		pending, wait := k.dec.waiting()
@@ -84,17 +91,39 @@ func (k *keyReader) Read(timeout time.Duration) []string {
 			return out
 		}
 		if waitRead(k.fd, wait) {
-			out = append(out, k.read()...)
+			toks, ok := k.read()
+			out = append(out, toks...)
+			if !ok {
+				return k.gone(out, timeout)
+			}
 			continue
 		}
 		return append(out, k.dec.flush(time.Now().Add(wait))...)
 	}
 }
 
-func (k *keyReader) read() []string {
-	n, err := unix.Read(k.fd, k.buf)
-	if err != nil || n <= 0 {
-		return nil
-	}
-	return k.dec.feed(k.buf[:n], time.Now())
+func (k *keyReader) gone(out []string, timeout time.Duration) []string {
+	far := time.Now().Add(time.Hour)
+	out = append(out, k.dec.flush(far)...)
+	out = append(out, k.dec.flush(far)...) // a stalled paste needs a second flush to end
+	time.Sleep(timeout)
+	return out
 }
+
+// read reports false when the terminal can't be read any more.
+func (k *keyReader) read() ([]string, bool) {
+	n, err := unix.Read(k.fd, k.buf)
+	if err == unix.EINTR || err == unix.EAGAIN {
+		return nil, true
+	}
+	if err != nil || n <= 0 {
+		return nil, false
+	}
+	return k.dec.feed(k.buf[:n], time.Now()), true
+}
+
+// Bracketed paste is decoded by keyDecoder, so Unix turns it on.
+const (
+	pasteModeOn  = PasteOn
+	pasteModeOff = PasteOff
+)

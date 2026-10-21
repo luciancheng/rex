@@ -90,12 +90,13 @@ func virtualKeyName(vk uint16) string {
 	}
 }
 
-// coalescePaste treats a burst of characters with a newline inside it as a
-// paste: the Windows console delivers a paste as single key events, and
-// an embedded Enter must not submit. A short burst that only ends in Enter
-// is typing that the console queued up (a letter and ⏎ read together), so
-// it stays keys. Best effort: a pasted single short line ending in a
-// newline still reads as typed.
+// coalescePaste treats a burst of characters as a paste when there is text
+// after a newline in it, or when it is too long to be typing (16+
+// characters): the Windows console delivers a paste as single key events,
+// and an embedded Enter must not submit. A short burst that only ends in
+// Enter is typing the console queued up (a letter and ⏎ read together), so
+// it stays keys. Best effort: a short pasted line ending in a newline
+// still reads as typed.
 func coalescePaste(tokens []string) []string {
 	if len(tokens) < 2 {
 		return tokens
@@ -114,7 +115,7 @@ func coalescePaste(tokens []string) []string {
 			return tokens
 		}
 	}
-	if !newline || (!inside && len(tokens) < minPasteBurst) {
+	if !inside && len(tokens) < minPasteBurst {
 		return tokens
 	}
 	text := strings.Join(tokens, "")

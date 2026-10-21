@@ -76,6 +76,13 @@ type keyReader struct {
 	keys   consoleKeys
 }
 
+// The console delivers a paste as key records, not marker bytes, so
+// bracketed paste stays off on Windows (consoleKeys coalesces instead).
+const (
+	pasteModeOn  = ""
+	pasteModeOff = ""
+)
+
 func newKeyReader(stream *os.File) *keyReader {
 	return &keyReader{handle: windows.Handle(stream.Fd())}
 }

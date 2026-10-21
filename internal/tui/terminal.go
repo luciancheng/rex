@@ -26,7 +26,7 @@ const (
 
 // screenSetup puts the terminal in Rex's live mode: alternate screen, no
 // autowrap, hidden cursor, bracketed paste, cleared.
-const screenSetup = AltEnter + WrapOff + HideCursor + PasteOn + Clear + Home
+const screenSetup = AltEnter + WrapOff + HideCursor + pasteModeOn + Clear + Home
 
 func Size() (int, int) {
 	w, h, err := term.GetSize(int(os.Stdout.Fd()))
@@ -52,7 +52,7 @@ func LiveScreen(stdout *os.File, stdin *os.File, fn func(screenSignals) error) e
 	_ = stdout.Sync()
 	restore, err := enterRaw(int(stdin.Fd()))
 	defer func() {
-		_, _ = stdout.WriteString(PasteOff + WrapOn + ShowCursor + AltLeave + Reset)
+		_, _ = stdout.WriteString(pasteModeOff + WrapOn + ShowCursor + AltLeave + Reset)
 		_ = stdout.Sync()
 		restoreOut()
 	}()
@@ -75,7 +75,7 @@ func RestoreOnInterrupt(w io.Writer) {
 			return
 		}
 	}
-	_, _ = io.WriteString(w, PasteOff+ShowCursor+Reset)
+	_, _ = io.WriteString(w, pasteModeOff+ShowCursor+Reset)
 	if f, ok := w.(*os.File); ok {
 		_ = f.Sync()
 	}

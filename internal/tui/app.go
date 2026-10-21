@@ -258,7 +258,7 @@ func (a *app) handleKey(key string) bool {
 	return false
 }
 
-// tick runs when no key arrived: the quit window counts down and the
+// tick runs on the frame clock: the quit window counts down and the
 // mascot advances a frame.
 func (a *app) tick() bool {
 	changed := false

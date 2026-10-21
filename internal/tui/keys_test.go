@@ -239,6 +239,9 @@ func TestCoalescePaste(t *testing.T) {
 	if got := coalescePaste([]string{"a", "b"}); len(got) != 2 {
 		t.Fatal("plain typing stays keys")
 	}
+	if got := coalescePaste(strings.Split(strings.Repeat("y", minPasteBurst), "")); len(got) != 1 {
+		t.Fatal("a burst too long to be typing is a paste, newline or not")
+	}
 	if got := coalescePaste([]string{"a", "up", "\r"}); len(got) != 3 {
 		t.Fatal("named keys are not a paste")
 	}

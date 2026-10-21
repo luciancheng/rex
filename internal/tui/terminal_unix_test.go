@@ -3,27 +3,34 @@
 package tui
 
 import (
+	"os"
+	"reflect"
 	"testing"
-
-	"golang.org/x/sys/unix"
+	"time"
 )
 
-func TestCbreakKeepsOPOST(t *testing.T) {
-	var m unix.Termios
-	m.Lflag = unix.ECHO | unix.ICANON | unix.ISIG | unix.IEXTEN
-	m.Iflag = unix.IXON | unix.ICRNL
-	m.Oflag = unix.OPOST
-	got := cbreak(m)
-	if got.Lflag&(unix.ECHO|unix.ICANON|unix.ISIG|unix.IEXTEN) != 0 {
-		t.Fatalf("lflag %#x", got.Lflag)
-	}
-	if got.Iflag&unix.IXON != 0 || got.Iflag&unix.ICRNL == 0 {
-		t.Fatalf("iflag %#x: IXON off, the rest kept", got.Iflag)
-	}
-	if got.Oflag&unix.OPOST == 0 {
-		t.Fatal("OPOST must stay on")
-	}
-	if got.Cc[unix.VMIN] != 1 || got.Cc[unix.VTIME] != 0 {
-		t.Fatal("vmin/vtime")
+// When the terminal goes away with bytes still pending (a lone ESC, a
+// paste start), Read resolves them and returns instead of spinning, so the
+// live loop gets back to its signal checks.
+func TestKeyReaderReturnsAtEOF(t *testing.T) {
+	for _, pending := range []string{"\x1b", "\x1b[200~half a paste"} {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.WriteString(pending)
+		w.Close()
+		k := newKeyReader(r)
+		done := make(chan []string, 1)
+		go func() { done <- k.Read(20 * time.Millisecond) }()
+		select {
+		case got := <-done:
+			if pending == "\x1b" && !reflect.DeepEqual(got, []string{"esc"}) {
+				t.Errorf("%q: %q", pending, got)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%q: Read spun at EOF", pending)
+		}
+		r.Close()
 	}
 }

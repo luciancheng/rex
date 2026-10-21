@@ -4,7 +4,7 @@ This is the target design for the REX CLI loop:
 
 create → pin → watch → complete → send off → see drift → quit
 
-It records each decision, the friction it removes, and which slice of work owns it. TUI changes cite the section they implement. `agents.md` is still the contributor contract. Where this spec changes an `agents.md` rule, the slice that ships it updates `agents.md` too (see [agents.md changes](#agentsmd-changes)).
+It records each decision, the friction it removes, and which slice of work owns it. TUI changes cite the section they implement. `agents.md` is still the contributor contract. Where this spec changes an `agents.md` rule, the change that ships it updates `agents.md` too.
 
 Everything here keeps the product rules:
 - watch-only;
@@ -146,7 +146,7 @@ REX plan                       running · rex/plans/cuj/sendoff-demo.rex.json
 
 ### Row 1: status line
 
-This row is blank today. It becomes a one-line status shared by both places. It shows the **first** of these that applies:
+Row 1 is a one-line status shared by both places. It shows the **first** of these that applies:
 
 1. `plan JSON error 14:3 · showing last good`
 2. A toast, which expires after about 3 s:
@@ -463,7 +463,7 @@ If the pin lists no files, only the `scope.out` rule applies.
 ```
 
 - **Submitting.** Sending a note while scrolled up jumps back to live.
-- **Installs are opt-in.** Rex never installs a hook or a skill on its own. Feed health shows the command, and you run it. The install script keeps wiring Cursor, as today, and prints the opt-in commands for the other harnesses it finds. `rex ingest --install <harness>` arrives with the harness slices; `--install-cursor-hook` stays as an alias.
+- **Installs are opt-in.** Rex never installs a hook or a skill on its own. Feed health shows the command, and you run it. The install script wires Cursor and prints the opt-in commands for the other harnesses it finds. Each one is `rex ingest --install <harness>`; `--install-cursor-hook` is an alias for Cursor's.
 
 ---
 
@@ -506,7 +506,7 @@ If the pin lists no files, only the `scope.out` rule applies.
 |---|---|
 | ≥ 66 cols | mascot (40) + gutter (2) + text column (≥ 24) |
 | < 66 cols | **text only**: the mascot is hidden and the text column uses the full width |
-| text column < 24 cols | `REX · widen to 24 cols`; keys other than Ctrl+C are ignored |
+| text column < 24 cols | `REX · widen to 24 cols`; keys other than Ctrl+C and Ctrl+L are ignored |
 | < 16 rows | one-row borderless composer |
 | < 7 rows | printable keys are ignored, so nothing is typed blind |
 | `TERM=dumb`, pipes, CI | the static card (`rex start --static`) |
@@ -622,30 +622,3 @@ Found in the same audit, outside the UI:
 | H2 | high | The Cursor installer overwrites `hooks.json` it can't parse; writes non-atomically; quotes with Go syntax; registers shell commands twice | Safe merge, `.bak`, atomic write, shell quoting | `fix/cursor_installer` |
 | H3 | med | Every hook call reads the whole feed file | Seek-based tail read | `fix/ingest_fail_open` |
 | H4 | med | After the feed is truncated, the tail keeps a stale partial line and glues the next event to it, which is then dropped | Clear the pending fragment on truncation | `fix/ingest_fail_open` |
-
----
-
-## agents.md changes
-
-These `agents.md` and README lines change when the slice that implements them ships:
-
-| Slice | Line today → after |
-|---|---|
-| `fix/ingest_fail_open` | Watch feed: "`AppendEvent` dedupes" → "dedupes and only ever appends"; add "ingest always exits 0 and never writes stdout" |
-| `chore/ci_build_output` | Commands and tests: CI line → gofmt, vet, `go build -o dist/rex` |
-| `fix/plans_dir_safety` | TUI: after "Duplicate names warn and do not overwrite.", add "Starting Rex never deletes or creates files…" |
-| `fix/cursor_installer` | Mascot: "`text` / `error` → idle" → a tool `error` keeps the turn running and `stop` is `idle` (never text). Watch feed: installers splice with `internal/jsonedit` |
-| `fix/key_input` | "Unix live mode is cbreak (ECHO/ICANON/ISIG off) and must keep OPOST" → also IXON and IEXTEN off |
-| `fix/text_sanitize` | "Clip ANSI by cells (runes)" and Code conventions "Pane width math uses `runeLen` / `clip` / `padRight`" → clip by cell width (`clip`); agent text is cleaned first |
-| `fix/render_flicker` | "Yellow from assets/idle.png is the only look" → plus the 256-color quantization of that palette for Terminal.app |
-| `feature/ux_chrome` | "Left ~40 columns: mascot" → layout tiers. "Chat header always shows turn state and the open plan" → the header on every screen, with path shortening when narrow |
-| `feature/ux_input` | Kinds: + local-only `note`. "Tab switches to chat" → two places. "chat" → "tape" (agents.md TUI keys and README:71 "Tab switches plans ↔ chat"). agents.md:53 and README:71 "type `breakdance` in the composer / chat box" → type it on the outline or tape, `/breakdance` in the Library. Tape blocks: + Rex's own local blocks |
-| `fix/library_navigation` | "Start opens the plans home: Create, Open, Open latest (cards), then recents" → Continue card, first-run cards, find, `+` rows below the listing |
-| `feature/event_scope` | "`NewEventTail(path, true)` paints new lines" → plus warm start and repo scope |
-| `refactor/harness_registry` | README Usage/Install: `rex ingest --install <harness>` (`--install-cursor-hook` stays as an alias) |
-| `feature/harness_hooks` | "Assume Claude Code or Codex are wired. Mappers exist; only Cursor hooks are installed." → which harnesses are wired, and that the others are opt-in. Mascot turn mapping: Claude `Stop` → reply text, or idle |
-| `feature/plan_schema` | "Build plan JSON schema, drift detection… unless asked" → the schema is v1 in `docs/plan-format.md`. README: "new plans start as `{}`" and the send-off line (F34) |
-| `feature/plan_store` | New Plans paragraph: Rex writes a plan only through `plan.Edit` (task status, completion fields, the plan's own status); `~/.rex/state.json` for what Rex remembers |
-| `feature/plan_outline` | "Opening a plan is a no-op load" → opening parses the plan read-only and shows the outline |
-| `feature/sendoff`, `feature/prompt_drift` | Send-off is generated from the JSON; drift is display-only and never written anywhere |
-| `feature/stacked_tasks` | Plan files: Rex reads the optional stack fields `base` and `branch` and never writes them; the send-off's `Stack:` part says where the pin's PR goes, and Rex runs no git |

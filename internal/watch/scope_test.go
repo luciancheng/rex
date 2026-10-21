@@ -11,7 +11,7 @@ import (
 func TestIngestStampsOrigin(t *testing.T) {
 	feed := filepath.Join(t.TempDir(), "session.jsonl")
 	raw := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/work/app","session_id":"s1","tool_use_id":"t9"}`
-	got := IngestRaw(raw, "claude", feed)
+	got, _ := ingest(raw, "claude", feed)
 	if len(got) != 1 {
 		t.Fatalf("%#v", got)
 	}
@@ -19,7 +19,7 @@ func TestIngestStampsOrigin(t *testing.T) {
 	if m["cwd"] != "/work/app" || m["session"] != "s1" || m["tool_use_id"] != "t9" {
 		t.Fatalf("%#v", m)
 	}
-	cursor := IngestRaw(`{"hook_event_name":"beforeSubmitPrompt","prompt":"hi","workspace_roots":["/a","/b"],"conversation_id":"c1"}`, "cursor", feed)
+	cursor, _ := ingest(`{"hook_event_name":"beforeSubmitPrompt","prompt":"hi","workspace_roots":["/a","/b"],"conversation_id":"c1"}`, "cursor", feed)
 	if roots, _ := cursor[0].Meta["roots"].([]any); len(roots) != 2 || cursor[0].Meta["session"] != "c1" {
 		t.Fatalf("%#v", cursor[0].Meta)
 	}

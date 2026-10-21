@@ -257,10 +257,6 @@ func (b *PlanBrowser) Browsing() bool {
 	return b.Screen == ScreenBrowse
 }
 
-func (b *PlanBrowser) Empty() bool {
-	return len(b.plans()) == 0
-}
-
 // plans lists every plan under the root, newest first, from a short cache.
 func (b *PlanBrowser) plans() []planStat {
 	if b.walk.plans == nil || time.Since(b.walk.at) > walkTTL {
@@ -290,17 +286,6 @@ func (b *PlanBrowser) CurrentRel() string {
 		return filepath.ToSlash(filepath.Join(b.RelDir(), filepath.Base(b.Current)))
 	}
 	return filepath.ToSlash(rel)
-}
-
-func (b *PlanBrowser) Latest() string {
-	if plans := b.plans(); len(plans) > 0 {
-		return plans[0].path
-	}
-	return ""
-}
-
-func (b *PlanBrowser) Recents() []PlanRow {
-	return recentRows(b.plans(), maxRecents)
 }
 
 func (b *PlanBrowser) Rebuild() {

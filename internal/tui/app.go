@@ -249,20 +249,12 @@ func (a *app) planFooter() []string {
 }
 
 // verbHints are the verbs worth typing on the open plan, as the outline's
-// placeholder: the ones this build offers.
+// placeholder.
 func (a *app) verbHints() string {
-	type hint struct{ verb, text string }
-	all := []hint{{"sendoff", "s⏎ sendoff"}, {"done", "d⏎ done"}, {"pin", "p⏎ pin"}, {"help", "?⏎ help"}}
 	if a.doc != nil && a.doc.plan != nil && len(a.doc.plan.Tasks) == 0 {
-		all = []hint{{"brief", "b⏎ brief"}, {"help", "?⏎ help"}}
+		return "b⏎ brief · ?⏎ help"
 	}
-	var hints []string
-	for _, h := range all {
-		if a.offers(h.verb) {
-			hints = append(hints, h.text)
-		}
-	}
-	return strings.Join(hints, " · ")
+	return "s⏎ sendoff · d⏎ done · p⏎ pin · ?⏎ help"
 }
 
 // placeholder is the dim hint in an empty composer: what you can type here.
@@ -305,7 +297,7 @@ func (a *app) preview() string {
 	if a.pane == PanePlans && a.at == atLibrary && a.overlay[a.pane] == overlayNone && !forcedVerb(text) {
 		return ""
 	}
-	if verb, arg, ok := parseVerb(text); ok && a.offers(verb) {
+	if verb, arg, ok := parseVerb(text); ok {
 		if verb == "sendoff" && arg == "" && a.overlay[a.pane] == overlayNone && a.doc != nil && a.doc.plan != nil && a.briefBlocked() == "" {
 			if pin := a.doc.plan.Graph().Pin(); pin != nil {
 				arg = pin.ID // which task the brief is for, before ⏎
@@ -642,24 +634,15 @@ func (a *app) handleKeyArmed(key string) bool {
 	return a.tapeKey(key)
 }
 
-// submit runs the draft as a verb if it is one this build offers.
+// submit runs the draft if it is a verb.
 func (a *app) submit(text string) bool {
 	verb, arg, ok := parseVerb(text)
-	if !ok || !a.offers(verb) {
+	if !ok {
 		return false
 	}
 	a.draft = ""
 	a.runVerb(verb, arg)
 	return true
-}
-
-// offers reports which verbs exist.
-func (a *app) offers(verb string) bool {
-	switch verb {
-	case "help", "breakdance", "pin", "done", "sendoff", "brief":
-		return true
-	}
-	return false
 }
 
 func (a *app) runVerb(verb, arg string) {

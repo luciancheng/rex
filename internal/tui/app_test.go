@@ -35,9 +35,6 @@ func typeText(a *app, text string) {
 	}
 }
 
-// The tests below pin today's behaviour before the UX slices change it on
-// purpose (docs/ux.md); a later slice that flips one says so.
-
 func TestAppStartsOnPlansHome(t *testing.T) {
 	a := testApp(t)
 	if a.pane != PanePlans || a.plans.Screen != ScreenHome {

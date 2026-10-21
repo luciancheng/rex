@@ -18,7 +18,9 @@ import (
 )
 
 // Change sets one field of one task, or of the plan when Task is "".
-// Rex only ever writes status and the completion fields.
+// Rex only ever writes status and the completion lists it fills
+// (accomplished, modified, verified_how); completed_notes is the agent's or
+// a human's.
 type Change struct {
 	Task  string
 	Field string
@@ -36,12 +38,8 @@ func SetList(task, field string, items []string) Change {
 	return Change{Task: task, Field: field, Value: items}
 }
 
-func SetString(task, field, value string) Change {
-	return Change{Task: task, Field: field, Value: value}
-}
-
 var writable = map[string]bool{
-	"status": true, "accomplished": true, "modified": true, "verified_how": true, "completed_notes": true,
+	"status": true, "accomplished": true, "modified": true, "verified_how": true,
 }
 
 // Op decides the changes from the plan as it is on disk right now. Edit
@@ -155,17 +153,12 @@ func Apply(data []byte, changes []Change) ([]byte, error) {
 }
 
 // checkValue refuses a value Rex would never write: a status that isn't
-// one of the five, a list field that isn't a list of strings, notes that
-// aren't text.
+// one of the five, or a list field that isn't a list of strings.
 func checkValue(c Change) error {
 	switch c.Field {
 	case "status":
 		if s, ok := c.Value.(string); !ok || !statuses[Status(s)] {
 			return fmt.Errorf("%v is not a status", c.Value)
-		}
-	case "completed_notes":
-		if _, ok := c.Value.(string); !ok {
-			return fmt.Errorf("%s must be text", c.Field)
 		}
 	default:
 		if _, ok := c.Value.([]string); !ok {

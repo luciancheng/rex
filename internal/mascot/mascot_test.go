@@ -7,7 +7,7 @@ import (
 
 func TestIdleIsRegistered(t *testing.T) {
 	sprite := MustSprite("idle")
-	if sprite.Name != DefaultSprite {
+	if sprite.Name != "idle" {
 		t.Fatalf("%s", sprite.Name)
 	}
 	width, height, err := SpriteSize(sprite.Rows)
@@ -17,7 +17,7 @@ func TestIdleIsRegistered(t *testing.T) {
 	if width != sprite.Width() || width != StageSize {
 		t.Fatalf("width %d", width)
 	}
-	if height != sprite.Height() || height != StageSize {
+	if height != len(sprite.Rows) || height != StageSize {
 		t.Fatalf("height %d", height)
 	}
 }
@@ -211,7 +211,12 @@ func TestColor256QuantizesTheSamePalette(t *testing.T) {
 	if got := BG(RGB{18, 42, 58}); !strings.HasPrefix(got, "\033[48;5;") {
 		t.Fatalf("%q", got)
 	}
-	out, err := RenderSprite(MustSprite("idle"), "yellow", true)
+	pal, err := PaletteFor(DefaultPalette)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := RenderRows(MustSprite("idle").Rows, pal, true)
+	out := strings.Join(lines, "\n")
 	if err != nil || strings.Contains(out, "38;2;") || !strings.Contains(out, "38;5;") {
 		t.Fatalf("256 mode leaked truecolor: %v", err)
 	}

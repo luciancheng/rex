@@ -45,7 +45,7 @@ Keep rendering separate from watch/TUI logic.
 To change idle: replace `assets/idle.png`, then:
 
 ```bash
-go run ./cmd/importsprite assets/idle.png --apply
+go run ./cmd/importsprite --apply assets/idle.png
 ```
 
 That writes the idle `Pixels(...)` grid and the yellow palette 1:1. **Leave blink, glance, and squat as transforms** on `IdleRows` (`PaintPixels` / `ShiftBody`). Do not hand-edit a second grid that drifts from the PNG.
@@ -66,9 +66,9 @@ Cursor hooks (`~/.cursor/hooks.json`) spawn `rex ingest --source cursor`; Claude
 
 `rex ingest` runs inside agent hooks: run from a hook it **always exits 0 and never writes stdout** (harnesses read exit 2 as "block" and some feed stdout to the agent); only `-h`, `--version` and the interactive `--install*` / `--uninstall` flags print, and only those can exit non-zero (1, never 2). An unknown top-level command exits 1, never 2. Stdin reads and the feed lock are time-bounded. The feed is private (file 0600, `~/.rex` 0700, tightened on old installs). Keep it that way. Visible assistant replies come from `afterAgentResponse`, which Cursor currently fires with the **final** message of the turn. In-between chat lines are not on any hook — do not scrape transcripts to invent them. Thoughts still arrive via `afterAgentThought`. Do not map Cursor's `stop` as text. Claude Code's `Stop` carries `last_assistant_message`, the turn's final reply: that one is text. Claude hook payloads that carry `cursor_version` are Cursor running Claude's hooks and are dropped (Cursor's own hooks already report them).
 
-New harness = adapter + a `Harness` registered in `internal/watch/harness.go` (Present / Wired / Install / Uninstall). Installing happens only on an explicit `rex ingest --install <name|auto>`; `--uninstall <name>` takes Rex's entries back out and leaves everything else. Do not special-case vendors in `live.go`. Tests run with HOME pointed at a temp dir (a `TestMain` in each package that touches HOME: `cli`, `tui`, `watch`), with `REX_EVENTS` unset. Installers edit the harness's config through `watch.UpdateJSONFile` + `internal/jsonedit`: splice only what Rex owns, keep every other byte, refuse a file that does not parse, keep a `.bak`, write atomically. Never round-trip a user's config through a `map`.
+New harness = adapter + a `Harness` registered in `internal/watch/harness.go` (Present / Wired / Install / Uninstall). Installing happens only on an explicit `rex ingest --install <name|auto>`; `--uninstall <name>` takes Rex's entries back out and leaves everything else. Do not special-case vendors in `live.go`. Tests run with HOME pointed at a temp dir (a `TestMain` in each package that touches HOME: `cli`, `plan`, `skill`, `tui`, `watch`), with `REX_EVENTS` unset. Installers edit the harness's config through `watch.UpdateJSONFile` + `internal/jsonedit`: splice only what Rex owns, keep every other byte, refuse a file that does not parse, keep a `.bak`, write atomically. Never round-trip a user's config through a `map`.
 
-Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`. Rex's own local kinds, `note`, `plan`, `done`, `sendoff` and `brief` (source `rex`), never come from the feed.
+Kinds: `thought`, `text`, `user`, `command`, `question`, `result`, `idle`, `error`. Rex's own local kinds, `note`, `plan`, `done`, `sendoff`, `brief`, `drift` and `before` (source `rex`), never come from the feed.
 
 ## Plan files
 
@@ -140,7 +140,7 @@ git rebase --update-refs <fixed-branch>   # moves every branch in between too
 git push --force-with-lease origin <each moved branch>
 ```
 
-- **Before opening a PR,** run the gate and a review pass. Save the gate as a script and run it with `bash gate.sh <base-branch>` (don't paste it into your login shell: it stops at the first failure):
+- **Before opening a PR,** run the gate and a review pass. Save the gate as `gate.sh` at the repo root (git ignores it) and run it with `bash gate.sh <base-branch>` (don't paste it into your login shell: it stops at the first failure):
 
 ```bash
 set -euo pipefail

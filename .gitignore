@@ -1,11 +1,19 @@
+# builds: dist/ (never `go build -o rex` at the root; rex/ is the plans folder)
+/dist/
 /rex.exe
-dist/
+/rex/rex
+/rex/rex.exe
+# Go test and profile output
+*.test
+*.prof
+coverage.out
+# plans keep any name, even one these patterns match
+!/rex/plans/**
+# the pre-PR gate script (agents.md, Workflow)
+/gate.sh
+# editors and OS
 .DS_Store
-.venv/
-venv/
-env/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.coverage
-htmlcov/
+._*
+.idea/
+.vscode/
+*.swp

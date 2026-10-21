@@ -273,6 +273,7 @@ func TestHelpOwnsTheComposer(t *testing.T) {
 			t.Fatalf("help rows wrap, never clip: %q", line.Text)
 		}
 	}
+	a.settle(120, 24)
 	if !strings.Contains(a.frame(), "↑↓ scroll") {
 		t.Fatal("an overflowing Help says it scrolls")
 	}
@@ -334,5 +335,32 @@ func TestDraftCapAndPlaceholderWithoutColor(t *testing.T) {
 	press(b, "\t")
 	if !strings.Contains(b.frame(), "(note (not sent) · ?⏎ help)") {
 		t.Fatal("without color the placeholder is in parentheses")
+	}
+}
+
+func TestCtrlCInHelpDropsWhatWasTyped(t *testing.T) {
+	a := testApp(t)
+	root := filepath.Join(a.plans.Repo, "rex", "plans")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "alpha.rex.json"), []byte("{}"), 0o644)
+	a.plans.Screen, a.plans.Dir = ScreenBrowse, root
+	a.plans.Rebuild()
+	typeText(a, "?")
+	press(a, "\r")
+	typeText(a, "zz")
+	press(a, CtrlC)
+	if a.overlay[PanePlans] != overlayNone || a.draft != "" || a.plans.Filter != "" {
+		t.Fatalf("overlay %d draft %q filter %q", a.overlay[PanePlans], a.draft, a.plans.Filter)
+	}
+	a.settle(80, 24)
+	typeText(a, "?")
+	press(a, "\r")
+	if f := a.frameRows().Rows; !strings.Contains(f[len(f)-1], "tab tape") {
+		t.Fatalf("help keeps its must-have tab at 38 cells: %q", f[len(f)-1])
+	}
+	press(a, "esc")
+	typeText(a, "/zap")
+	if !strings.Contains(a.frame(), "⏎ not a verb") {
+		t.Fatal("the footer says a /word isn't a verb before ⏎")
 	}
 }

@@ -120,7 +120,7 @@ func (a *app) composeOptions() ComposeOptions {
 		body := a.helpBody(textW)
 		footer := []string{"help", "esc close", other}
 		if len(body) > PaneBodyHeight(a.lines) {
-			footer = []string{"help", "esc close", "↑↓ scroll", other}
+			footer = []string{"help", "esc close", other, "↑↓ scroll"}
 		}
 		opt.Overlay = &Overlay{Lines: body, Footer: footer, Scroll: a.overlayScroll[a.pane]}
 	}
@@ -160,6 +160,9 @@ func (a *app) preview() string {
 			return "⏎ " + verb + " " + arg
 		}
 		return "⏎ " + verb
+	}
+	if forcedVerb(text) {
+		return "⏎ not a verb"
 	}
 	if a.pane == PaneChat {
 		return "⏎ note (local, not sent)"
@@ -281,11 +284,10 @@ func (a *app) handleKey(key string) bool {
 			return false
 		}
 		// The first Ctrl+C clears the draft or closes the overlay, and arms quit.
-		if a.overlay[a.pane] != overlayNone {
-			a.overlay[a.pane] = overlayNone
-		} else {
-			a.draft = ""
-		}
+		// Closing an overlay drops what was typed in it too, so it can't
+		// land on the screen underneath.
+		a.overlay[a.pane] = overlayNone
+		a.draft = ""
 		a.quitPending = true
 		a.quitTicks = QuitWindowTicks
 		return true

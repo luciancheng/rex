@@ -90,8 +90,30 @@ func TestCursorStopDoesNotBecomeReply(t *testing.T) {
 		"status":          "completed",
 		"text":            "Here is the answer.",
 	}, "auto")
-	if event != nil {
-		t.Fatalf("stop should not replace replies %#v", event)
+	if event == nil || event.Kind != "idle" || strings.Contains(event.Text, "answer") {
+		t.Fatalf("stop must end the turn without becoming a reply: %#v", event)
+	}
+	if KeepInPane(*event) {
+		t.Fatal("idle is not drawn on the tape")
+	}
+	failed := MapPayload(map[string]any{"hook_event_name": "stop", "status": "error"}, "cursor")
+	if failed == nil || failed.Kind != "error" {
+		t.Fatalf("%#v", failed)
+	}
+}
+
+func TestCursorToolFailureSaysWhatFailed(t *testing.T) {
+	event := MapPayload(map[string]any{
+		"hook_event_name": "postToolUseFailure",
+		"tool_name":       "Write",
+		"tool_input":      map[string]any{"file_path": "/repo/a.go"},
+		"error_message":   "permission denied\nstack...",
+	}, "cursor")
+	if event == nil || event.Kind != "error" || event.Text != "Write failed · /repo/a.go: permission denied" {
+		t.Fatalf("%#v", event)
+	}
+	if strings.Contains(event.Text, "wrote") {
+		t.Fatal("a failed write must not read as wrote")
 	}
 }
 

@@ -187,6 +187,17 @@ func payloadPath(payload map[string]any) string {
 	return ""
 }
 
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if r := []rune(s); len(r) > 160 {
+		s = string(r[:160]) + "…"
+	}
+	return s
+}
+
 func strField(data map[string]any, key string) string {
 	v, ok := data[key]
 	if !ok || v == nil {
@@ -358,6 +369,13 @@ func MapCursor(payload map[string]any) *Event {
 			}
 		}
 		if name == "postToolUseFailure" {
+			text = tool + " failed"
+			if path != "" {
+				text += " · " + path
+			}
+			if msg := firstLine(strField(payload, "error_message")); msg != "" {
+				text += ": " + msg
+			}
 			ev := NewEvent("cursor", "error", text, toolMeta(tool, path))
 			return &ev
 		}
@@ -371,9 +389,19 @@ func MapCursor(payload map[string]any) *Event {
 		ev := NewEvent("cursor", "text", text, nil)
 		return &ev
 	case "stop":
-		// End-of-turn status only. Mapping it as text hid earlier replies
-		// when Cursor sent the full concatenated message.
-		return nil
+		// End of turn. Never text: Cursor's concatenated message hid the
+		// earlier replies. It only moves the turn to idle (or error) so the
+		// dino stops typing even when no reply arrived.
+		status := strings.TrimSpace(strField(payload, "status"))
+		if status == "error" {
+			ev := NewEvent("cursor", "error", "turn ended with an error", map[string]any{"status": status})
+			return &ev
+		}
+		if status == "" {
+			status = "completed"
+		}
+		ev := NewEvent("cursor", "idle", "turn "+status, map[string]any{"status": status})
+		return &ev
 	}
 	return nil
 }

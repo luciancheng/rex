@@ -330,7 +330,13 @@ func ApplyTurn(turn Turn, ev watch.Event) Turn {
 		return TurnRunning
 	case "result":
 		return turn
-	case "text", "error", "idle":
+	case "error":
+		// A failed tool call doesn't end the turn; the agent carries on.
+		if watch.MetaTool(ev) != "" {
+			return TurnRunning
+		}
+		return TurnIdle
+	case "text", "idle":
 		return TurnIdle
 	default:
 		return turn

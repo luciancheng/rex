@@ -188,11 +188,22 @@ func TestCodexFailedPatchIsNoWrite(t *testing.T) {
 		"Exit code: 1\nWall time: 0 seconds\nOutput:\nFailed to find expected lines in /r/a.go":          true,
 		"Exit code: 0\nWall time: 0 seconds\nOutput:\napply_patch verification failed: no such file":     true,
 		"done": false, // anything unrecognised is a write, as it always was
+		`{"output":"Success. Updated the following files:\nM a.go","metadata":{"exit_code":0,"duration_seconds":0.1}}`: false,
+		`{"output":"Failed to find expected lines","metadata":{"exit_code":1,"duration_seconds":0}}`:                   true,
+		"patch rejected by user": true,
 	} {
 		ev := codexMap(t, fmt.Sprintf(patch, resp))
 		if ev == nil || (ev.Kind == "error") != failed || ev.Meta["ok"] != !failed {
 			t.Errorf("%q: %#v", resp, ev)
 		}
+		if failed && (strings.Contains(ev.Text, "Exit code") || strings.Contains(ev.Text, "{")) {
+			t.Errorf("the tape shows the patch's own reason: %q", ev.Text)
+		}
+	}
+	// A JSON-shaped result can also come as an object.
+	obj := codexMap(t, `{"hook_event_name":"PostToolUse","turn_id":"t","cwd":"/r","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: a.go\n*** End Patch"},"tool_response":{"output":"Failed to find expected lines","metadata":{"exit_code":1}}}`)
+	if obj == nil || obj.Kind != "error" || !strings.Contains(obj.Text, "Failed to find expected lines") {
+		t.Fatalf("%#v", obj)
 	}
 }
 

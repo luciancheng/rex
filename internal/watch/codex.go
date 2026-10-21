@@ -253,31 +253,54 @@ type patchFile struct{ verb, path string }
 
 const maxPatchPaths = 200
 
-// patchFailed reads Codex's PostToolUse tool_response for apply_patch: a
-// summary that doesn't start with "Success", or a success flag that is
-// false, is a patch that didn't apply. No response says nothing.
+// patchFailed reads Codex's PostToolUse tool_response for apply_patch.
+// Codex hands it over as it formats tool output for the model: either text
+// ("Exit code: N\nWall time: …\nOutput:\n…") or JSON ({"output": …,
+// "metadata": {"exit_code": N}}). A non-zero exit code, a false success
+// flag, or apply_patch's own failure text is a patch that didn't apply,
+// and the reason is the output's first line. Anything else is a write.
 func patchFailed(resp any) (bool, string) {
 	switch r := resp.(type) {
 	case string:
-		// Codex formats tool output for the model as "Exit code: N\nWall
-		// time: …\nOutput:\n…". Only a non-zero code or apply_patch's own
-		// failure text is a failure; anything else is a write, as before.
 		s := strings.TrimSpace(r)
+		if strings.HasPrefix(s, "{") {
+			var m map[string]any
+			if json.Unmarshal([]byte(s), &m) == nil {
+				return patchFailed(m)
+			}
+		}
 		if rest, ok := strings.CutPrefix(s, "Exit code:"); ok {
 			code, out, _ := strings.Cut(strings.TrimSpace(rest), "\n")
+			if _, body, ok := strings.Cut(out, "Output:"); ok {
+				out = body
+			}
 			if strings.TrimSpace(code) != "0" {
-				return true, s
+				return true, firstLine(strings.TrimSpace(out))
 			}
 			s = strings.TrimSpace(out)
 		}
-		for _, line := range strings.Split(s, "\n") {
-			if l := strings.TrimSpace(line); strings.HasPrefix(l, "apply_patch verification failed") || strings.HasPrefix(l, "Failed to ") || strings.HasPrefix(l, "Invalid patch") {
+		return patchFailedText(s)
+	case map[string]any:
+		out := strings.TrimSpace(strField(r, "output") + " " + strField(r, "error"))
+		if code, ok := asDict(r["metadata"])["exit_code"].(float64); ok && code != 0 {
+			return true, firstLine(out)
+		}
+		if ok, has := r["success"].(bool); has && !ok {
+			return true, firstLine(out)
+		}
+		return patchFailedText(out)
+	}
+	return false, ""
+}
+
+// patchFailedText finds apply_patch's own failure lines in its output.
+func patchFailedText(s string) (bool, string) {
+	for _, line := range strings.Split(s, "\n") {
+		l := strings.TrimSpace(line)
+		for _, p := range []string{"apply_patch verification failed", "Failed to ", "Invalid patch", "patch rejected"} {
+			if strings.HasPrefix(l, p) {
 				return true, l
 			}
-		}
-	case map[string]any:
-		if ok, has := r["success"].(bool); has && !ok {
-			return true, strings.TrimSpace(strField(r, "output") + " " + strField(r, "error"))
 		}
 	}
 	return false, ""

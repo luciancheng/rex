@@ -26,11 +26,14 @@ var CodexHookEvents = []string{
 
 const codexHookTimeout = 5
 
-// codexEvents are every Codex hook name, registered or not, for
-// --source auto.
+// codexEvents are the Codex hook names --source auto routes to MapCodex
+// when the payload carries a turn_id (a session-scoped hook such as
+// SessionStart has none, so auto can't tell it from Claude's). Rex
+// registers only some of them.
 var codexEvents = map[string]bool{
 	"SessionStart": true, "UserPromptSubmit": true, "PreToolUse": true, "PermissionRequest": true,
 	"PostToolUse": true, "Stop": true, "SessionEnd": true, "Interrupt": true,
+	"PreCompact": true, "PostCompact": true, "SubagentStart": true, "SubagentStop": true,
 }
 
 // codexDir is Codex's home: $CODEX_HOME or ~/.codex.
@@ -234,6 +237,9 @@ func mapCodexHook(payload map[string]any, name string) *Event {
 		}
 		return event("idle", "turn completed", nil)
 	case "SessionStart":
+		if strField(payload, "source") == "compact" {
+			return nil // a compaction mid-turn; the turn goes on
+		}
 		return event("idle", "session started", nil)
 	case "SessionEnd":
 		return event("idle", "session ended", nil)
@@ -253,8 +259,21 @@ const maxPatchPaths = 200
 func patchFailed(resp any) (bool, string) {
 	switch r := resp.(type) {
 	case string:
-		if s := strings.TrimSpace(r); s != "" && !strings.HasPrefix(s, "Success") {
-			return true, s
+		// Codex formats tool output for the model as "Exit code: N\nWall
+		// time: …\nOutput:\n…". Only a non-zero code or apply_patch's own
+		// failure text is a failure; anything else is a write, as before.
+		s := strings.TrimSpace(r)
+		if rest, ok := strings.CutPrefix(s, "Exit code:"); ok {
+			code, out, _ := strings.Cut(strings.TrimSpace(rest), "\n")
+			if strings.TrimSpace(code) != "0" {
+				return true, s
+			}
+			s = strings.TrimSpace(out)
+		}
+		for _, line := range strings.Split(s, "\n") {
+			if l := strings.TrimSpace(line); strings.HasPrefix(l, "apply_patch verification failed") || strings.HasPrefix(l, "Failed to ") || strings.HasPrefix(l, "Invalid patch") {
+				return true, l
+			}
 		}
 	case map[string]any:
 		if ok, has := r["success"].(bool); has && !ok {

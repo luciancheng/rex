@@ -180,9 +180,28 @@ func TestCodexFailedPatchIsNoWrite(t *testing.T) {
 	if ev == nil || ev.Kind != "error" || ev.Meta["ok"] != false || !strings.Contains(ev.Text, "apply_patch failed") {
 		t.Fatalf("%#v", ev)
 	}
-	ok := codexMap(t, `{"hook_event_name":"PostToolUse","turn_id":"t","cwd":"/r","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: a.go\n*** End Patch"},"tool_response":"Success. Updated the following files:\nM a.go"}`)
-	if ok == nil || ok.Kind != "result" || ok.Meta["ok"] != true {
-		t.Fatalf("%#v", ok)
+	patch := `{"hook_event_name":"PostToolUse","turn_id":"t","cwd":"/r","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: a.go\n*** End Patch"},"tool_response":%q}`
+	for resp, failed := range map[string]bool{
+		"Success. Updated the following files:\nM a.go": false,
+		// how Codex formats tool output for the model, and so for the hook
+		"Exit code: 0\nWall time: 0.1 seconds\nOutput:\nSuccess. Updated the following files:\nM a.go\n": false,
+		"Exit code: 1\nWall time: 0 seconds\nOutput:\nFailed to find expected lines in /r/a.go":          true,
+		"Exit code: 0\nWall time: 0 seconds\nOutput:\napply_patch verification failed: no such file":     true,
+		"done": false, // anything unrecognised is a write, as it always was
+	} {
+		ev := codexMap(t, fmt.Sprintf(patch, resp))
+		if ev == nil || (ev.Kind == "error") != failed || ev.Meta["ok"] != !failed {
+			t.Errorf("%q: %#v", resp, ev)
+		}
+	}
+}
+
+func TestCodexCompactionKeepsTheTurn(t *testing.T) {
+	if ev := codexMap(t, `{"hook_event_name":"SessionStart","turn_id":"t","source":"compact"}`); ev != nil {
+		t.Fatalf("a compaction mid-turn is no turn end: %#v", ev)
+	}
+	if ev := codexMap(t, `{"hook_event_name":"SessionStart","turn_id":"t","source":"startup"}`); ev == nil || ev.Kind != "idle" {
+		t.Fatalf("%#v", ev)
 	}
 }
 

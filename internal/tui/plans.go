@@ -869,7 +869,8 @@ func cause(err error) string {
 
 // summarize is a plan as the list sums it up: the pin as the outline has
 // it (docs/ux.md §7), the next one or two unfinished leaves after it, and
-// the last task done. A plan with no title (a new stub has only an id,
+// the done task the PINNED card names (buildsOn), so the list and the
+// outline never disagree. A plan with no title (a new stub has only an id,
 // its name) has none here: its name is already on the row.
 func summarize(p *plan.Plan) planSummary {
 	g := p.Graph()
@@ -893,13 +894,9 @@ func summarize(p *plan.Plan) planSummary {
 			mark, _, _ := glyph(t, g, pin)
 			s.next = append(s.next, planItem{mark: mark, id: taskKey(t), title: t.Title})
 		}
-		if t.Status == plan.Done && g.Leaf(t) {
-			what := strings.Join(t.Accomplished, " · ")
-			if what == "" {
-				what = t.Title
-			}
-			s.last = &planItem{id: taskKey(t), title: what}
-		}
+	}
+	if t := buildsOn(p, g, pin); t != nil {
+		s.last = &planItem{id: taskKey(t), title: doneWhat(t)}
 	}
 	return s
 }
@@ -1696,10 +1693,10 @@ func fitNotice(notice string, width int) string {
 	return variants[len(variants)-1]
 }
 
-// planHead is the part of head that stays on screen above a list of total
-// lines in viewH rows. When the list would get fewer than three rows, the
-// gaps (and an outline's last ✓) go first; the error and notice stay
-// longest, so enter on a far-down row still says what went wrong.
+// planHead is the part of the plan list's head that stays on screen above
+// a list of total lines in viewH rows. When the list would get fewer than
+// three rows, the gaps go first; the error and notice stay longest, so
+// enter on a far-down row still says what went wrong.
 func planHead(head []LogLine, total, viewH int) []LogLine {
 	if total <= viewH || viewH-len(head) >= 3 {
 		return head

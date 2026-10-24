@@ -144,7 +144,6 @@ func (a *app) composeOptions() ComposeOptions {
 		Cue:         a.unseen[a.other()],
 		Scroll:      a.scroll,
 		Pane:        a.pane,
-		Plans:       a.plans,
 		PlanRel:     a.plans.CurrentRel(),
 		Follow:      a.followWord(),
 		Line:        a.statusLine(),
@@ -161,7 +160,6 @@ func (a *app) composeOptions() ComposeOptions {
 			opt.LogView = a.emptyAgent(textW)
 		}
 	}
-	page := a.page()
 	switch {
 	case a.pane == PaneChat && len(a.log) == 0:
 		// The empty tab is a page (docs/ux.md §10): it scrolls from its
@@ -170,7 +168,6 @@ func (a *app) composeOptions() ComposeOptions {
 		opt.Scroll = a.emptyScroll
 		opt.Footer = emptyFooter(len(opt.LogView) > l.bodyH, a.offerTakes())
 	case a.pane == PaneChat:
-		opt.Footer = agentFooter(a.scroll, page != nil, a.offerTakes())
 	case a.at == atWait:
 		body := a.waitBody(l.textW, l.bodyH)
 		a.outline.scroll = max(0, min(a.outline.scroll, len(body)-l.bodyH))
@@ -179,19 +176,14 @@ func (a *app) composeOptions() ComposeOptions {
 	case a.at != atLibrary && a.doc != nil:
 		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
 		opt.Footer = a.planFooter()
-		if a.at == atOutline && a.doc.plan != nil && len(opt.PlanView) > l.bodyH {
-			// The list scrolls: where the selection is in it.
-			rows := outlineRows(a.doc.plan)
-			at := 0
-			for i, k := range rows {
-				if k == a.outline.sel {
-					at = i
-				}
-			}
-			// The tag joins the status only while it fits (docs/ux.md §6).
-			page.MetaShort = page.Meta
-			page.Meta += fmt.Sprintf(" · tasks %d/%d", at, len(rows)-1)
-		}
+	default:
+		opt.Plans = a.plans // the screen decides what PLAN draws, never an empty view
+	}
+	// After the plan's layout: the outline's page title says where the
+	// selection is once TASKS is gone (docs/ux.md §4).
+	page := a.page()
+	if a.pane == PaneChat && len(a.log) > 0 {
+		opt.Footer = agentFooter(a.scroll, page != nil, a.offerTakes())
 	}
 	opt.Page = page
 	if a.overlay[a.pane] == overlayHelp {
@@ -269,7 +261,8 @@ func (a *app) page() *Page {
 
 // docPage is the open plan's page title: PLANS › its title, then "about"
 // or the task's id on a detail screen. On the outline it is the title
-// row, selected while the cursor is on it, with the plan's status as meta.
+// row, selected while the cursor is on it, with the plan's status as meta,
+// and where the selection is while the list scrolls with TASKS gone.
 func (a *app) docPage() Page {
 	d := a.doc
 	crumbs := []string{"PLANS", planTitle(d.plan, d.path)}
@@ -281,7 +274,13 @@ func (a *app) docPage() Page {
 	case d.plan == nil:
 		return Page{Crumbs: crumbs, Meta: "can't read", MetaRole: "error"}
 	}
-	return Page{Crumbs: crumbs, Meta: string(d.plan.Status), Selected: a.outline.sel == ""}
+	p := Page{Crumbs: crumbs, Meta: string(d.plan.Status), Selected: a.outline.sel == ""}
+	if pos := a.outline.pos; pos != "" {
+		// TASKS is gone and the list scrolls: the position joins the
+		// status, and outranks it where both don't fit.
+		p.Meta, p.MetaShort = strings.TrimPrefix(p.Meta+" · "+pos, " · "), pos
+	}
+	return p
 }
 
 // libraryPage is the plan list's page title: PLANS, then find, the folder
@@ -338,27 +337,22 @@ func (a *app) layout() layout {
 }
 
 // planView lays out the open plan's screen and picks its first visible
-// line: the outline keeps the selection in view, details scroll.
+// line: the outline is laid out to the row, keeping the selection in
+// view; details scroll, with their blank rows from 16 rows.
 func (a *app) planView(width, viewH int) ([]LogLine, int) {
 	if width <= 0 {
 		return nil, 0
 	}
 	v := &a.outline
 	var body []LogLine
+	tall := viewH >= outlineTall
 	switch a.at {
 	case atPlanDetail:
-		body = planDetail(a.doc, width)
+		body = planDetail(a.doc, a.plans.CurrentRel(), width, tall)
 	case atTaskDetail:
-		body = taskDetail(a.doc, v.sel, width)
+		body = taskDetail(a.doc, v.sel, width, tall)
 	default:
-		body = outlineBody(a.doc, v, width)
-		head := headOf(body)
-		pinned := planHead(body[:head], len(body), viewH)
-		if v.sel == "" {
-			v.view = 0 // the title row, above the list, is selected: the list starts at its top
-		}
-		v.view = windowStart(body[head:], viewH-len(pinned), v.view)
-		return body, v.view
+		return outlineScreen(a.doc, v, width, viewH), 0
 	}
 	v.scroll = max(0, min(v.scroll, len(body)-viewH))
 	return body, v.scroll
@@ -1036,12 +1030,18 @@ func (a *app) docKey(key string) bool {
 	step := max(1, a.layout().bodyH-2)
 	if a.at == atOutline {
 		switch key {
-		case "up", "down", "pageup", "pagedown":
+		case "up", "down":
 			if p == nil {
 				return false
 			}
-			delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
-			v.move(p, delta)
+			v.move(p, map[string]int{"up": -1, "down": 1}[key])
+			return true
+		case "pageup", "pagedown":
+			if p == nil {
+				return false
+			}
+			l := a.layout()
+			v.sel = outlinePage(p, *v, l.textW, l.bodyH, key == "pagedown")
 			return true
 		case "home", "end":
 			if p == nil {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/luciancheng/rex/internal/mascot"
 	"github.com/luciancheng/rex/internal/watch"
@@ -32,6 +33,39 @@ func spanLine(kind string, spans ...Span) LogLine {
 // flat is s as one line of clean text, measured as clip will paint it.
 func flat(s string) string {
 	return strings.ReplaceAll(watch.CleanText(s), "\n", " ")
+}
+
+// flatHead is flat(s) cut to at most cells cells. It reads only as much of
+// s as that takes, so a 600-byte title on a row costs the row's cells.
+func flatHead(s string, cells int) string {
+	for n := max(1, cells+1); n < len(s); n *= 2 {
+		// A prefix cleans to a prefix of the whole: a sequence or a rune it
+		// cuts is dropped at its end.
+		if f := flat(s[:n]); cellLen(f) > cells {
+			return cutCells(f, cells)
+		}
+	}
+	return cutCells(flat(s), cells)
+}
+
+// flatJoin is items joined with " · " as flat text, cut to at most cells
+// cells: it reads only the items, and as much of each, as that takes.
+func flatJoin(items []string, cells int) string {
+	var b strings.Builder
+	n := 0
+	for i, s := range items {
+		if n > cells {
+			break
+		}
+		if i > 0 {
+			b.WriteString(" · ")
+			n += 3
+		}
+		s = flatHead(s, max(0, cells-n)+1)
+		b.WriteString(s)
+		n += cellLen(s)
+	}
+	return cutCells(b.String(), cells)
 }
 
 // roleRGB is a role's color: mascot.UI, then an AGENT block kind's, else
@@ -121,8 +155,8 @@ func padSpans(spans []Span, width int) []Span {
 }
 
 // sideSpans fits left and a right-hand meta into width cells, the meta
-// ending at the edge (sideBySide for spans): left clips first, and the
-// meta goes only when the left would keep fewer than 6 cells.
+// ending at the edge: left clips first, and the meta goes only when the
+// left would keep fewer than 6 cells.
 func sideSpans(left []Span, meta Span, width int) []Span {
 	room := width - cellLen(meta.Text) - 2
 	if meta.Text == "" || room < 6 {
@@ -211,46 +245,158 @@ func h2Line(label, meta string, width int) LogLine {
 	return spanLine("text", spans...)
 }
 
-// fieldLines is a field (docs/ux.md §5, H3): a muted lowercase label in
-// an 8-cell column and its value beside it, wrapped values hanging under
-// it. Several items get "• " bullets; paths go one per line, bare.
-func fieldLines(label string, items []string, width int) []LogLine {
-	if len(items) == 0 {
+// h3 is a field (docs/ux.md §5, H3): a muted lowercase label and the
+// items it holds. With no label it is the text under an H2.
+type h3 struct {
+	label string
+	items []string
+	role  string // the values' role; "" is text
+	list  bool   // "• " bullets even for one item, as the field beside it has
+	bare  bool   // never "• " bullets: one row per item, or items that carry their own glyph
+	rows  int    // the rows each item may take, the last cut with "…"; 0 is all
+}
+
+// h3Col is the label column for fields shown together: 8 cells, wider
+// where a label needs two cells after it ("changed  ").
+func h3Col(fields ...h3) int {
+	col := 8
+	for _, f := range fields {
+		if len(f.items) > 0 {
+			col = max(col, cellLen(f.label)+2)
+		}
+	}
+	return col
+}
+
+// fieldLines draws a field from column 2: its label in a col-cell column
+// and its value beside it, wrapped values (and each line of one, as the
+// file breaks it) hanging under it. Several items get "• " bullets; paths
+// go one per line, bare. Each line's first span is its 2-cell lead, which
+// the PINNED card swaps for its edge.
+func fieldLines(f h3, width, col int) []LogLine {
+	if len(f.items) == 0 {
 		return nil
 	}
-	const col = 2 + 8
 	paths := true
-	for _, it := range items {
+	for _, it := range f.items {
 		if strings.ContainsAny(it, " \t\n") || !strings.Contains(it, "/") {
 			paths = false
 		}
 	}
-	bullet := len(items) > 1 && !paths
-	room := max(1, width-col)
+	bullet := (len(f.items) > 1 || f.list) && !paths && !f.bare
+	room := max(1, width-2-col)
+	label := Span{Text: padRight(flat(f.label), col), Role: "muted"}
 	var lines []LogLine
-	lead := padRight("  "+flat(label), col)
-	for _, it := range items {
+	for _, it := range f.items {
 		mark, hang := "", ""
 		if bullet {
 			mark, hang = "• ", "  "
 		}
-		for i, row := range wrap(flat(it), max(1, room-cellLen(mark))) {
+		for i, row := range paraRows(it, max(1, room-cellLen(mark)), f.rows) {
 			text := hang + row
 			if i == 0 {
 				text = mark + row
 			}
-			lines = append(lines, spanLine("text", Span{Text: lead, Role: "muted"}, Span{Text: text}))
-			lead = strings.Repeat(" ", col)
+			lines = append(lines, spanLine("text", Span{Text: "  "}, label, Span{Text: text, Role: f.role}))
+			label = Span{Text: strings.Repeat(" ", col)}
 		}
 	}
 	return lines
 }
 
+// paraRows is a value wrapped to width cells, each line of it starting a
+// row, so a description's paragraphs and lists keep their breaks; blank
+// lines are dropped. most caps the rows of the whole value: the line that
+// reaches it takes the rest of the value with it, the last row cut with
+// "…" when there is more. A capped value is wrapped only as far as the cap.
+func paraRows(text string, width, most int) []string {
+	var paras []string
+	for _, para := range strings.Split(watch.CleanText(text), "\n") {
+		if para = strings.TrimSpace(para); para != "" {
+			paras = append(paras, para)
+		}
+	}
+	var rows []string
+	for i, para := range paras {
+		left := 0
+		if most > 0 {
+			left = most - len(rows)
+		}
+		wrapped := wrapMost(para, width, left)
+		if most > 0 && len(wrapped) >= left {
+			return append(rows, wrapMost(strings.Join(paras[i:], " "), width, left)...)
+		}
+		rows = append(rows, wrapped...)
+	}
+	if len(rows) == 0 {
+		return []string{""}
+	}
+	return rows
+}
+
+// wrapMost wraps text to width cells in at most most rows (0: as many as
+// it takes), the last cut with "…" when there is more. Unlike wrap it
+// keeps the spaces inside a row: "✓ plans-ui  Home cards". Each row costs
+// its own cells, never the rest of the text's.
+func wrapMost(text string, width, most int) []string {
+	if width <= 0 {
+		return nil
+	}
+	text = strings.TrimSpace(text)
+	var rows []string
+	for text != "" {
+		if most > 0 && len(rows) == most-1 {
+			rows = append(rows, ellipsis(text, width))
+			break
+		}
+		var row string
+		row, text = cutRow(text, width)
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return []string{""}
+	}
+	return rows
+}
+
+// cutRow is text's first row of at most width cells and the rest of the
+// text after it. A row breaks at a space, a space just past it included,
+// or after a wide glyph, as CJK text breaks; a run of narrow letters
+// longer than the row breaks inside it.
+func cutRow(text string, width int) (row, rest string) {
+	fit := cutCells(text, width)
+	if len(fit) == len(text) {
+		return text, ""
+	}
+	at, n, glyph := 0, 0, 0 // the last break; the cells before r; the width of the glyph before r
+	var before, prev rune
+	for i, r := range text {
+		if n > width {
+			break
+		}
+		w := stepWidth(before, prev, r)
+		if i > 0 && w > 0 && !joiner(prev, r) {
+			if r == ' ' || glyph == 2 {
+				at = i
+			}
+			glyph = 0
+		}
+		n, glyph = n+w, glyph+w
+		before, prev = prev, r
+	}
+	if at == 0 {
+		if at = len(fit); at == 0 {
+			_, at = utf8.DecodeRuneInString(text)
+		}
+	}
+	return strings.TrimRight(text[:at], " "), strings.TrimLeft(text[at:], " ")
+}
+
 // Page is a screen's page title, row 2 (docs/ux.md §4): a breadcrumb that
 // is also the Esc ladder (Esc goes to the crumb on the left), and meta on
-// the right. MetaShort stands in for a Meta that doesn't fit, as the plan's
-// bare status does for "active · tasks 12/34". Selected is the outline's
-// title row under the cursor.
+// the right. MetaShort stands in for a Meta that doesn't fit, as the list's
+// position does for "active · 16 of 30". Selected is the outline's title
+// row under the cursor.
 type Page struct {
 	Crumbs                    []string
 	Meta, MetaShort, MetaRole string
@@ -263,13 +409,14 @@ const crumbMin = 6
 // ellipsis is s cut to width cells with a trailing "…" when it doesn't
 // fit, unpadded (clip pads).
 func ellipsis(s string, width int) string {
+	cut := cutCells(s, width)
 	switch {
-	case cellLen(s) <= width:
+	case len(cut) == len(s):
 		return s
 	case width <= 1:
 		return cutCells("…", width)
 	}
-	return strings.TrimRight(cutCells(s, width-1), " ") + "…"
+	return strings.TrimRight(cutCells(cut, width-1), " ") + "…"
 }
 
 // fitCrumbs fits a page title into width cells (docs/ux.md §4): the meta

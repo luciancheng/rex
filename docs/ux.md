@@ -206,7 +206,7 @@ Row 2 is a full-width slate bar: a breadcrumb from column 2, the root crumb in c
 | Browse | `PLANS › cuj/` (deeper: `› sub/`) | plans in that folder and below; with a filter, those under the rows it leaves | `esc plans` from a top folder, else `esc up` |
 | Name prompt | `PLANS › new plan` / `new folder` (from Browse: `PLANS › cuj/ › new plan`) | – | `esc cancel` (`esc clear` with a name) |
 | Wait | `PLANS › waiting for a plan` | – | `esc plans` |
-| Outline | `PLANS › <plan title>` | the plan's status (`active`); `· tasks 3/8` once the list scrolls | `esc plans` |
+| Outline | `PLANS › <plan title>` | the plan's status (`active`); where the cursor is in a long list is on `TASKS` (§6), or, once the collapse ladder drops `TASKS`, here: `active · 16 of 30` (just `16 of 30` where that doesn't fit) | `esc plans` |
 | Outline, unreadable | `PLANS › <file stem>` | `can't read` (red) | `esc plans` |
 | Plan detail | `PLANS › <title> › about` | – | `esc outline` |
 | Task detail | `PLANS › <title> › <task id>` | – | `esc outline` |
@@ -288,22 +288,25 @@ Near the draft cap the count is a must-have too: `enter open  250/256  esc clear
 | `▌` | the selected row (down the whole block of a plan opened in place in the plan list, §11), and the outline's title row when selected |
 | `+` | an action that creates: `+ New plan`, `+ New folder`, `+ Create 'x'` (green) |
 | `[PLAN]` | the place on screen: a pill, its brackets visible only without color |
+| `[PINNED]` | the outline's card for the task the agent set `active`: a yellow pill (§6) |
+| `[NEXT UP]` | the card for a pin Rex worked out, no task being active: a slate pill, yellow text (§6, §7) |
+| `╭─ … ─╮` | the PINNED card's box, in the pin's yellow (§6) |
 | `›` | between the crumbs of a page title (§4); `rex ›` starts Rex's own lines on AGENT (§10) |
 | `×N` | on AGENT, a run of N thoughts folded to its latest (§10) |
 | `✗` | on AGENT, a failed step or the turn's own error (§10) |
 | `[ASK]` | on AGENT, the agent waits on you: a red pill (§10) |
 
 **The five rules.**
-1. **A fill means "here".** Only the active tab's pill, the page-title bar, the selection and AGENT's `[ASK]` pill get a fill. A plan opened in place in the plan list has `▌` down its block, but only its own row is filled.
-2. **Each color has one meaning.** Yellow is the pin in PLAN (`▸` and its id on row 1, the `▸ <id>` in the plan list's accordion, the outline's pinned row) and live agent work on AGENT and in the turn word (`thinking`, `running`, commands, soft drift); cyan is you (the cursor, your prompts); red needs you; green creates something; orange is a folder. Yellow is also the `REX` brand (the mascot's color) and news: the `•` cue and row 1's toasts and new-plan offer. Titles, rules and parents are not yellow, except, until the outline's own redesign, its parent rows and Task detail's title and `retrospective` rule.
-3. **Three header levels, three devices.** H1 is the page title, a full-width slate bar on row 2. H2 is a bold label in capitals at column 0, a slate rule to the edge and optional muted meta (`HOW IT GOES ───`, `FEED ───`); from 16 rows a blank row goes above it (on the plan list, only where the selected plan keeps its lines with it, §12); what it heads is indented 2. H3 is a muted lowercase label in an 8-cell column with its value beside it.
+1. **A fill means "here".** Only the active tab's pill, the page-title bar, the selection, the `[PINNED]` / `[NEXT UP]` pill (the outline's card, task detail's status line, Help's MARKS) and AGENT's `[ASK]` pill get a fill. A plan opened in place in the plan list has `▌` down its block, but only its own row is filled.
+2. **Each color has one meaning.** Yellow is the pin in PLAN (`▸` and its id on row 1, the PINNED card and its edge, the outline's pinned row, which is its only yellow row, and the `▸ <id>` in the plan list's accordion) and live agent work on AGENT and in the turn word (`thinking`, `running`, commands, soft drift); cyan is you (the cursor, your prompts); red needs you; green creates something; orange is a folder. Yellow is also the `REX` brand (the mascot's color) and news: the `•` cue and row 1's toasts and new-plan offer. Titles, rules and parents are never yellow.
+3. **Three header levels, three devices.** H1 is the page title, a full-width slate bar on row 2. H2 is a bold label in capitals at column 0, a slate rule to the edge and optional muted meta (`HOW IT GOES ───`, `FEED ───`); from 16 rows a blank row goes above it (on the plan list, only where the selected plan keeps its lines with it, §12; on the outline, its collapse ladder decides, §6); what it heads is indented 2. H3 is a muted lowercase label in an 8-cell column with its value beside it.
 4. **Color never changes the characters.** Color and bold only add emphasis: a color frame stripped of its SGR is the NO_COLOR frame (a test checks every screen), except that the composer's placeholder takes parentheses without color (§2).
-5. **One left edge in PLAN.** Column 0 is the selection gutter and content starts at column 2; H2 labels are outdented to column 0. Rows 0 and 1, the footer and AGENT start at column 0.
+5. **One left edge in PLAN.** Column 0 is the selection gutter and content starts at column 2; H2 labels and the outline's PINNED card (its box, and the strip that stands in for it, §6) are outdented to column 0. Rows 0 and 1, the footer and AGENT start at column 0.
 
 Rules:
 - No glyph is an emoji, and the set avoids emoji-capable code points such as `▶`, `📌`, `⏎` and `↔`. Keys are words (§3).
 - Meaning is never carried by color alone. Under `NO_COLOR` every state still reads from its glyph and its words.
-- **Bold (SGR 1) is the only attribute** Rex adds: keys, the pill's word, the current crumb, H2 labels, the pin's `▸ id`, `ask` / `error`, and on AGENT the `thinking ×N` and `reply` labels, `rex ›` and a reply's headings. No dim, reverse or underline.
+- **Bold (SGR 1) is the only attribute** Rex adds: keys, the pill's word, the current crumb, H2 labels, the pin's `▸ id`, parents' rows, the card's and the details' titles, `ask` / `error`, and on AGENT the `thinking ×N` and `reply` labels, `rex ›` and a reply's headings. No dim, reverse or underline.
 - Color roles come from `mascot.UI`: `title`, `text`, `muted`, `accent` (commands), `you`, `pick`, `pickbg`, `folder`, `action`, `error`, `border`. No new palettes and no new roles: text on a fill uses `pickbg` as its ink.
 - Terminal.app has no 24-bit color. When `TERM_PROGRAM=Apple_Terminal` and `COLORTERM` is not `truecolor`/`24bit`, the same yellow palette is quantized to the 256-color cube and gray ramp, whichever is nearer; a pill's brackets go through the same map as its fill, so they stay invisible.
 
@@ -311,37 +314,30 @@ Rules:
 
 ## 6. Outline and detail
 
-Opening, creating or attaching a plan (§11) lands on its **Outline**.
+Opening, creating or attaching a plan (§11) lands on its **Outline**. It answers three questions at a glance: what is pinned, what a fresh chat needs to work it, and where every task stands.
 
-Mockup at 120×32 (78-col text column):
-
-```
-REX [PLAN] AGENT running         following rex/plans/cuj/sendoff-demo.rex.json
-▸ card-highlight  Selected plan card is one block                     1/3 done
-  PLANS › Send-off demo                                                active
-  last ✓ plans-ui: Home cards, browse, duplicate warn
-
-  ✓ plans-ui         Plans navigator · Create, open, browse rex/plans in the…
-▌ ▸ card-highlight   Selected plan card is one block · Bar, border, and fill…
-  · load-outline     Outline view · Show tasks       after card-highlight
-
-
-
-
-esc plans  tab agent  enter open  ? help  ↑↓ move
-```
-
-The same outline at 80×24 (38-col text column):
+The landing state at 80×24 (38-cell text column), the cursor on the pin:
 
 ```
-[PLAN] AGENT running  following …-demo
-▸ card-highlight  Selected plan card…
+[PLAN]•AGENT thinking  following …demo
+▸ card-highlight  Selected plan…   1/3
   PLANS › Send-off demo        active
-  last ✓ plans-ui: Home cards, brow…
+  A teammate opens this plan in Rex a…
 
+╭─[PINNED]─ card-highlight ──────────╮
+│ Selected plan card is one block    │
+│ does    Bar, border and fill cover │
+│         all three rows of the sel… │
+│ needs   the pick and pickbg color… │
+│ verify  go test ./internal/tui -r… │
+│         Open latest: ▌ on all thr… │
+│ files   plans.go  live.go  +1      │
+│ done    ✓ plans-ui  Home cards, f… │
+╰────────────────────────────────────╯
+
+TASKS ─────────────────────── 1/3 done
   ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan ca…
-▌     Bar, border, and fill cover t…
+▌ ▸ card-highlight Selected plan card…
   · load-outline   Outline view
 
 
@@ -349,23 +345,239 @@ The same outline at 80×24 (38-col text column):
 esc plans  tab agent  enter open  ?
 ```
 
-There is no composer: the rows a box would take go to the list (§2).
+The cursor on another task: the pin keeps its yellow `▸`, while the cyan `▌` and the fill mark the cursor, and under 60 cells the selected row's blurb gets a row of its own:
 
-Layout:
-- **The page title.** Row 2 reads `PLANS › <title>` with the plan's status on the right; its progress is on row 1 (§4). Once the list scrolls, ` · tasks <selected>/<total>` joins the status (e.g. `active · tasks 12/34`) while it fits. It is the title row: ↑ from the first task or Home selects it, and enter opens Plan detail (goal, stack base, scope in/out, plan problems).
-- **The last line.** It shows the last finished task's `accomplished` text, the most useful "where we left off" sentence for a teammate.
-- **Task order.**
-  - Tasks are listed in **file order**, never topologically sorted. Moving deps around never reshuffles the list.
-  - `parent` is shown as indentation, two levels at most. Deeper tasks get a `↳`.
-  - A parent shows a rollup (`1/3`) instead of a status glyph.
-  - **Only leaf tasks are pinned.** A parent marked `active` is only a label (§7).
-- **Blurbs.** Issue #7 asks for a small blurb on every task. At text widths of 60 or more, each row shows `title · blurb` (from `does`, else `description`), clipped. Below 60, rows show the title only, and the selected row gets the blurb on its own muted line. A blurb line under every row would double the list's height at 38×18.
-- **Scrolling.** The list keeps a two-row margin around the selection, and shows `↑ more` / `↓ more` when rows are hidden.
-- **Plan detail** (`PLANS › <title> › about`) and **Task detail** (`PLANS › <title> › <id>`, enter or → on a task) are scrolling sub-screens under their page titles:
-  - Task detail: its status (`next up` for a pin no task is `active` for), its title;
-  - parent, `depends_on` (each with its state), and dependents;
-  - does, needs, verify, files, branch, scope in/out, description;
-  - for a done task, the retrospective shown as intended (`does`) next to actual (`accomplished`, `modified`, `verified_how`, `completed_notes`).
+```
+TASKS ─────────────────────── 1/3 done
+  ✓ plans-ui       Plans navigator
+  ▸ card-highlight Selected plan card…
+▌ · load-outline   Outline view
+▌     Opening a plan shows its tasks,…
+```
+
+A plan with parents at 120×24 (78 cells): the title joins the card's edge, every row has its blurb, and the list scrolls, so `TASKS` says where the cursor is:
+
+```
+REX [PLAN]•AGENT thinking             following rex/plans/ux/redesign.rex.json
+▸ page-titles  Page titles and footer keys                            2/6 done
+  PLANS › Rex visual redesign                                          active
+  A newcomer always knows which tab and page they are on, what is pinned, and…
+
+╭─[PINNED]─ page-titles · Page titles and footer keys ───────────────────────╮
+│ does    Every screen opens with a title row that says where you are and    │
+│         where esc goes                                                     │
+│ needs   the tab bar on row 0                                               │
+│ verify  go test ./internal/tui -run PageTitle                              │
+│         tmux at 80×24: every screen names itself                           │
+│ files   chrome.go  outline.go  plans.go                                    │
+│ done    ✓ tab-bar  Two tabs on row 0, the active one filled                │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+TASKS ───────────────────────────────────────────────────────────────── 3 of 8
+    chrome         Chrome: tabs, page titles, keys                         1/2
+    ✓ tab-bar      Tab bar on row 0 · Two tabs on row 0, the active one filled
+▌   ▸ page-titles  Page titles and footer keys · Every screen opens w…  pinned
+  · agent-stream   Fold runs of thoughts · One row per set…  after page-titles
+    plan-views     Plan list and outline                                   0/2
+    · plan-list    Plan list groups and accordion · OPEN, …  after page-titles
+  ↓ more
+esc plans  tab agent  enter open  ? help  ↑↓ move
+```
+
+Shorter screens fold the head, never the tasks (the ladder, below): the compact card at 80×12, the page title and three tasks at 80×7, and the strip at 24 cells:
+
+```
+[PLAN]•AGENT thinking  following …demo
+▸ card-highlight  Selected plan…   1/3
+  PLANS › Send-off demo        active
+╭─[PINNED]─ card-highlight ──────────╮
+│ Selected plan card is one block    │
+│ does    Bar, border and fill cove… │
+╰────────────────────────────────────╯
+TASKS ─────────────────────── 1/3 done
+  ✓ plans-ui       Plans navigator
+▌ ▸ card-highlight Selected plan card…
+  · load-outline   Outline view
+esc plans  tab agent  enter open  ?
+```
+
+```
+[PLAN]•AGENT thinking  following …demo
+▸ card-highlight  Selected plan…   1/3
+  PLANS › Send-off demo        active
+  ✓ plans-ui       Plans navigator
+▌ ▸ card-highlight Selected plan card…
+  · load-outline   Outline view
+esc plans  tab agent  enter open  ?
+```
+
+```
+[PLAN]•AGENT thinking
+▸ card-highlight     1/3
+  PLANS › Send-off demo
+  A teammate opens this…
+
+[PINNED] card-highlight
+
+TASKS ────────────── 1/3
+  ✓ plans-ui Plans navi…
+▌ ▸ card-hi… Selected p…
+  · load-ou… Outline vi…
+esc plans  tab agent
+```
+
+There is no composer: the rows a box would take go to the outline (§2). Under NO_COLOR every frame has the same characters: `[PINNED]`, the box, `▸`, `▌` and the capital-letter headers carry every meaning.
+
+### Anatomy
+
+From the top, under rows 0 and 1:
+1. **The page title**, `PLANS › <title>`, with the plan's status as its meta (its progress is on row 1, §4). It is the **title row**: ↑ from the first task, or Home, selects it (`▌` and the selection's fill), and enter opens Plan detail.
+2. **The goal**, one muted row, clipped. Under it, in red, a `read-only: <reason>` line (conflict markers, a newer `version`) and `! 2 problems · enter on the title lists them`, each wrapped to at most two rows: a warning for whoever edits the file.
+3. **The PINNED card** (below), or the line that stands in for it. While the ladder keeps the blank rows, one goes above it, so with no goal the row under the page title is blank.
+4. **`TASKS`**, an H2 (§5) with the plan's progress as its meta, `1/3 done` (`1/3` under 30 cells). While the list scrolls it shows where the cursor is instead, `3 of 8` (on the title row it keeps the progress). Once the ladder drops `TASKS`, the page title's meta says where the cursor is (§4).
+5. **The task rows**, in file order.
+
+The goal, the warnings, the card and `TASKS` are the head: they stay put while the tasks under them scroll.
+
+### The PINNED card
+
+The card is **the send-off, kept in the plan**: what a fresh chat needs to work the pin, already on screen, read from the plan file. It is display only. Rex copies nothing; the agent reads the same file (§9).
+
+- **The box** spans the text column in the pin's yellow. Its top edge is `╭─[PINNED]─ <id> ───╮`: `[PINNED]` is a yellow pill (the agent's `active` task, §7), or `[NEXT UP]` on a slate pill with yellow text when the pin is worked out; the id is bold yellow. From 60 cells the title joins the edge (`<id> · <title>`) where at least 8 cells of it fit; narrower, or after a long id, it is the first row inside, in bold.
+- **Fields**, each an H3 label in an 8-cell column with its value, every row clipped with `…`:
+
+| Field | Content | Rows |
+|---|---|---|
+| `does` | `does` joined with ` · `, else `description` | ≤ 2 |
+| `needs` | `needs`, joined | 1 |
+| `verify` | one row per item; the last row shown ends in `+N` for the items it leaves out | ≤ 2 |
+| `files` | the paths if they all fit, else their names, as many as fit, then `+N` (a first name too long for the row is cut, so `+N` still shows) | 1 |
+| `done` | what it builds on: its last done leaf dependency in `depends_on` order, whether or not it says what it `accomplished` yet, else the plan's last done leaf; `✓ <id>  <accomplished>` (its title until it says). The plan list's accordion names the same task (§11). None when nothing is done | 1 |
+
+**A pin with no fields yet.** An agent's first save often has only an id and a title. The box is never empty: one muted row inside says `no does, verify or files yet · the agent adds them` (`no does, verify or files yet` where that doesn't fit, as at 80×24, and `no details yet` narrower still), under the title row below 60 cells.
+
+**When there is no card.** One muted line takes its place: `✓ all tasks done`, `no pin · nothing unblocked`, or, for a plan with no tasks, `No tasks yet · your agent fills this file` (with no `TASKS`). A plan that doesn't parse has no card: its page title's meta reads `can't read` (§4) and the body says why.
+
+**Two active tasks.** The card shows the first; the second keeps its `▸`, tagged `also active` in red, and row 1 warns (§4). An active task with no id is never the pin (its missing id is a problem): it is a plain `▸`, tagged only when the pin is active too.
+
+### The collapse ladder
+
+One function lays the outline out for its body rows (`outlineLayout`), and the selection's window reads what it laid out, so their edges agree. It wants 3 task rows in view, 5 from 16 rows, or every row of a shorter list, and while the head and those rows don't fit, it drops, in order:
+1. the card's `done` row;
+2. its `needs` row;
+3. the second rows of `does` and `verify`;
+4. the blank rows above the card (or the line that stands in for it) and above `TASKS`; with no goal, the card's blank row is the one under the page title, as on About and task detail;
+5. the goal;
+6. the card, for its **compact** form: the top edge, the title row (unless the title is on the edge), one row and the bottom edge, 4 rows, or 3 with the title on the edge. The row is the first `does` row; with no `does`, the first row of its first other field (`needs`, `verify`, `files`, `done`); with none, the muted row above;
+7. the compact card, for the **strip**: one row, `[PINNED] <id>  <title>`, no box (the title only where 8 cells are left for it). Under 30 cells the card is always the strip;
+8. `TASKS`;
+9. the strip, or the line that stands in for the card (row 1 still shows the pin);
+10. the problems line;
+11. the read-only line.
+
+The warnings go only for task rows: a plan with no tasks keeps them, cut to the rows there are, so even 7 rows say why it is read-only. The read-only line outranks the problems and the goal, so it is the last to go and the first given back.
+
+What fits again after a bigger step comes back: once the ladder has fit the head, it walks back over the steps it took, last first, and gives back each piece that now fits (the goal over the compact card, say). The page title is chrome (§4) and the selected row is in the list, so neither is ever dropped.
+
+The list holds still as the cursor moves. Whether it has a blank row between top-level groups (a parent and the tasks under it), which it gets only when the whole list fits, and whether it scrolls are decided without the selected row's blurb row, so moving the cursor never changes them. The blurb row takes only a row the list leaves over: one it doesn't fill, or, while it scrolls, one past its wanted task rows and both markers. `↑ more` and `↓ more` mark a list that goes on past its window, in rows of their own: never in place of one of the task rows the ladder kept, nor of the selection's margin, and where only one fits, `↓ more`. On the title row the list starts at its top and `↓ more` takes its last row: there is no cursor in it to keep in view. In practice, on the CUJ plan: 80×24 shows the whole card, 80×20 drops its `done` row, 80×16 the second rows and the blank rows too, with `needs` back in the room they leave, 80×12 shows the compact card (80×13 with the goal over it), 80×11 the strip with the goal over it, and 80×7 the page title over three tasks.
+
+### Rows
+
+- **Order and indent.** Tasks are listed in **file order**, never topologically sorted, so moving deps around never reshuffles the list. `parent` is shown as indentation, two levels at most; deeper tasks get a `↳`. **Only leaf tasks are pinned**: a parent marked `active` is only a label (§7).
+- **The pinned row** is the only yellow row: `▸` and its id in bold yellow, its title in text. From 60 cells it is tagged `pinned` (or `next up`) on the right, in yellow. It has no badge, so titles keep their room at 38 cells.
+- **The selected row** gets `▌` and the selection's fill; the pin keeps its yellow on the fill, so the pin and the cursor never look alike.
+- **Parents** are bold text, with no glyph and their rollup (`1/3`) muted on the right.
+- **Other rows.** `✓` and `–` rows are muted (`–` tagged `skipped`); `○` and `·` rows are text, `·` tagged `after <id>`; `!` rows are red, tagged `blocked`; a bad reference (`after ?T9`) or a cycle (`cycle`, never the pin) is red too. Under 60 cells only the red tags show; they show at every width, the id and title clipping first.
+- **Blurbs** (issue #7). From 60 cells each row is `title · blurb`, clipped: a done task's blurb is what it `accomplished`, the others' what it `does` (else its `description`). Under 60 cells rows are title-only and the selected row gets its blurb on a row of its own, filled, where the list leaves a row for it (above), except the pin while the card shows its `does`. A blurb under every row would double the list's height at 38×18.
+- **Scrolling.** The list keeps a two-row margin around the selection (one in a 3-row window). PgDn selects the task just past the last one the window shows under the head, and PgUp the task just before its first, so a page never skips a task the window didn't show, wherever the cursor was in it and whatever blurb row or marker the next window takes; from the title row, above the window, PgDn lands on the first task under it.
+
+### Details
+
+**Plan detail** (About; enter on the title row, `PLANS › <title> › about`) and **Task detail** (enter or → on a task, `PLANS › <title> › <id>`) are scrolling sub-screens. From 16 rows a blank row goes above their first line and each H2; their H3 labels share one column, 8 cells or wider where a label needs it (`changed  `); SCOPE's `in` / `out` pair has its own narrow column. Values keep the file's line breaks: each line of a `goal`, `description` or `completed_notes` starts a row (blank lines are dropped), and a field held to a few rows takes the rest into its last one, cut with `…`. Rows break at spaces and, as CJK text does, after a wide glyph; a run of narrow letters breaks only when it is longer than the row.
+
+About: the title in bold; `active · 1 of 3 done`, with a 20-cell progress bar from 60 cells; the plan's path, muted; then `GOAL`, `SCOPE` (`in` and `out`, bulleted), `STACK` (`base`), **`DONE`** (every done task, `✓ <id>  <accomplished>`, one row each: the send-off's Done section, kept in the plan; its meta counts them, `6 · 1 skipped` when the status line's count includes skipped tasks), and `PROBLEMS` and `READ-ONLY` in red, each only when it has something.
+
+```
+[PLAN] AGENT idle  following …off-demo
+▸ card-highlight  Selected plan…   1/3
+  PLANS › Send-off demo › about
+
+  Send-off demo
+  active · 1 of 3 done
+  rex/plans/cuj/sendoff-demo.rex.json
+
+GOAL ─────────────────────────────────
+  A teammate opens this plan in Rex
+  and sees what the work is and
+  which task the agent is on; a
+  fresh chat picks it up from the
+  plan file without rereading any
+  transcript.
+
+SCOPE ────────────────────────────────
+  in   • plan cards in the Library
+       • selection highlight
+  out  • extra palettes
+       • web UI
+
+  ↓ more
+esc outline  tab agent  ↑↓ scroll  ?
+```
+
+Task detail: a status line, then the title in bold.
+- **The status line** is the pin's badge and status, `[PINNED] active` or `[NEXT UP] pending`, or any other task's glyph and state: `○ ready`, `· waiting · after <id>`, `✓ done`, `– skipped`, `! blocked` (a parent: `1/2 done`), with `· under <parent>` when it has one.
+- **Not done:** `DOES`, `VERIFY` (its count as meta), `FILES` (its count, one path per row), `CONTEXT`, then `DESCRIPTION`. `CONTEXT` is H3 fields of at most two rows an item: `needs`; `after`, each dependency with its glyph and what it accomplished (else its title); `then`, the tasks that wait on it; `under`; `tasks`, a parent's; `branch`; `in` and `out`.
+- **Done:** `DONE` first, what actually happened (`did`, `changed`, `checked`, `notes`: `accomplished`, `modified`, `verified_how`, `completed_notes`), then `INTENDED` (`does`, `verify`, `files`), then `CONTEXT`.
+- **Not done, with completion fields** (the agent wrote some before it set the task `done`): the same fields close the screen under `SO FAR`, never `DONE`.
+
+```
+[PLAN] AGENT idle  following …off-demo
+▸ card-highlight  Selected plan…   1/3
+  PLANS › Send-off d… › card-highlight
+
+  [PINNED] active
+  Selected plan card is one block
+
+DOES ─────────────────────────────────
+  Bar, border and fill cover all
+  three rows of the selected card
+
+VERIFY ───────────────────────────── 2
+  • go test ./internal/tui -run
+    PlanCardSelection
+  • Open latest: ▌ on all three card
+    rows
+
+FILES ────────────────────────────── 3
+  internal/tui/plans.go
+  internal/tui/live.go
+  internal/tui/plans_test.go
+
+  ↓ more
+esc outline  tab agent  ↑↓ scroll  ?
+```
+
+A done task at 78 cells, body only:
+
+```
+
+  ✓ done
+  Plans navigator
+
+DONE ─────────────────────────────────────────────────────────────────────────
+  did      Home cards, folder browser, duplicate names refused
+  changed  internal/tui/plans.go
+           internal/tui/plans_test.go
+  checked  go test ./internal/tui -run Plan (passed)
+
+INTENDED ─────────────────────────────────────────────────────────────────────
+  does     Create, open and browse rex/plans in the TUI
+  verify   go test ./internal/tui -run Plan
+  files    internal/tui/plans.go
+
+CONTEXT ──────────────────────────────────────────────────────────────────────
+  then     ▸ card-highlight  Selected plan card is one block
+```
 
 ### Plan states
 
@@ -373,25 +585,25 @@ Rex never writes the plan, in any state.
 
 | State | What you see |
 |---|---|
-| No tasks (a new stub) | `No tasks yet · your agent fills this file` |
+| No tasks (a new stub) | `No tasks yet · your agent fills this file` instead of the card, and no `TASKS` |
 | Invalid JSON | row 1: `plan JSON error 14:3 · showing last good` |
 | Unreadable (no permission, a folder, too big) | row 1: `plan error: permission denied · showing last good`, the cause and never the file's absolute path; with no good copy yet the outline says `can't read this plan` and why |
 | File missing (branch switch) | `plan file missing · showing last good` |
-| Conflict markers / `version` newer than Rex | `read-only: <reason>` above the tasks (a warning for whoever edits it) |
-| Two `active` tasks | first one pinned; row 1 warns |
-| Bad reference | `after ?T9` in the error color; cycles are tagged `cycle` and are never the pin |
-| All done / nothing unblocked | `no pin · all tasks done` / `no pin · nothing unblocked` |
+| Conflict markers / `version` newer than Rex | `read-only: <reason>` in red under the goal (a warning for whoever edits it) |
+| Two `active` tasks | the card shows the first; the second is tagged `also active`; row 1 warns |
+| Bad reference | `after ?T9` in red; cycles are tagged `cycle` and are never the pin |
+| All done / nothing unblocked | `✓ all tasks done` / `no pin · nothing unblocked` instead of the card; row 1: `no pin · all tasks done` / `no pin · nothing unblocked` |
 
 Reload behaviour:
 - **Invalid JSON is debounced.** It shows only after it persists for two polls, because agents save files in pieces.
-- **Edits** (by the agent, a teammate's pull, or your editor) reload live. They show a toast, plus one line on AGENT such as `rex › plan · plans-ui → done · +1 task` (the plan's own status as `plan → done`; `edited` when nothing else changed; §10). This is how the agent's pins and dones arrive (§7, §8). When the reload fills a plan that had no tasks, the cursor moves to the pin (§1). Reading the plan never writes it.
+- **Edits** (by the agent, a teammate's pull, or your editor) reload live. They show a toast, plus one line on AGENT such as `rex › plan · plans-ui → done · +1 task` (the plan's own status as `plan → done`; `edited` when nothing else changed; §10). This is how the agent's pins and dones arrive (§7, §8): the card follows the pin. When the reload fills a plan that had no tasks, the cursor moves to the pin (§1). Reading the plan never writes it.
 
 ---
 
 ## 7. The agent pins
 
-- **The effective pin.** It is the first `active` leaf task, else the first `pending` leaf whose `depends_on` are all `done` or `skipped`. With no tasks there is no pin, and drift is off. Rex shows it on row 1 (`▸ <id>  <title>`, with `(next up)` when it is computed) and as `▸` in the outline, and judges drift against it (§9a).
-- **The agent writes it, Rex shows it.** Rex has no pin action. You ask your agent to work, continue or pick up the plan (or a task of it); the `rex-plan` skill has it set that leaf's `status` to `active`, set any other active leaf to `pending`, and the plan's own `status` to `active` if it was `pending` or `done` (never a parent's status: a parent marked `active` is only a label), and to save that first, before any other edit, so its edits are judged against the task it is on (§9a). Rex reloads the file within a poll and shows the move: a toast (`plan updated · card-highlight → active`), one `rex › plan` line on AGENT, row 1, the outline, and PLAN's cue while you are on AGENT.
+- **The effective pin.** It is the first `active` leaf task, else the first `pending` leaf whose `depends_on` are all `done` or `skipped`. With no tasks there is no pin, and drift is off. Rex shows it, and judges drift against it (§9a), in four places, all in the pin's yellow: row 1 (`▸ <id>  <title>`, with `(next up)` when it is computed, §4); the outline's PINNED card, `[PINNED]` for the agent's `active` task or `[NEXT UP]` for a computed one (§6); the outline's pinned row, its only yellow row; and the plan list's accordion (`pinned` / `next up`, §11).
+- **The agent writes it, Rex shows it.** Rex has no pin action. You ask your agent to work, continue or pick up the plan (or a task of it); the `rex-plan` skill has it set that leaf's `status` to `active`, set any other active leaf to `pending`, and the plan's own `status` to `active` if it was `pending` or `done` (never a parent's status: a parent marked `active` is only a label), and to save that first, before any other edit, so its edits are judged against the task it is on (§9a). Rex reloads the file within a poll and shows the move: a toast (`plan updated · card-highlight → active`), one `rex › plan` line on AGENT, row 1, the card and the outline, and PLAN's cue while you are on AGENT.
 - **How the agent knows the pinned task.** It re-reads the plan file at the start of every turn while it works the plan (the skill says so). Nothing is injected and no hook writes stdout, so it works the same for Claude Code, Cursor, Codex and OpenCode. You never copy anything from Rex into the agent.
 - **`~/.rex/state.json`** is outside the repo and never committed. It holds only the last plan opened (or attached) per repo root: the one the next start opens (§11). An older Rex also kept pin start times there; they are ignored and dropped on the next write. Each write re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries. Opening includes start's own landing and attach: a plan Rex opened because the agent wrote it becomes the repo's last plan too.
 - **Nothing is auto-claimed.** When the agent marks the pin done, Rex shows what is next up (§8), and the agent starts it only when you ask.
@@ -405,14 +617,17 @@ Rex has no completion form. When the agent finishes the task you asked for, the 
 What Rex shows when the file marks the pin done:
 - Row 1: `✓ card-highlight done · next up load-outline` for a few seconds (`· now load-outline` when the same save set that task `active`; `· the plan is done` once every leaf is `done` or `skipped`, even before the agent's next save sets the plan's own `status`; else `· nothing else is unblocked`), then `▸ load-outline  Outline view (next up)`. Narrow, the done id clips from the left so the next one stays, and the plan's progress yields rather than cost it a word (§4): `✓ …ghlight done · next up load-outline` at 38 cells. Agents finish in several saves, so a later save that moves no task's status and adds or removes none (only the completion fields, only the plan's own status) keeps this toast up until it expires; a save that moves a task is news of its own.
 - AGENT: one line per save, `rex › plan · card-highlight → done`, then e.g. `rex › plan · edited` or `rex › plan · plan → done`.
-- The outline: `✓` on the task and its `accomplished` as the `last ✓` line; the cursor stays where you left it (§1).
-- Task detail: the retrospective, intended (`does`) next to actual (`accomplished`, `modified`, `verified_how`, `completed_notes`).
+- The outline (§6): `✓` on the task, muted, its `accomplished` as its row's blurb from 60 cells; the card moves on to what is next (`[NEXT UP]`, or `[PINNED]` when the same save started it) and names the task it builds on in its `done` row; the cursor stays where you left it (§1).
+- About: `DONE` lists it with what it accomplished.
+- Task detail: `DONE` first, what actually happened (`accomplished`, `modified`, `verified_how`, `completed_notes`), then `INTENDED`, what it set out to do (`does`, `verify`, `files`).
 
 ---
 
 ## 9. The plan file is the hand-off
 
 There is no send-off or planning brief, no clipboard, and nothing to paste. A new chat continues the work when you ask your agent to continue the plan ("continue rex/plans/cuj/sendoff-demo.rex.json", or just "continue the plan"); the `rex-plan` skill tells it how: read the plan file, find the current task (the `active` leaf, else the first ready one), work only on it, re-read the file every turn, and write its status and retrospective back. Without a named plan it takes the one it worked in this conversation, else the plan whose own `status` is `active`. Everything a send-off used to carry (goal, scope, tasks, what was done, where a stacked PR goes) is in the JSON, so nothing can drift from it, and Rex copies nothing.
+
+**The send-off, kept in the plan.** What a send-off told a fresh chat is on screen, read from that same file: the outline's PINNED card (what the pin does and needs, how to verify it, its files, and the done task it builds on, §6) and About's `DONE` (every done task and what it accomplished). They show what the new chat will read; they are never copied, sent or pasted.
 
 Teaching an agent the format and this loop is `rex ingest --install-skill` (§10, docs/plan-format.md). The Wait screen says so when the skill is installed nowhere Rex knows, or a copy is from an older Rex (§11).
 
@@ -666,7 +881,7 @@ enter open  tab agent  ? help  ↑↓ move
   2. `goal`, on one row;
   3. `pinned` (the agent's active task) or `next up` (the pin worked out, §7), `▸ <id>  <title>`; else `✓ all done` (under the other values) or `no pin · nothing unblocked`;
   4. `then`: the next one or two unfinished leaves after the pin, with their glyphs (§5), and from 60 cells their titles;
-  5. `done`: the last done task and what it accomplished (`✓ plans-ui  Home cards, folder browser, …`).
+  5. `done`: the done task the pin builds on, as the PINNED card names it (§6): its last done dependency, else the plan's last done task, and what it accomplished (`✓ plans-ui  Home cards, folder browser, …`).
 
   A plan with no tasks says `no tasks yet · the agent adds them`, and one Rex can't read or parse `can't read: <why>`, in red: the cause (`permission denied`, `1:12: …`), never the file's path. When rows run short its lines drop (§12): `then` first, then `goal`, then under 60 cells `done` and the title, from 60 cells the status and `done`; the pin stays. Under 30 cells it is the title and `▸ <id>`, unlabeled. Folders and actions don't open. The list reads each plan once per version of its file, keyed by its path, modification time and size, when the list is built (opening it, a find or filter key, a write the agent reports, a change to the open plan): drawing it and moving the cursor read no files. The open plan is never read for it: its row and accordion, wherever they show, are the plan the outline shows (§6), its last good copy while a save is half-written, and `can't read` only once row 1 shows the error.
 - **No plans yet.** `PLANS` with `0 plans`, one sentence, `No plans in rex/plans/ yet. Type a name below, or ask your agent to write one.` (from 16 rows under a blank row, as on the Wait screen; at 7 rows it goes), then `+ New plan` (selected) and `+ New folder` (any folders above them). Start shows the Wait screen instead of this; Esc from it lands here, and Esc or ← goes back.
@@ -701,9 +916,10 @@ enter open  tab agent  ? help  ↑↓ move
 | ≥ 66 cols | mascot (40) + gutter (2) + text column (≥ 24) |
 | < 66 cols | **text only**: the mascot is hidden and the text column uses the full width |
 | text column ≥ 42 cols | row 0 starts with `REX` (120 columns, or a text-only terminal of 42–65); narrower, the mascot is the brand |
-| text column < 30 cols | an AGENT thought run is only `thinking ×N`, without its latest thought (§10); the plan list's accordion is the title and `▸ <id>`, unlabeled (§11) |
+| text column ≥ 60 cols | the outline's rows carry their blurbs and tags, and the PINNED card's title joins its edge (§6) |
+| text column < 30 cols | an AGENT thought run is only `thinking ×N`, without its latest thought (§10); the plan list's accordion is the title and `▸ <id>`, unlabeled (§11); the outline's PINNED card is always the strip, `[PINNED] <id>`, and `TASKS` reads `1/3` (§6) |
 | text column < 24 cols | `REX · widen to 24 cols`; keys other than Ctrl+C and Ctrl+L are ignored |
-| < 16 rows | the plan list's composer is one borderless row; no blank row goes above an H2 |
+| < 16 rows | the plan list's composer is one borderless row; no blank row goes above an H2 (on the outline the collapse ladder decides, §6); details have no blank rows; the outline wants 3 task rows in view, not 5 |
 | < 12 rows | AGENT has no page title: its body takes row 2, and its scroll count leads the footer (`12↑  end live …`). It has no blank rows, and a live thought run takes 1 row instead of 2 (§10) |
 | < 7 rows | the plan list's composer is hidden: printable keys and pastes are ignored there, so nothing is typed blind, and enter never submits its draft. Its footer says only what works: `type to find` / `type to filter` go, every enter goes but `enter open` on an empty draft (enter still opens the selected row), and `? help` goes while a hidden draft has text. Screens without a composer keep their keys and footers; `?` on an empty draft, and on screens without a composer, still opens Help |
 | `TERM=dumb`, pipes, CI | the static card (`rex start --static`) |
@@ -718,6 +934,8 @@ Body rows under the page title:
 | 7 | 3 | 2 | 4 (no page title) |
 
 The page title is chrome: it is never a body line, so the lines that stay put above a list and the selection margin never see it. A selection taller than the rows its list has shows its top, so a plan's own row is never the part cut.
+
+The outline's shape (§6) is one function of its body rows too, `outlineLayout`: its collapse ladder keeps the PINNED card whole at 80×24 and at 120×24; at 80×20 without its `done` row; at 80×16 without its second rows and the blank rows, its `needs` row back in the room they leave; compact (edges, title, one row) at 80×12, and at 120×11, where the title is on the edge, each with the goal over it a row taller; the strip at 80×11 and 120×10, the goal over it, and always under 30 cells; the strip without `TASKS` at 80×8; none at 7 rows, where the page title is over three tasks and says where the cursor is in a longer list.
 
 The plan list's shape (§11) is one function of its body rows, which the selection margin reads too:
 - its H2s need 5 body rows, so at 7 rows it is only rows: no H2, no blank row, no accordion;
@@ -739,7 +957,7 @@ Notes:
 `?` opens it at once from any screen (§2); `/help` then enter does too in the plan list. Its page title is the crumbs of the page under it, then `HELP` (`PLANS › Send-off demo › HELP`), and it keeps its place across Tab. It keeps `THIS PAGE` and its scroll while it is open: a plan the agent writes meanwhile opens under it (§11) without changing them, and Esc shows it. The crumbs follow the page under Help, so they always name where Esc goes (§4). Its sections, each under an H2:
 1. `THIS PAGE`, with the page's name as meta (`outline`, `about`, `task`, `plans`, `folder`, `new plan`, `new folder`, `waiting`, `agent`): the keys of the page it was opened over. Two pages have a note under the keys, with no key beside it: on `agent`, that folding is display only: the feed keeps every thought (§10); on `plans`, that the selected plan opens in place, with its goal, pin, what's next and what's done (§11).
 2. `EVERYWHERE`: `tab` (switch plan / agent), `?`, `ctrl+l`, `ctrl+c ×2`.
-3. `MARKS`: the plan glyphs of §5 (`▸`, `○ · ✓`, `– !`, a parent's `1/3`, the cursor `▌`), the cue (`•` `!`), and what `following` / `latched` mean (§11). AGENT's marks are under `AGENT TAB`.
+3. `MARKS`: the plan glyphs of §5 (`▸`, `○ · ✓`, `– !`, a parent's `1/3`, the cursor `▌`), the card's badges (`[PINNED]` the task your agent set active, `[NEXT UP]` nothing active: the first ready task, §6), the cue (`•` `!`), and what `following` / `latched` mean (§11). AGENT's marks are under `AGENT TAB`.
 4. `AGENT TAB`: how AGENT names its blocks (§10): `thinking` (a run of N thoughts, `×N`), `$`, `✗`, `[ASK]`, `reply ───`, `rex ›`.
 5. `PLAN LIST`: what typing does there (§2), `a/b`, Ctrl+U / Ctrl+W, `?` or `/help`, and `/breakdance`.
 6. `REX NEVER`: runs or approves tools, edits a plan (it only creates an empty one you name in the plan list), sends anything to your agent, or reads transcripts; your agent pins and finishes tasks in the file, and Rex shows it.
@@ -845,6 +1063,8 @@ This is what the 2026-10 audit found, from four lenses: first run, daily loop, t
 | F42 | high | AGENT is crowded with thinking spam: a `── thinking ──` rule over every run, each thought wrapped in full, a rule on every block (2026-10-24 feedback) | A run of thoughts is one row, `thinking ×N` and its latest (two while live); command runs over 5 fold to `$ … +N earlier` and the last 4; a failed step is one `✗` row; only a reply and the warm start keep a rule, the rest are named by their first characters; blank rows only around prompts and before replies and asks, none under 12 rows; folding is display only (§10) | `feature/agent_stream` |
 | F43 | high | The plan list is confusing and crowded: four cards (Continue, Create, Open, Open latest) over a recents list, so the open plan shows twice and a plan up to three times, Browse repeats the root, and nothing groups or spaces the rows (2026-10-24 feedback) | `OPEN` / `RECENT` / `FOLDERS` under H2s, each plan once, `RECENT` leading with the plans opened earlier in the run; a blank row above each H2 from 16 rows where the accordion keeps its lines; actions without brackets; FOLDERS replaces Browse's root, and `../`, Esc and ← from a top folder go back to the list (§11) | `feature/plan_list_groups` |
 | F44 | med | A plan's row says only its progress: what it is for, what is pinned and what got done take opening it (2026-10-24 feedback: details on hover) | The selected plan opens in place: title and status, `goal`, `pinned` / `next up`, `then`, `done`, dropping in a fixed order as rows run short, from a summary cached by path, modification time and size, so moving the cursor reads no files (§11, §12) | `feature/plan_list_groups` |
+| F45 | high | The pinned task isn't evident: the pin row, parents, Task detail's title and a rule were all yellow, and the pin and the cursor looked alike (2026-10-24 feedback: border, colour, "Pinned") | A PINNED card in the pin's yellow under the goal, `[PINNED]` / `[NEXT UP]` on its edge; the pinned row is the outline's only yellow row and keeps its yellow on the cursor's fill; parents are bold text; titles and rules are never yellow; done rows show what they accomplished (§5, §6) | `feature/outline_pin_card` |
+| F46 | high | A fresh chat's send-off isn't on screen: what to do, how to check it and what it builds on take opening the task, or the transcript (2026-10-24 feedback: "have the send off in the plan already") | The PINNED card shows it, read from the plan file (`does`, `needs`, `verify`, `files`, the done task it builds on), folding by a collapse ladder that never costs a task row and gives back what fits again; a pin with no fields yet says so inside the box; About's `DONE` lists every done task and what it accomplished. Rex still copies and sends nothing (§6, §9) | `feature/outline_pin_card` |
 
 Found in the same audit, outside the UI:
 

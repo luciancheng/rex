@@ -141,6 +141,8 @@ func helpLines(width int, page string, tall bool) []LogLine {
 	})
 	section("MARKS", "", []helpKey{
 		{what: "pinned: the active task, or next up", key: []Span{{Text: "▸", Role: "title", Bold: true}}},
+		{what: "the task your agent set active", key: pill("PINNED", "pickbg", "title")},
+		{what: "nothing active: the first ready task", key: pill("NEXT UP", "title", "border")},
 		{name: "○ · ✓", what: "ready · waiting on another task · done"},
 		{name: "– !", what: "skipped · blocked"},
 		{name: "1/3", what: "a parent's progress; on row 1, the plan's"},

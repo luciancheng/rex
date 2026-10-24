@@ -409,16 +409,6 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		body = opt.Overlay.Lines
 		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
 		fromTop = true
-	} else if opt.Pane == PanePlans && opt.PlanView != nil {
-		// The outline's top lines and warnings stay put; the
-		// tasks under them scroll.
-		head := headOf(opt.PlanView)
-		pinned = planHead(opt.PlanView[:head], len(opt.PlanView), bodyH)
-		body = opt.PlanView[head:]
-		bodyTop += len(pinned)
-		bodyH -= len(pinned)
-		scroll = min(opt.PlanScroll, max(0, len(body)-bodyH))
-		fromTop = true
 	} else if opt.Pane == PanePlans && opt.Plans != nil {
 		// The plan list's notice and error stay put; only the list under
 		// them scrolls.
@@ -430,6 +420,17 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		bodyH -= len(pinned)
 		scroll = opt.Plans.window(body, bodyH)
 		fromTop, list = true, true
+	} else if opt.Pane == PanePlans {
+		// Wait, or the open plan's screen, even an empty one. The
+		// outline's head stays put over its tasks; its collapse ladder
+		// already fit it to the rows (docs/ux.md §6).
+		head := min(headOf(opt.PlanView), bodyH)
+		pinned = opt.PlanView[:head]
+		body = opt.PlanView[head:]
+		bodyTop += len(pinned)
+		bodyH -= len(pinned)
+		scroll = min(opt.PlanScroll, max(0, len(body)-bodyH))
+		fromTop = true
 	} else {
 		body = opt.LogView
 		if body == nil {
@@ -626,16 +627,16 @@ type ComposeOptions struct {
 	Cue         string // the other place's news on the tab bar: "", "•" or "!"
 	Scroll      int
 	Pane        PaneKind
-	Plans       *PlanBrowser
-	LogView     []LogLine // laid-out AGENT stream, when the caller already has it
-	PlanRel     string    // open plan, repo-relative, for the header
-	Follow      string    // "following" or "latched" while a plan is open
+	Plans       *PlanBrowser // the plan list, set only while it is PLAN's screen
+	LogView     []LogLine    // laid-out AGENT stream, when the caller already has it
+	PlanRel     string       // open plan, repo-relative, for the header
+	Follow      string       // "following" or "latched" while a plan is open
 	Line        StatusLine
 	Page        *Page // row 2's page title; nil on AGENT under agentTitleRows rows
 	Overlay     *Overlay
 	Placeholder string      // dim hint in an empty composer
 	Preview     string      // what enter will do with the draft, shown in the footer
-	PlanView    []LogLine   // the open plan's screen, when PLAN shows it
+	PlanView    []LogLine   // Wait or the open plan's screen, when PLAN shows one
 	PlanScroll  int         // its first visible line
 	Footer      []FooterSeg // the screen's footer, when the caller has it
 }

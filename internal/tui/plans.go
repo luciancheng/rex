@@ -75,6 +75,7 @@ type PlanBrowser struct {
 	walk     planWalk
 	hints    map[string]planHint
 	findMore int // find matches past maxMatches, left out
+	total    int // what the page title counts: plans, matches, or the plans in and under this folder
 
 	inGit bool
 }
@@ -298,9 +299,39 @@ func (b *PlanBrowser) Rebuild() {
 	keep := b.selectedKey()
 	switch b.Screen {
 	case ScreenBrowse:
-		b.Rows = buildBrowseRows(b.Root, b.Dir, b.Filter)
+		b.Rows, b.findMore = buildBrowseRows(b.Root, b.Dir, b.Filter), 0
 	default:
 		b.Rows, b.findMore = buildHomeRows(b.plans(), b.Find, b.Continue)
+	}
+	b.total = 0
+	switch {
+	case b.Screen == ScreenBrowse:
+		// The plans in this folder and below (docs/ux.md §4), under the
+		// rows a filter leaves: a listed folder counts every plan in it.
+		listed := map[string]bool{}
+		for _, row := range b.Rows {
+			if row.Kind == PlanRowDir || row.Kind == PlanRowPlan {
+				listed[row.Path] = true
+			}
+		}
+		for _, p := range b.plans() {
+			rel, err := filepath.Rel(b.Dir, p.path)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				continue
+			}
+			if top, _, _ := strings.Cut(filepath.ToSlash(rel), "/"); listed[filepath.Join(b.Dir, top)] {
+				b.total++
+			}
+		}
+	case b.Find != "":
+		b.total = b.findMore
+		for _, row := range b.Rows {
+			if row.Kind == PlanRowPlan {
+				b.total++
+			}
+		}
+	default:
+		b.total = len(b.plans())
 	}
 	b.addHints()
 	switch {
@@ -901,24 +932,15 @@ func composerPrefix(opt ComposeOptions) string {
 	return " / "
 }
 
+// BuildPlanView is the plan list's body under its page title, which
+// names the screen (docs/ux.md §4): the folder it lists, a notice and an
+// error, then the list.
 func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 	if width <= 0 || b == nil {
 		return nil
 	}
 	inner := max(1, width-2)
-	title := "plans"
-	switch {
-	case b.Screen == ScreenBrowse:
-		title = "open"
-	case b.Screen == ScreenCreate:
-		title = "create"
-	case b.Screen == ScreenFolder:
-		title = "folder"
-	case b.Find != "":
-		title = "find"
-	}
 	lines := []LogLine{
-		{Kind: "command", Text: rule(title, width)},
 		{Kind: "folder", Text: "  " + clip(b.RelDir(), inner)},
 		{Kind: "gap", Text: ""},
 	}
@@ -1047,11 +1069,11 @@ func fitNotice(notice string, width int) string {
 	return variants[len(variants)-1]
 }
 
-// headLen is how many lines BuildPlanView puts above the list: the title
-// rule, the folder, a gap, then the notice and the error with their gaps.
-// They don't scroll with the list.
+// headLen is how many lines BuildPlanView puts above the list: the
+// folder, a gap, then the notice and the error with their gaps. They
+// don't scroll with the list.
 func (b *PlanBrowser) headLen() int {
-	n := 3
+	n := 2
 	if b.Notice != "" {
 		n += 2
 	}
@@ -1063,16 +1085,16 @@ func (b *PlanBrowser) headLen() int {
 
 // planHead is the part of head that stays on screen above a list of total
 // lines in viewH rows. When the list would get fewer than three rows, the
-// gaps go first, then the folder and title; the error and notice stay
-// longest, so ⏎ on a far-down row still says what went wrong.
+// gaps go first, then the folder; the error and notice stay longest, so
+// enter on a far-down row still says what went wrong.
 func planHead(head []LogLine, total, viewH int) []LogLine {
 	if total <= viewH || viewH-len(head) >= 3 {
 		return head
 	}
 	keep := max(0, viewH-3)
-	rank := map[string]int{"error": 1, "idle": 2, "command": 3, "folder": 4}
+	rank := map[string]int{"error": 1, "idle": 2, "folder": 3}
 	picked := make([]bool, len(head))
-	for r, n := 0, 0; r <= 4 && n < keep; r++ {
+	for r, n := 0, 0; r <= 3 && n < keep; r++ {
 		for i, line := range head {
 			got, ok := rank[line.Kind]
 			if line.Selected {
@@ -1101,7 +1123,8 @@ func (b *PlanBrowser) window(body []LogLine, viewH int) int {
 }
 
 // windowStart is window for any list with Selected lines: prev is the
-// first line shown last frame.
+// first line shown last frame. A selection taller than the window shows
+// its top, so a card's title row stays on screen at 7 rows.
 func windowStart(body []LogLine, viewH, prev int) int {
 	if viewH <= 0 || len(body) <= viewH {
 		return 0
@@ -1118,11 +1141,11 @@ func windowStart(body []LogLine, viewH, prev int) int {
 	start := min(prev, len(body)-viewH)
 	if first >= 0 {
 		margin := min(2, max(0, (viewH-(last-first+1))/2))
-		if first-margin < start {
-			start = first - margin
-		}
 		if last+margin >= start+viewH {
 			start = last + margin - viewH + 1
+		}
+		if first-margin < start {
+			start = first - margin
 		}
 	}
 	return max(0, min(start, len(body)-viewH))

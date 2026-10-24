@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -122,6 +123,7 @@ func (a *app) planWritten() bool {
 	}
 	if !a.follow {
 		a.offer = w
+		a.light(PanePlans, "•")
 		return true
 	}
 	a.attach(w)
@@ -132,6 +134,7 @@ func (a *app) planWritten() bool {
 // are doing would be lost. It reports whether anything changed.
 func (a *app) attach(path string) bool {
 	if a.attachBlocked() {
+		a.light(PanePlans, "•") // held, PLAN has news (docs/ux.md §4)
 		changed := a.pending != path
 		a.pending = path
 		return changed
@@ -139,10 +142,11 @@ func (a *app) attach(path string) bool {
 	a.plans.walk = planWalk{}
 	a.plans.open(path)
 	a.openedPlan()
+	a.markOpened()
 	name := a.planLabel(path)
 	a.flash("following "+name, "accent")
-	// An event moved PLAN, so the tape keeps a record of it (Rex's own
-	// line, never the feed).
+	// An event moved PLAN, so the AGENT tab keeps a record of it (Rex's
+	// own line, never the feed).
 	a.tapeLine("plan", "following "+name)
 	return true
 }
@@ -182,7 +186,7 @@ func (a *app) offerHeld(held string) {
 	}
 }
 
-// takeOffer is ⏎ on an empty draft while row 1 offers a plan: open it
+// takeOffer is enter on an empty draft while row 1 offers a plan: open it
 // and follow again. It does nothing where offerTakes says no.
 func (a *app) takeOffer() bool {
 	if !a.offerTakes() {
@@ -198,15 +202,28 @@ func (a *app) takeOffer() bool {
 	if !a.isOpen(f) {
 		a.plans.open(f)
 		a.openedPlan()
+		a.markOpened()
 	}
 	a.follow = true
 	return true
 }
 
-// offerTakes: ⏎ takes the offer here, which is only while row 1 shows it
+// markOpened lights PLAN's cue for a plan opened while AGENT is on screen
+// (docs/ux.md §4): `!` when it can't be read, since its first open shows
+// the error at once and no poll will say so; else `•`, which also puts
+// out the `!` of the plan it replaced.
+func (a *app) markOpened() {
+	if _, bad := docStatus(a.doc); bad {
+		a.light(PanePlans, "!")
+	} else if a.pane != PanePlans {
+		a.unseen[PanePlans] = "•"
+	}
+}
+
+// offerTakes: enter takes the offer here, which is only while row 1 shows it
 // (docs/ux.md §4): not under the plan file's error, a toast or hard
-// drift. Not in the Library either, where ⏎ opens the selected row, nor
-// in Help, nor while an attach would be held, since opening the plan
+// drift. Not in the plan list either, where enter opens the selected row,
+// nor in Help, nor while an attach would be held, since opening the plan
 // would drop the plan list's draft or a Name prompt.
 func (a *app) offerTakes() bool {
 	if _, over := a.overOffer(); over {
@@ -238,18 +255,19 @@ func (a *app) offerStatus() (StatusLine, bool) {
 	case a.offer == "":
 		return StatusLine{}, false
 	case a.offerCan():
-		tail, short = " · ⏎ switch", " · ⏎ switch"
+		tail = " · enter switch" // narrow, the footer still says it
 	}
 	name := a.planLabel(p)
-	return StatusLine{Text: "new plan " + name + tail, Kind: "accent", Fit: func(w int) string { return fitNewPlan(name, tail, short, w) }}, true
+	return StatusLine{Text: "new plan " + name + tail, Kind: "accent", Fit: func(w int) string { return fitNewPlan(name, tail, short, w) }, Spans: keySpans}, true
 }
 
 // fitNewPlan fits "new plan <name><tail>" into width cells: the name is
 // clipped from the left ("…demo") down to headPathMin cells, then short
-// takes tail's place, and only then does the name go.
+// takes tail's place, then the name stands alone, and only then does it
+// go.
 func fitNewPlan(name, tail, short string, width int) string {
 	const head = "new plan "
-	for _, t := range []string{tail, short} {
+	for _, t := range []string{tail, short, ""} {
 		room := width - cellLen(head) - cellLen(t)
 		if cellLen(name) <= room {
 			return head + name + t
@@ -304,16 +322,17 @@ func (a *app) land() {
 	a.openedPlan()
 	// An older Rex's skill still teaches that Rex's workflow (the person
 	// marks tasks done in Rex), and an upgrader lands here, not on the Wait
-	// screen that says so. It wins over the Library's notice, which the
-	// Library still shows; Help shows the skill too. A missing skill isn't
-	// news: Wait and Help say so.
+	// screen that says so. It wins over the plan list's notice, which the
+	// plan list still shows; Help shows the skill too. A missing skill
+	// isn't news: Wait and Help say so.
 	switch c, n := a.skill.look(a.plans.Repo, a.now()), a.plans.Notice; {
 	case c == skill.Stale || c == skill.StaleProject:
 		a.flash(skillHint(c), "accent")
 		a.toast.Short = "rex-plan skill out of date · ? help"
+		a.toast.Spans = keySpans
 	case n != "":
-		// The Library's notice (outside git, an old rex-plans/) is news at
-		// start, which no longer shows the Library.
+		// The plan list's notice (outside git, an old rex-plans/) is news
+		// at start, which no longer shows the plan list.
 		a.flash(n, "muted")
 		a.toast.Fit = func(w int) string { return fitNotice(n, w) }
 	}
@@ -335,35 +354,146 @@ func (a *app) scanPlans() bool {
 }
 
 // waitBody is PLAN before any plan is open (docs/ux.md §11): Rex waits
-// for the agent to write one. With plans off it says only that and how
-// to turn them on; outside git it names the folder plans go to; with the
-// rex-plan skill nowhere an agent reads it, or an older Rex's copy there,
-// it says how to install it.
-func (a *app) waitBody(width int) []LogLine {
+// for the agent to write one. The headline never goes; under it the plan
+// list's notice, how a plan gets here, the keys, and how to teach the
+// agent the format while the rex-plan skill is missing or an older Rex's.
+// On a short screen the blank rows go first, then the key rows, then HOW
+// IT GOES, then the long skill hint gives way to a short one, which never
+// goes: what still doesn't fit scrolls. With plans off it says only that
+// and how to turn them on.
+func (a *app) waitBody(width, h int) []LogLine {
 	if width <= 0 {
 		return nil
 	}
 	inner := max(1, width-2)
-	lines := []LogLine{{Kind: "command", Text: rule("plan", width)}}
 	n := a.plans.Notice
 	if n == rexFileNotice {
-		lines = append(appendWrapped(lines, "text", n, inner), LogLine{Kind: "gap"})
-		return appendWrapped(lines, "idle", "A file named rex sits where the rex/plans/ folder goes. Move it to turn plans on; Rex never deletes it.", inner)
+		lines := append(appendWrapped(nil, "text", n, inner), LogLine{Kind: "gap"})
+		lines = appendWrapped(lines, "idle", "A file named rex sits where the rex/plans/ folder goes. Move it to turn plans on; Rex never deletes it.", inner)
+		if len(lines) < h {
+			lines = append([]LogLine{{Kind: "gap"}}, lines...)
+		}
+		return lines
 	}
-	lines = appendWrapped(lines, "text", noPlanText, inner)
+	var head []LogLine
+	for _, row := range wrap(noPlanText, max(1, inner-2)) {
+		head = append(head, spanLine("text", Span{Text: "  "}, Span{Text: row, Bold: true}))
+	}
 	if n != "" {
-		lines = append(lines, LogLine{Kind: "idle", Text: "  " + clip(fitNotice(n, inner), inner)})
+		head = append(head, LogLine{Kind: "idle", Text: "  " + clip(fitNotice(n, inner), inner)})
 	}
-	where := "rex/plans/"
-	if !a.plans.inGit {
-		where = homePath(a.plans.Root) + "/"
+	// Outside git the notice above names the folder, so the step keeps the
+	// short path.
+	how := []LogLine{h2Line("HOW IT GOES", "", width)}
+	for i, step := range []string{"you ask your agent to plan the work", "it writes rex/plans/<name>.rex.json", "Rex opens it here and follows it"} {
+		for j, row := range wrapPath(step, max(1, width-5)) {
+			lead := "     "
+			if j == 0 {
+				lead = fmt.Sprintf("  %d  ", i+1)
+			}
+			how = append(how, LogLine{Kind: "text", Text: lead + row})
+		}
 	}
-	lines = append(lines, LogLine{Kind: "gap"})
-	lines = appendWrapped(lines, "idle", "Rex opens "+where+"<name>.rex.json here as soon as your agent writes it.", inner)
-	if hint := skillHint(a.skill.look(a.plans.Repo, a.now())); hint != "" {
-		lines = appendWrapped(lines, "idle", hint, inner)
+	var keys []LogLine
+	for _, k := range [][2]string{{"esc", "open a plan that already exists"}, {"tab", "watch the agent"}} {
+		for j, row := range wrap(k[1], max(1, width-7)) {
+			if j > 0 {
+				keys = append(keys, LogLine{Kind: "muted", Text: "       " + row})
+				continue
+			}
+			keys = append(keys, spanLine("muted", Span{Text: "  "}, Span{Text: k[0], Role: "text", Bold: true}, Span{Text: "  " + row}))
+		}
 	}
-	return lines
+	long, short := skillLines(a.skill.look(a.plans.Repo, a.now()), width)
+	gap := []LogLine{{Kind: "gap"}}
+	join := func(parts ...[]LogLine) []LogLine {
+		var out []LogLine
+		for _, p := range parts {
+			out = append(out, p...)
+		}
+		return out
+	}
+	for _, v := range [][]LogLine{
+		join(gap, head, gap, how, gap, keys, gap, long),
+		join(head, how, keys, long),
+		join(head, how, long),
+		join(head, long),
+	} {
+		if len(v) <= h {
+			return v
+		}
+	}
+	return join(head, short) // and if even that doesn't fit, it scrolls
+}
+
+// skillLines are the wait screen's hint about the rex-plan skill, muted
+// with the command to run in text (docs/ux.md §11): long, on one line
+// where it fits and a lead over the command where it doesn't; and short.
+// The command wraps rather than clips, so it can still be read. Both are
+// nil while every copy agents read is this Rex's.
+func skillLines(c skill.Copy, width int) (long, short []LogLine) {
+	hint := skillHint(c)
+	if hint == "" {
+		return nil, nil
+	}
+	inner := max(1, width-2)
+	say, cmd, _ := strings.Cut(hint, " · ")
+	command := func(lines []LogLine) []LogLine {
+		for _, row := range wrap(cmd, inner) {
+			lines = append(lines, LogLine{Kind: "text", Text: "  " + row})
+		}
+		return lines
+	}
+	line := func(lead string) LogLine {
+		return spanLine("muted", Span{Text: "  " + lead}, Span{Text: cmd, Role: "text"})
+	}
+	if cellLen(say+" · "+cmd) <= inner {
+		long = []LogLine{line(say + " · ")}
+	} else {
+		leads := []string{say + ":"}
+		if c == skill.Missing {
+			leads = []string{"agents learn the plan format from the rex-plan skill:", say + ":"}
+		}
+		// The first lead that fits a row, else the first wrapped with no
+		// word left alone above the command.
+		w := max(1, inner-2)
+		rows := unwidow(wrap(leads[0], w), w)
+		for _, lead := range leads {
+			if cellLen(lead) <= w {
+				rows = []string{lead}
+				break
+			}
+		}
+		for _, row := range rows {
+			long = append(long, LogLine{Kind: "muted", Text: "  " + row})
+		}
+		long = command(long)
+	}
+	verb := "update:"
+	if c == skill.Missing {
+		verb = "teach it:"
+	}
+	if cellLen(verb+" "+cmd) <= inner {
+		return long, []LogLine{line(verb + " ")}
+	}
+	return long, command([]LogLine{{Kind: "muted", Text: "  " + verb}})
+}
+
+// unwidow moves the next-to-last row's last word down when the last row
+// would be one word alone and the pair still fits width.
+func unwidow(rows []string, width int) []string {
+	n := len(rows)
+	if n < 2 || strings.Contains(rows[n-1], " ") {
+		return rows
+	}
+	i := strings.LastIndex(rows[n-2], " ")
+	if i < 0 {
+		return rows
+	}
+	if moved := rows[n-2][i+1:] + " " + rows[n-1]; cellLen(moved) <= width {
+		rows[n-2], rows[n-1] = rows[n-2][:i], moved
+	}
+	return rows
 }
 
 // skillHint is what to do about the rex-plan skill, or "" when every copy
@@ -399,11 +529,12 @@ func (s *skillSeen) look(repo string, now time.Time) skill.Copy {
 
 // waitFooter is the wait screen's footer (docs/ux.md §4); more says the
 // copy runs past the screen.
-func (a *app) waitFooter(more bool) []string {
+func waitFooter(more bool) []FooterSeg {
+	out := []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, helpSeg}
 	if more {
-		return []string{"no plan", "esc plans", "tab tape", "↑↓ scroll", "? help"}
+		out = append(out, FooterSeg{Text: "↑↓ scroll"})
 	}
-	return []string{"no plan", "esc plans", "tab tape", "? help"}
+	return out
 }
 
 // waitKey handles keys on the wait screen, which has no composer: ↑↓ and

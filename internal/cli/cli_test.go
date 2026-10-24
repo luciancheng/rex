@@ -82,16 +82,16 @@ func TestComposeFramePutsTextRightOfMascot(t *testing.T) {
 		Enabled: false, Columns: 80, Lines: 24,
 	})
 	line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
-	if !strings.Contains(line, "REX") {
-		t.Fatalf("missing REX: %q", line)
+	if !strings.Contains(line, "PLAN [AGENT]") {
+		t.Fatalf("missing the tab bar: %q", line)
 	}
-	if strings.Index(line, "REX") < mascot.StageSize {
-		t.Fatalf("REX not right of mascot: %q", line)
+	if strings.Index(line, "PLAN") < mascot.StageSize {
+		t.Fatalf("tab bar not right of mascot: %q", line)
 	}
 	wide := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
 		Enabled: false, Columns: 120, Lines: 24,
 	})
-	if !strings.Contains(wide, "ctrl+c×2 quit") {
+	if !strings.Contains(wide, "REX PLAN [AGENT]") || !strings.Contains(wide, "ctrl+c ×2 quit") {
 		t.Fatal("missing quit hint when the footer has room")
 	}
 	if strings.Contains(frame, "q quit") {
@@ -181,7 +181,7 @@ func TestComposeFrameScrollsOlderEvents(t *testing.T) {
 	if !strings.Contains(older, "block-00") {
 		t.Fatal("older missing oldest")
 	}
-	if !strings.Contains(older, "↑ · end live") {
+	if !strings.Contains(older, "↑  end live") {
 		t.Fatal("missing scroll footer")
 	}
 }
@@ -191,7 +191,7 @@ func TestComposeFrameStaysTopAlignedWhenShort(t *testing.T) {
 		Enabled: false, Columns: 80, Lines: 6,
 	})
 	line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
-	if strings.Index(line, "REX") < mascot.StageSize {
+	if strings.Index(line, "PLAN") < mascot.StageSize {
 		t.Fatalf("not top aligned: %q", line)
 	}
 	if len(strings.Split(frame, "\n")) > 7 {

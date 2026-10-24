@@ -13,76 +13,138 @@ const (
 // it open there; Esc closes it.
 type Overlay struct {
 	Lines  []LogLine
-	Footer []string
+	Footer []FooterSeg
 	Scroll int
 }
 
-// helpLines wraps every row to width: at 50+ cells the key sits left of
-// its description, narrower it sits above it.
-func helpLines(width int) []LogLine {
+// helpKeyCol is Help's key column: the key and its padding.
+const helpKeyCol = 11
+
+// helpKey is one row of Help: a key (or a mark) and what it does. key
+// overrides the key's look, for marks that keep their own colors.
+type helpKey struct {
+	name, what string
+	key        []Span
+}
+
+// pageKeys is THIS PAGE in Help: the keys of the page it was opened over
+// (docs/ux.md §13).
+var pageKeys = map[string][]helpKey{
+	"outline": {
+		{name: "enter", what: "open the selected task; on the title row, about"},
+		{name: "→", what: "open the selected task"},
+		{name: "↑↓", what: "move · pgup pgdn a page"},
+		{name: "home end", what: "first / last row"},
+		{name: "esc ←", what: "back to PLANS"},
+	},
+	"about": {
+		{name: "↑↓", what: "scroll · pgup pgdn a page"},
+		{name: "home end", what: "top / bottom"},
+		{name: "esc ←", what: "back to the outline"},
+	},
+	"plans": {
+		{name: "enter", what: "open the selected plan, or create one"},
+		{name: "↑↓", what: "move · pgup pgdn a page"},
+		{name: "home end", what: "first / last"},
+		{name: "type", what: "find a plan across rex/plans"},
+		{name: "esc ←", what: "with no plan open, back to waiting"},
+	},
+	"folder": {
+		{name: "enter", what: "open the plan, or go into the folder"},
+		{name: "→", what: "into the folder"},
+		{name: "↑↓", what: "move · pgup pgdn a page"},
+		{name: "type", what: "filter this folder"},
+		{name: "esc ←", what: "up a folder; at the top, back to PLANS"},
+	},
+	"new plan": {
+		{name: "enter", what: "create it and open its outline"},
+		{name: "type", what: "its name; a/b makes plan b in folder a"},
+		{name: "esc", what: "clear the name, else cancel: nothing is written"},
+	},
+	"new folder": {
+		{name: "enter", what: "create it and go into it"},
+		{name: "type", what: "its name; a/b makes b inside a"},
+		{name: "esc", what: "clear the name, else cancel: nothing is written"},
+	},
+	"waiting": {
+		{name: "esc ←", what: "the plan list: open or create a plan yourself"},
+		{name: "↑↓", what: "scroll this page on a short screen"},
+	},
+	"agent": {
+		{name: "↑↓", what: "scroll · pgup pgdn a page"},
+		{name: "home", what: "oldest (also ctrl+a)"},
+		{name: "end", what: "live (also ctrl+e)"},
+		{name: "enter", what: "switch PLAN to a new plan row 1 offers"},
+	},
+}
+
+// helpLines is Help (docs/ux.md §13): THIS PAGE, for the page it opened over,
+// then what holds everywhere, the marks, the plan list's typing and what
+// Rex never does; the feed's health follows. tall puts a blank row above
+// each section. From 34 cells the key sits in an 11-cell column left of
+// what it does; narrower it sits above it.
+func helpLines(width int, page string, tall bool) []LogLine {
 	var lines []LogLine
-	text := func(indent, s string) {
-		for _, w := range wrap(s, max(8, width-cellLen(indent))) {
-			lines = append(lines, LogLine{Kind: "text", Text: indent + w})
+	section := func(label, meta string, keys []helpKey) {
+		if tall {
+			lines = append(lines, LogLine{Kind: "gap"})
 		}
-	}
-	row := func(key, what string) []LogLine {
-		start := len(lines)
-		if width >= 50 {
-			for i, w := range wrap(what, width-16) {
-				lead := "                "
-				if i == 0 {
-					lead = "  " + padRight(key, 14)
-				}
-				lines = append(lines, LogLine{Kind: "text", Text: lead + w})
+		lines = append(lines, h2Line(label, meta, width))
+		for _, k := range keys {
+			key := k.key
+			if key == nil {
+				key = []Span{{Text: k.name, Role: "text", Bold: true}}
 			}
-		} else {
-			lines = append(lines, LogLine{Kind: "text", Text: "  " + key})
-			text("    ", what)
+			name := spanText(key)
+			if width < 34 || cellLen(name) >= helpKeyCol {
+				lines = append(lines, spanLine("text", append([]Span{{Text: "  "}}, key...)...))
+				for _, w := range wrap(k.what, max(8, width-4)) {
+					lines = append(lines, LogLine{Kind: "muted", Text: "    " + w})
+				}
+				continue
+			}
+			for i, w := range wrap(k.what, width-2-helpKeyCol) {
+				if i == 0 {
+					spans := append(append([]Span{{Text: "  "}}, key...), Span{Text: padRight("", helpKeyCol-cellLen(name)) + w, Role: "muted"})
+					lines = append(lines, spanLine("text", spans...))
+					continue
+				}
+				lines = append(lines, LogLine{Kind: "muted", Text: padRight("", 2+helpKeyCol) + w})
+			}
 		}
-		out := append([]LogLine(nil), lines[start:]...)
-		lines = lines[:start]
-		return out
 	}
-	head := func(s string) LogLine { return LogLine{Kind: "idle", Text: "  " + s} }
-	rows := []any{
-		LogLine{Kind: "command", Text: rule("help", width)},
-		head("keys act at once"),
-		row("tab", "switch plan ↔ tape"),
-		row("↑↓ pgup pgdn", "move, or scroll"),
-		row("← →", "back / in: a folder, or a task's detail"),
-		row("home end", "first / last; tape: oldest / live"),
-		row("⏎", "open the selection, or switch to a plan row 1 offers"),
-		row("esc", "back one level (in the plan list, clear first)"),
-		row("?", "this screen"),
-		row("ctrl+a ctrl+e", "tape: oldest / live"),
-		row("ctrl+l", "repaint"),
-		row("ctrl+c ×2", "quit"),
-		LogLine{Kind: "gap"},
-		head("plan list: type, then ⏎"),
-		row("text", "find a plan, filter a folder, or name a new plan"),
-		row("ctrl+u ctrl+w", "clear the line / delete a word"),
-		row("/help", "this screen"),
-		row("/breakdance", "one dance"),
-		LogLine{Kind: "gap"},
-		head("rex never"),
-		"runs or approves tools, sends anything to your agent, reads transcripts, or writes your plan (only a new empty one you create in the list). Your agent pins and finishes tasks in the plan file; Rex shows it.",
-		LogLine{Kind: "gap"},
-		head("outline"),
-		row("▸ ○ ·", "pinned / ready / waiting (after another task)"),
-		row("✓ – !", "done / skipped / blocked; 1/3 a parent's progress"),
-		row("following", "Rex opens each plan file your agent writes"),
-		row("latched", "you picked this plan in the list; another the agent writes shows on row 1, ⏎ switches"),
+	keys := pageKeys[page]
+	if page == "task" {
+		keys = pageKeys["about"]
 	}
-	for _, r := range rows {
-		switch v := r.(type) {
-		case LogLine:
-			lines = append(lines, v)
-		case []LogLine:
-			lines = append(lines, v...)
-		case string:
-			text("  ", v)
-		}
+	section("THIS PAGE", page, keys)
+	section("EVERYWHERE", "", []helpKey{
+		{name: "tab", what: "switch plan / agent"},
+		{name: "?", what: "this help"},
+		{name: "ctrl+l", what: "repaint"},
+		{name: "ctrl+c ×2", what: "quit"},
+	})
+	section("MARKS", "", []helpKey{
+		{what: "pinned: the active task, or next up", key: []Span{{Text: "▸", Role: "title", Bold: true}}},
+		{name: "○ · ✓", what: "ready · waiting on another task · done"},
+		{name: "– !", what: "skipped · blocked"},
+		{name: "1/3", what: "a parent's progress; on row 1, the plan's"},
+		{what: "your cursor", key: []Span{{Text: "▌", Role: "pick"}}},
+		{what: "news on the other tab (! an ask or an error)", key: []Span{{Text: "•", Role: "accent", Bold: true}, {Text: " "}, {Text: "!", Role: "error", Bold: true}}},
+		{name: "following", what: "Rex opens each plan your agent writes"},
+		{name: "latched", what: "you picked this plan; another the agent writes shows on row 1, and enter switches"},
+	})
+	section("PLAN LIST", "", []helpKey{
+		{name: "type", what: "find a plan, filter a folder, or name a new one"},
+		{name: "a/b", what: "plan b in folder a"},
+		{name: "ctrl+u", what: "clear the line"},
+		{name: "ctrl+w", what: "delete a word"},
+		{name: "? /help", what: "this help (? on an empty line)"},
+		{name: "/breakdance", what: "one dance"},
+	})
+	section("REX NEVER", "", nil)
+	for _, w := range wrap("runs or approves tools, edits a plan (it only creates an empty one you name in the plan list), sends anything to your agent, or reads transcripts. Your agent pins and finishes tasks in the plan file; Rex shows it.", max(8, width-2)) {
+		lines = append(lines, LogLine{Kind: "text", Text: "  " + w})
 	}
 	return lines
 }

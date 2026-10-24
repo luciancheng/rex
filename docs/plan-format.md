@@ -10,7 +10,7 @@ The format is frozen at `"version": 1`. Rex ignores fields it does not know, so 
 - They live in `rex/plans/` at the repo root (the folder that holds `.git`). Subfolders group plans: `rex/plans/onboarding/auth.rex.json`.
 - Commit the folder. Git is how a team shares plans.
 - Creating a plan never overwrites a file that already has that name.
-- UTF-8, with or without a BOM. Rex keeps your spacing, key order, and line endings when it edits a file.
+- UTF-8, with or without a BOM. Rex only reads plan files (apart from writing a new empty one, below); an agent editing one keeps every byte it doesn't change.
 
 ## Example
 
@@ -56,10 +56,10 @@ The format is frozen at `"version": 1`. Rex ignores fields it does not know, so 
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `version` | integer | `1`. A missing version reads as 1. A higher one makes the file read-only in Rex. |
+| `version` | integer | `1`. A missing version reads as 1. A higher one is shown read-only, a warning for whoever edits it. |
 | `id` | string | Slug for the plan. New plans take it from the file name. |
 | `title` | string | Short name. |
-| `goal` | string | One paragraph: what this send-off wants to accomplish. |
+| `goal` | string | One paragraph: what this work wants to accomplish. |
 | `status` | status | The plan as a whole. |
 | `base` | string | Optional. The branch the plan's stack of PRs lands on: the first leaf task's PR targets it. Usually the trunk (`main`, `dev`); the top branch of another stack when this plan builds on one. See [Stacks](#stacks). |
 | `scope.in` | list | The hard edges: this is the job. |
@@ -73,7 +73,7 @@ The format is frozen at `"version": 1`. Rex ignores fields it does not know, so 
 | `id` | string | planner | A stable slug (`card-highlight`). Not a UUID, not an index. Unique in the file. |
 | `title` | string | planner | Short name. |
 | `parent` | id | planner | **Outline**: this task sits under that heading. |
-| `status` | status | planner, Rex | See below. |
+| `status` | status | planner, and the agent working it | See below. |
 | `scope.in` / `scope.out` | lists | planner | Narrower edges than the plan's. |
 | `needs` | list | planner | Preconditions: facts, blockers, "must already exist". Not the work itself. |
 | `does` | list | planner | Intended outcome: what will be true when this task is done. |
@@ -82,10 +82,10 @@ The format is frozen at `"version": 1`. Rex ignores fields it does not know, so 
 | `verify` | list | planner | How a stranger would check it: commands or observations. |
 | `files` | list | planner | Likely repo-relative paths or globs. Hints, not a lock. |
 | `branch` | string | planner, or the agent that cuts it | Optional. The head branch of this leaf task's PR. See [Stacks](#stacks). |
-| `accomplished` | list | on completion | What actually happened. A retrospective, not a copy of `does`. |
-| `modified` | list | on completion | Paths actually touched. |
-| `verified_how` | list | on completion | How it was actually checked. |
-| `completed_notes` | string | on completion | Anything the next send-off should know. |
+| `accomplished` | list | the agent, on completion | What actually happened. A retrospective, not a copy of `does`. |
+| `modified` | list | the agent, on completion | Paths actually touched. |
+| `verified_how` | list | the agent, on completion | How it was actually checked. |
+| `completed_notes` | string | the agent, on completion | Anything the next chat should know. |
 
 Keep `needs` and `does` apart: one is "we still lack X", the other is "we will ship X". Merged into one description, you can no longer tell them apart.
 
@@ -96,8 +96,8 @@ Keep `needs` and `does` apart: one is "we still lack X", the other is "we will s
 `pending` · `active` · `done` · `blocked` · `skipped` (case-insensitive). A missing status is `pending`; an unknown one is reported and read as `pending`.
 
 - Write status down. Do not leave it to be inferred from git or from `verify`.
-- At most one leaf task is `active`: that is the pinned task. (A parent marked `active` is only a label.) If none is active, the pin is the first `pending` task, in file order, whose `depends_on` are all `done` or `skipped`.
-- Only leaf tasks (tasks that are nobody's `parent`) are pinned. A parent's progress is its children's, and Rex never writes a parent's status.
+- At most one leaf task is `active`: that is the pinned task, the one being worked. (A parent marked `active` is only a label.) If none is active, the pin is the first `pending` task, in file order, whose `depends_on` are all `done` or `skipped`.
+- Only leaf tasks (tasks that are nobody's `parent`) are pinned. A parent's progress is its children's, and nobody writes a parent's status.
 - A `depends_on` that names a parent is met once every leaf under it is `done` or `skipped` (or the parent itself is marked `done` or `skipped`). A task under that parent never waits on itself: only the parent's other leaves count.
 
 ## Parent vs depends_on
@@ -117,22 +117,16 @@ A plan can be one stack of pull requests: each PR's base branch is the head bran
 - **Each leaf task is one PR.** A parent is a heading, never a PR; a `branch` on it is ignored. `skipped` tasks have no PR, but their `branch` stays taken (its commits may still be there).
 - **File order is stack order.** The first leaf's PR targets `base` (without one, the repo's base branch). Each next leaf's PR targets the branch of the leaf before it. So each task builds and passes its tests on the tasks before it alone, and `depends_on` names only earlier tasks.
 - **One plan, one stack.** Tasks that need none of each other's code still stack, in the order they should land. Work that must merge on its own goes in its own plan. A plan that builds on another unmerged stack names that stack's top branch as `base`.
-- **Branch names are plain:** letters, digits and `. _ - /`, at most 80 bytes, not starting with `-`, `.` or `/`, not ending with `.` or `/`, with no `..`, `//` or `.lock` part, and not `HEAD`. Two branches (or a branch and the base) can't nest (`feature/a` and `feature/a/b`), since git can't hold both. Rex puts them into the commands a send-off suggests, so it leaves any other name out. One branch per task, never the base. Name them the way the repo does.
-- **Rex never runs git or talks to a forge.** It reads `base` and `branch` and never writes them. The send-off places the pinned task from the file alone: its base is the branch of the nearest earlier leaf that is `done`, else `base`. Earlier leaves that are not done yet join under it when they are. Later leaves that are already `done` are PRs that sit on it, rebased onto it after a fix. Whether a PR has merged is the forge's business: the send-off says to use `base` once the PR below has merged.
+- **Branch names are plain:** letters, digits and `. _ - /`, at most 80 bytes, not starting with `-`, `.` or `/`, not ending with `.` or `/`, with no `..`, `//` or `.lock` part, and not `HEAD`. Two branches (or a branch and the base) can't nest (`feature/a` and `feature/a/b`), since git can't hold both. Agents put them into git commands, so Rex reports any other name. One branch per task, never the base. Name them the way the repo does.
+- **Rex never runs git or talks to a forge.** It reads `base` and `branch` and never writes them. Where the pinned task's PR goes follows from the file alone, and the agent working it works it out that way (the `rex-plan` skill teaches it): its branch is the task's `branch`; its base is the branch of the nearest earlier leaf that is `done`, else `base`. Earlier leaves that are not done yet join under it when they are. Later leaves that are already `done` are PRs that sit on it, rebased onto it after a fix. Whether a PR has merged is the forge's business: once the PR below has merged, the base is `base`.
 - **One plan for the whole stack.** Rex reads the plan from the working tree, so it must stay the same file whichever branch is checked out. Commit it only where every stack branch will hold it: on the trunk before the first branch is cut (a plan PR merged and the trunk pulled first), or once the stack has landed. While the stack is in flight, never commit it on any branch: every branch then holds the same copy (or none), so its changes in the working tree follow every `git switch` and `git rebase --autostash`. Until the stack lands, its progress lives in the checkout Rex runs in. The agent working a task writes its `branch` if the plan had none.
 
 ## Who writes what
 
 - **Agents and humans** write the plan: every planning field, and statuses as work moves.
+- **The agent working a task** writes its progress: it sets the task's `status` to `active` when it starts (and any other `active` leaf to `pending`, and the plan's own `status` to `active` if it was `pending` or `done`), and when it finishes fills `accomplished`, `modified`, `verified_how` and `completed_notes`, then sets it `done` (in one save if it can); the plan's own `status` becomes `done` after that, once every leaf task is `done` or `skipped`. It edits only the members it changes, inside the task objects it changes (plus the plan's own `status`), and never a parent's status. It re-reads the file at the start of every turn while it works the plan, since someone else may have changed it.
 - **`base` and `branch`** are planning fields: the planner writes them, and the agent working a task may write its own task's `branch`. Rex reads them and never writes them.
-- **Rex** writes only when you act in Rex: pinning sets `status`, and marking a task done writes `status` plus `accomplished`, `modified` and `verified_how` (`completed_notes` is left to you or the agent). Rex edits only the members it changes, inside that task's object: a completion field changes only when you edit it in Rex, and `modified` only gains paths (and isn't touched at all if it holds entries Rex can't read). The one write outside a task is the plan's own `status`: `active` when a task is pinned in a `pending` or `done` plan, `done` when every leaf task is `done` or `skipped`.
-- **Agents finishing a task** end their final reply with a trailer, so Rex can prefill the completion:
-
-  ```
-  accomplished: <what actually happened, one line>
-  verified: <how it was checked, one line>
-  rex-sendoff: <path>#<task>        (the line from the send-off, when there was one)
-  ```
+- **Rex writes nothing** to a plan but a new empty stub you create in its plan list ([A new plan](#a-new-plan)), never over an existing file. It reads the file, shows it live, and judges drift against the pin; you ask your agent to pin, finish or continue a task, and Rex shows the change when the file does.
 
 ## Never in a plan
 
@@ -152,13 +146,13 @@ Rex shows what it can and lists the rest under the plan:
 - more than one `active` task;
 - an unknown status (read as `pending`);
 - a value of the wrong type (ignored);
-- in a stack: a `base` or `branch` that is not a plain branch name (left out of commands), a branch two tasks share, that equals the base, or that nests with the base or another branch, a branch on a parent (ignored), or a task that depends on a later one.
+- in a stack: a `base` or `branch` that is not a plain branch name (Rex reports it), a branch two tasks share, that equals the base, or that nests with the base or another branch, a branch on a parent (ignored), or a task that depends on a later one.
 
-Rex will not write to a file whose `version` is newer than 1 or unreadable (a quoted number such as `"1"` is read, with a warning), whose `tasks` is not a list, or that still has git conflict markers. A missing `version` reads as 1. A file that is not valid JSON or that has a duplicate key is not shown: Rex keeps the last good copy on screen and names the line and column (`14:3`); for conflict markers it names the line of the first one.
+Rex marks a file read-only, with the reason above its tasks, when its `version` is newer than 1 or unreadable (a quoted number such as `"1"` is read, with a warning), its `tasks` is not a list, or it still has git conflict markers: a tool that reads only v1 should not edit it. A missing `version` reads as 1. A file that is not valid JSON or that has a duplicate key is not shown: Rex keeps the last good copy on screen and names the line and column (`14:3`); for conflict markers it names the line of the first one.
 
 ## A new plan
 
-Creating a plan writes every plan field except the optional `base`, empty, ready for an agent or a human to fill:
+Creating a plan in Rex's plan list writes every plan field except the optional `base`, empty, ready for an agent or a human to fill. It is the only plan file Rex writes:
 
 ```json
 {
@@ -179,4 +173,4 @@ An old `{}` plan is still valid: it is a plan with no tasks.
 
 ## Teaching an agent
 
-`rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan/SKILL.md`, or the repo's `.claude/skills/` with `--project`), which teaches this format, the rules above, the reply trailer, and a read-only review pass before each task's PR (one reviewer per job: design, the UI if it changed, breaking it, lint; each finding fixed or explained; then a final readiness check). In Rex, `b⏎` copies a shorter planning brief to paste into any agent.
+`rex ingest --install-skill` installs the `rex-plan` skill where every agent reads it: `~/.claude/skills/rex-plan/SKILL.md` (or `$CLAUDE_CONFIG_DIR/skills/`) for Claude Code and `~/.agents/skills/rex-plan/SKILL.md` for Codex; Cursor and OpenCode read both folders (and may list the skill twice: the copies are identical). With `$CLAUDE_CONFIG_DIR` set, a copy Rex wrote in `~/.claude/skills/rex-plan/` (Cursor and OpenCode still read it) is updated and uninstalled with the others; a `SKILL.md` there that Rex didn't write is left alone. With `--project` both copies go in the repo's `.claude/skills/` and `.agents/skills/`; `--uninstall-skill [--project]` takes Rex's copies back out. The skill teaches this format and its rules, how to work a plan (which plan and task, starting and finishing a task in the file, re-reading it every turn), where a stacked task's PR goes, and a read-only review pass before each task's PR (one reviewer per job: design, the UI if it changed, breaking it, lint; each finding fixed or explained; then a final readiness check).

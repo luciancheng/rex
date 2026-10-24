@@ -9,13 +9,12 @@ import (
 )
 
 // State is what Rex remembers between runs, outside any repo: the plan
-// last opened in each repo and when each pin started. It is a convenience;
-// a missing or broken state file is an empty State.
+// last opened in each repo. It is a convenience; a missing or broken state
+// file is an empty State. (An older Rex also kept pin start times under
+// "pins"; they are ignored, and dropped on the next write.)
 type State struct {
 	Version int                  `json:"version"`
 	Repos   map[string]RepoState `json:"repos"`
-	// Pins maps "<plan path>#<task id>" to when the pin started (unix seconds).
-	Pins map[string]float64 `json:"pins"`
 }
 
 type RepoState struct {
@@ -35,12 +34,9 @@ func StatePath() string {
 	return filepath.Join(home, ".rex", "state.json")
 }
 
-// PinKey names one task of one plan in State.Pins.
-func PinKey(planPath, task string) string { return planPath + "#" + task }
-
 // LoadState reads path. Any error gives an empty State.
 func LoadState(path string) State {
-	s := State{Version: 1, Repos: map[string]RepoState{}, Pins: map[string]float64{}}
+	s := State{Version: 1, Repos: map[string]RepoState{}}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return s
@@ -52,16 +48,12 @@ func LoadState(path string) State {
 	for k, v := range read.Repos {
 		s.Repos[k] = v
 	}
-	for k, v := range read.Pins {
-		s.Pins[k] = v
-	}
 	return s
 }
 
 // UpdateState re-reads path, applies mutate, prunes repos that are gone or
-// untouched for 90 days and pins whose plan is gone, and writes it atomically,
-// private to the user. Re-reading first keeps what another Rex window
-// wrote in the meantime.
+// untouched for 90 days, and writes it atomically, private to the user.
+// Re-reading first keeps what another Rex window wrote in the meantime.
 func UpdateState(path string, now time.Time, mutate func(*State)) error {
 	if path == "" {
 		return nil
@@ -72,20 +64,6 @@ func UpdateState(path string, now time.Time, mutate func(*State)) error {
 	for repo, r := range s.Repos {
 		if r.Opened < cutoff || !exists(repo) || !exists(r.Plan) {
 			delete(s.Repos, repo)
-		}
-	}
-	// A pin can run for months, so a plan's newest pin is kept whatever its
-	// age; older ones go after 90 days, and all of them when the plan does.
-	newest := map[string]float64{}
-	for key, started := range s.Pins {
-		if plan := pinPlan(key); plan != "" && started > newest[plan] {
-			newest[plan] = started
-		}
-	}
-	for key, started := range s.Pins {
-		plan := pinPlan(key)
-		if plan == "" || (started < cutoff && started < newest[plan]) {
-			delete(s.Pins, key)
 		}
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
@@ -119,17 +97,6 @@ func UpdateState(path string, now time.Time, mutate func(*State)) error {
 		return os.WriteFile(path, append(data, '\n'), 0o600)
 	}
 	return nil
-}
-
-// pinPlan is the plan path in a PinKey, if that plan is still there. Both
-// a path and a task id may hold '#', so every split is tried.
-func pinPlan(key string) string {
-	for i := 0; i < len(key); i++ {
-		if key[i] == '#' && exists(key[:i]) {
-			return key[:i]
-		}
-	}
-	return ""
 }
 
 // exists is false only for a path known to be gone; one that can't be

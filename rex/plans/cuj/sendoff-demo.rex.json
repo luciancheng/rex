@@ -2,7 +2,7 @@
   "version": 1,
   "id": "sendoff-demo",
   "title": "Send-off demo",
-  "goal": "A teammate opens this plan in Rex, sees what the work is, pins the next task, and sends it off to a fresh chat without rereading any transcript.",
+  "goal": "A teammate opens this plan in Rex and sees what the work is and which task the agent is on; a fresh chat picks it up from the plan file without rereading any transcript.",
   "status": "active",
   "scope": {
     "in": ["plan cards in the Library", "selection highlight"],

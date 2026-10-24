@@ -402,8 +402,8 @@ func TestHelpPagesOverlapUnderTheMarkers(t *testing.T) {
 }
 
 func TestHomeTakesWordsLiterally(t *testing.T) {
-	// In the Library a verb is just a name (docs/ux.md §2): done⏎ finds or
-	// creates "done", and only /done would run the verb.
+	// In the Library text is a name (docs/ux.md §2): done⏎ finds or creates
+	// "done"; a /word is only ever /help or /breakdance.
 	a, root := libraryApp(t, "alpha.rex.json")
 	typeText(a, "done")
 	if !strings.Contains(a.frame(), "⏎ create") {

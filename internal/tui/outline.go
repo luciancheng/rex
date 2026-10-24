@@ -14,14 +14,13 @@ import (
 )
 
 // planDoc is the open plan file: the last good read, and what is on disk
-// now. Rex never pushes a plan anywhere; it re-reads the file every
-// docPollEvery and notices a change by content hash (docs/ux.md §6).
+// now. Rex never writes it; it re-reads the file every docPollEvery and
+// notices a change by content hash (docs/ux.md §6).
 type planDoc struct {
 	path string
 	plan *plan.Plan // last good read; nil until the file has parsed once
 	hash string     // the bytes on disk at the last read
 	good string     // hash of the bytes behind plan
-	own  string     // hash of Rex's own last write: taken in quietly
 
 	bad      string // why the bytes on disk don't parse, not yet shown
 	badPolls int
@@ -39,14 +38,14 @@ func openDoc(path string, now time.Time) *planDoc {
 }
 
 // read re-reads the file. It reports whether anything on screen changes,
-// and what changed in the plan when someone else edited it.
-func (d *planDoc) read(now time.Time, first bool) (changed bool, summary string) {
+// and what changed in the plan when it was edited.
+func (d *planDoc) read(now time.Time, first bool) (changed bool, news planNews) {
 	d.polled = now
 	data, err := plan.ReadFile(d.path)
 	if os.IsNotExist(err) {
 		changed = !d.gone
 		d.gone = true
-		return changed, ""
+		return changed, planNews{}
 	}
 	if err != nil {
 		// There, but not readable as a plan (a folder, a FIFO, too big, no
@@ -54,7 +53,7 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, summary string)
 		why := "can't read the file: " + err.Error()
 		changed = d.err != why || d.gone
 		d.err, d.gone, d.hash = why, false, ""
-		return changed, ""
+		return changed, planNews{}
 	}
 	if d.gone {
 		d.gone, changed = false, true
@@ -68,7 +67,7 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, summary string)
 				d.err, changed = d.bad, true
 			}
 		}
-		return changed, ""
+		return changed, planNews{}
 	}
 	d.hash = h
 	p, perr := plan.Parse(data)
@@ -77,49 +76,37 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, summary string)
 		if first || d.plan == nil || d.err != "" {
 			d.err, changed = d.bad, true
 		}
-		return changed, ""
+		return changed, planNews{}
 	}
 	old, oldGood := d.plan, d.good
 	d.plan, d.good, d.bad, d.badPolls, d.err = p, h, "", 0, ""
-	if old == nil || h == d.own || h == oldGood {
-		// First read, Rex's own write, or a save that tore and came back
-		// to the same bytes: nothing to announce.
-		return true, ""
+	if old == nil || h == oldGood {
+		// First read, or a save that tore and came back to the same bytes:
+		// nothing to announce.
+		return true, planNews{}
 	}
 	return true, planChanges(old, p)
 }
 
-// took records a plan Rex just wrote, so the next poll doesn't report
-// Rex's own edit as someone else's.
-func (d *planDoc) took(saved *plan.Saved) {
-	d.own = plan.Hash(saved.Data)
-	d.hash, d.good, d.plan = d.own, d.own, saved.Plan // so going back to the old bytes reads as an edit
-	d.bad, d.badPolls, d.err, d.gone = "", 0, "", false
-}
-
-func (d *planDoc) poll(now time.Time) (bool, string) {
+func (d *planDoc) poll(now time.Time) (bool, planNews) {
 	if now.Sub(d.polled) < docPollEvery {
-		return false, ""
+		return false, planNews{}
 	}
 	return d.read(now, false)
 }
 
-// writable says why Rex can't write the plan now, or "".
-func (d *planDoc) writable() string {
-	switch {
-	case d.plan == nil || d.err != "":
-		return "the plan file doesn't parse"
-	case d.gone:
-		return "the plan file is missing"
-	case d.plan.ReadOnly != "":
-		return "read-only: " + d.plan.ReadOnly
-	}
-	return ""
+// planNews is what an edit of the plan changed: text sums it up for the
+// toast and the tape ("" when nothing was announced), and tasks says a
+// task's status moved or a task came or went.
+type planNews struct {
+	text  string
+	tasks bool
 }
 
-// planChanges sums up an outside edit: status moves, then tasks added or
-// removed, e.g. "plans-ui → done · +1 task".
-func planChanges(old, now *plan.Plan) string {
+// planChanges sums up an edit of the file: task status moves, the plan's
+// own status, then tasks added or removed, e.g. "plans-ui → done · plan →
+// done · +1 task".
+func planChanges(old, now *plan.Plan) planNews {
 	before := map[string]plan.Status{}
 	for _, t := range old.Tasks {
 		if t.ID != "" {
@@ -147,6 +134,9 @@ func planChanges(old, now *plan.Plan) string {
 	if moved > 2 {
 		parts = append(parts, fmt.Sprintf("+%d more moved", moved-2))
 	}
+	if old.Status != now.Status {
+		parts = append(parts, "plan → "+string(now.Status))
+	}
 	removed := 0
 	for id := range before {
 		if !seen[id] {
@@ -159,10 +149,11 @@ func planChanges(old, now *plan.Plan) string {
 	if removed > 0 {
 		parts = append(parts, plural(removed, "−%d task", "−%d tasks"))
 	}
-	if len(parts) == 0 {
-		return "edited"
+	news := planNews{text: "edited", tasks: moved+added+removed > 0}
+	if len(parts) > 0 {
+		news.text = strings.Join(parts, " · ")
 	}
-	return strings.Join(parts, " · ")
+	return news
 }
 
 func plural(n int, one, many string) string {
@@ -471,7 +462,7 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 		top = append(top, LogLine{Kind: "error", Text: "  " + clip(plural(n, "! %d problem", "! %d problems")+" · ⏎ on the title lists them", inner)})
 	}
 	if len(p.Tasks) == 0 {
-		top = append(top, LogLine{Kind: "gap"}, LogLine{Kind: "idle", Text: "  " + clip("No tasks yet · your agent fills this file · b⏎ copies a planning brief", inner)})
+		top = append(top, LogLine{Kind: "gap"}, LogLine{Kind: "idle", Text: "  " + clip("No tasks yet · your agent fills this file", inner)})
 	} else {
 		top = append(top, LogLine{Kind: "gap"})
 	}
@@ -583,12 +574,11 @@ func taskDetail(d *planDoc, key string, width int) []LogLine {
 	}
 	g := p.Graph()
 	pin := g.Pin()
+	// The status word says what the pin is; nobody pinned it but the
+	// agent, by writing active (docs/ux.md §7).
 	status := string(t.Status)
-	if t == pin {
-		status += " · pinned"
-		if t.Status != plan.Active {
-			status = "next up · pinned"
-		}
+	if t == pin && t.Status != plan.Active {
+		status = "next up"
 	}
 	lines := []LogLine{{Kind: "command", Text: rule(taskKey(t)+" · "+status, width)}}
 	for _, row := range wrap(t.Title, width-2) {
@@ -674,9 +664,9 @@ func docStatus(d *planDoc) (StatusLine, bool) {
 }
 
 // pinStatus is row 1's pin line: the pin, a warning about two active
-// tasks, or why there is no pin. writable is false when p⏎ would be
-// refused, so the line doesn't offer it.
-func pinStatus(p *plan.Plan, writable bool) StatusLine {
+// tasks, or why there is no pin. The agent writes the pin; Rex only shows
+// it (docs/ux.md §7).
+func pinStatus(p *plan.Plan) StatusLine {
 	if p == nil || len(p.Tasks) == 0 {
 		return StatusLine{}
 	}
@@ -698,10 +688,7 @@ func pinStatus(p *plan.Plan, writable bool) StatusLine {
 		return StatusLine{Text: "no pin · nothing unblocked", Kind: "muted"}
 	}
 	if pin.Status != plan.Active {
-		if !writable {
-			return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (next up)", Short: "▸ " + pin.ID + " (next up)", Kind: "accent"}
-		}
-		return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (next up · p⏎ pins it)", Short: "▸ " + pin.ID + " (next up · p⏎)", Kind: "accent"}
+		return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (next up)", Short: "▸ " + pin.ID + " (next up)", Kind: "accent"}
 	}
 	return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (active)", Short: "▸ " + pin.ID + " (active)", Kind: "accent"}
 }

@@ -63,11 +63,15 @@ options:
   --project               with claude: wire only this git repo
                           (.claude/settings.local.json, kept out of git);
                           with the skill: install it in this repo
-                          (.claude/skills/rex-plan)
-  --install-skill         install the rex-plan skill, which teaches Claude
-                          Code, Cursor and OpenCode the plan format
-                          (~/.claude/skills/rex-plan; Codex: use b⏎)
-  --uninstall-skill       remove the rex-plan skill Rex installed
+                          (.claude/skills and .agents/skills)
+  --install-skill         install the rex-plan skill, which teaches every
+                          agent the plan format and how to work a plan:
+                          ~/.claude/skills/rex-plan for Claude Code and
+                          ~/.agents/skills/rex-plan for Codex (Cursor and
+                          OpenCode read both, and may list it twice); with
+                          $CLAUDE_CONFIG_DIR, Claude Code's copy goes there,
+                          and Rex's copy in ~/.claude/skills is updated too
+  --uninstall-skill       remove the rex-plan skill copies Rex installed
   --uninstall HARNESS     take Rex's hook back out of that agent's config
   --install-cursor-hook   same as --install cursor
   --events EVENTS         JSONL event feed (default: ~/.rex/session.jsonl)
@@ -209,22 +213,47 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "rex: --project needs a git repo, and %s isn't one; run it from inside the repo\n", repo)
 			return 1
 		}
-		home, err := os.UserHomeDir()
-		if err != nil && !*project && os.Getenv("CLAUDE_CONFIG_DIR") == "" {
-			fmt.Fprintf(stderr, "rex: %v\n", err)
-			return 1
-		}
-		dir := skill.Dir(home, repo, *project)
-		if *installSkill {
-			err = skill.Install(dir, stdout)
-			if err == nil && !*project && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
-				fmt.Fprintln(stdout, "that is $CLAUDE_CONFIG_DIR, which only Claude Code reads; Cursor and OpenCode read ~/.claude/skills (or use --project)")
+		home, herr := os.UserHomeDir()
+		failed, claude := false, false
+		for i, dir := range skill.Dirs(home, repo, *project) {
+			// One copy failing never stops the other: report it, go on,
+			// and exit 1 at the end.
+			var err error
+			switch {
+			case dir == "":
+				err = fmt.Errorf("no home folder for ~/%s/skills: %v", []string{".claude", ".agents"}[i], herr)
+			case *installSkill:
+				err = skill.Install(dir, stdout)
+			default:
+				err = skill.Uninstall(dir, stdout)
 			}
-		} else {
-			err = skill.Uninstall(dir, stdout)
+			if err != nil {
+				fmt.Fprintf(stderr, "rex: %v\n", err)
+				failed = true
+			} else if i == 0 {
+				claude = true
+			}
 		}
-		if err != nil {
-			fmt.Fprintf(stderr, "rex: %v\n", err)
+		// Rex's copy in ~/.claude/skills, left from before
+		// $CLAUDE_CONFIG_DIR, is still read by Cursor and OpenCode: it is
+		// updated or removed with the others. Anyone else's stays.
+		if dir := skill.Legacy(home); dir != "" && !*project && skill.Ours(dir) {
+			var err error
+			if *installSkill {
+				err = skill.Install(dir, stdout)
+			} else {
+				err = skill.Uninstall(dir, stdout)
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "rex: %v\n", err)
+				failed = true
+			}
+		}
+		// The note points at Claude Code's copy, so only when it is there.
+		if claude && *installSkill && !*project && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+			fmt.Fprintln(stdout, "Claude Code's copy is in $CLAUDE_CONFIG_DIR, which only Claude Code reads; Codex, Cursor and OpenCode read ~/.agents/skills")
+		}
+		if failed {
 			return 1
 		}
 		return 0

@@ -41,9 +41,9 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 		t.Fatalf("row 1 %q", got)
 	}
 	a.ingest([]watch.Event{edit(a, c, 2*time.Second, "internal/tui/live_view.go"), edit(a, c, 3*time.Second, "README.md")})
-	view := viewText(BuildLogView(a.log, 78))
-	if strings.Count(view, "── drift · card-highlight") != 1 || strings.Count(view, "README.md") != 1 ||
-		!strings.Contains(view, "hard README.md (outside card-highlight files)") || !strings.Contains(view, "soft internal/tui/live_view.go (next to plans.go)") {
+	view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true}))
+	if strings.Count(view, "rex › drift · card-highlight") != 1 || strings.Count(view, "README.md") != 1 ||
+		!strings.Contains(view, "hard README.md · outside card-highlight files") || !strings.Contains(view, "soft internal/tui/live_view.go · next to plans.go") {
 		t.Fatalf("one block per pin, each path once:\n%s", view)
 	}
 	a.ingest([]watch.Event{at(c, 3500*time.Millisecond, watch.Event{Source: "claude", Kind: "user", Text: "ok continue"})})
@@ -63,7 +63,7 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 	a.ingest([]watch.Event{edit(a, c, 8*time.Second, "rex/plans/cuj/demo.rex.json")})
-	if strings.Contains(viewText(BuildLogView(a.log, 78)), "demo.rex.json (") {
+	if strings.Contains(viewText(BuildLogView(a.log, 78, viewOpt{tall: true})), "demo.rex.json ·") {
 		t.Fatal("edits to plans never drift")
 	}
 	if after, _ := os.ReadFile(path); string(after) != string(planBefore) {
@@ -80,7 +80,7 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 		t.Fatal(a.statusLine().Text)
 	}
 	a.ingest([]watch.Event{edit(a, c, 9*time.Second, "README.md")})
-	if v := viewText(BuildLogView(a.log, 78)); !strings.Contains(v, "── drift · load-outline") || strings.Count(v, "── drift ·") != 2 {
+	if v := viewText(BuildLogView(a.log, 78, viewOpt{tall: true})); !strings.Contains(v, "rex › drift · load-outline") || strings.Count(v, "rex › drift ·") != 2 {
 		t.Fatalf("%s", v)
 	}
 }
@@ -116,7 +116,7 @@ func TestDriftBelongsToItsPlanAndStint(t *testing.T) {
 	if !a.ingest([]watch.Event{edit(a, c, 2*time.Second, "go.mod")}) {
 		t.Fatal("a drifting edit repaints at once")
 	}
-	if n := strings.Count(viewText(BuildLogView(a.log, 78)), "── drift ·"); n != 2 {
+	if n := strings.Count(viewText(BuildLogView(a.log, 78, viewOpt{tall: true})), "rex › drift ·"); n != 2 {
 		t.Fatalf("the second plan's drift gets its own block, %d blocks", n)
 	}
 }
@@ -172,8 +172,8 @@ func TestDriftClearsWhenThePlanIsWidened(t *testing.T) {
 func TestDriftBlockSitsBelowWhatItJudges(t *testing.T) {
 	a, c, _ := openDemo(t, driftDemo, 120, 32)
 	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "now add three extra palettes for dark mode", Meta: map[string]any{"cwd": a.plans.Repo}})})
-	view := viewText(BuildLogView(a.log, 78))
-	if p, d := strings.Index(view, "extra palettes for dark"), strings.Index(view, "── drift"); p < 0 || d < p {
+	view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true}))
+	if p, d := strings.Index(view, "extra palettes for dark"), strings.Index(view, "rex › drift"); p < 0 || d < p {
 		t.Fatalf("the drift block comes after the prompt it is about\n%s", view)
 	}
 	a.settle(70, 24)
@@ -199,7 +199,7 @@ func TestDriftKeepsAScrolledUpViewStill(t *testing.T) {
 		} else {
 			for i, e := range a.log {
 				if e.Kind == "drift" {
-					a.scroll = len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns))) + 10 // the view ends just above the block
+					a.scroll = len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns), a.viewOpt())) + 10 // the view ends just above the block
 				}
 			}
 		}
@@ -207,6 +207,42 @@ func TestDriftKeepsAScrolledUpViewStill(t *testing.T) {
 		a.ingest([]watch.Event{edit(a, c, 300*time.Second, "go.mod")}) // the block gains a row
 		if got := a.frameRows().Rows[3]; got != top {
 			t.Errorf("%s: the view moved: %q → %q", where, top, got)
+		}
+	}
+}
+
+// The drift block's last row is the bottom row of a scrolled-up view (or
+// one row either side of it), and the blocks under it pack: the block
+// gains a row in place and the view keeps its lines when that row lands
+// under it (docs/ux.md §10).
+func TestDriftBlockAtTheViewBottom(t *testing.T) {
+	for _, off := range []int{0, 1} {
+		a, c, _ := openDemo(t, driftDemo, 120, 20)
+		press(a, "\t")
+		for i := 0; i < 40; i++ {
+			a.ingest([]watch.Event{at(c, time.Duration(1+i)*time.Second, watch.Event{Source: "claude", Kind: "text", Text: fmt.Sprintf("reply %d", i)})})
+		}
+		a.ingest([]watch.Event{edit(a, c, 100*time.Second, "README.md")})
+		for i := 0; i < 20; i++ {
+			cmd := fmt.Sprintf("go test %d", i)
+			a.ingest([]watch.Event{
+				at(c, time.Duration(200+2*i)*time.Second, watch.Event{Source: "claude", Kind: "command", Text: cmd, Meta: map[string]any{"tool": "Bash", "command": cmd}}),
+				at(c, time.Duration(201+2*i)*time.Second, watch.Event{Source: "claude", Kind: "error", Text: "Bash failed · " + cmd + ": exit status 1", Meta: map[string]any{"tool": "Bash", "command": cmd}}),
+			})
+		}
+		for i, e := range a.log {
+			if e.Kind == "drift" {
+				if v := BuildLogView(a.log[i:i+2], PaneTextWidth(a.columns), a.viewOpt()); v[len(v)-1].Kind == "gap" {
+					t.Fatal("setup: the block under the drift packs")
+				}
+				a.scroll = len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns), a.viewOpt())) + off
+			}
+		}
+		a.settle(a.columns, a.lines)
+		before := agentBody(a)
+		a.ingest([]watch.Event{edit(a, c, 300*time.Second, "go.mod")})
+		if got := agentBody(a); strings.Join(got, "\n") != strings.Join(before, "\n") {
+			t.Errorf("the drift block %d row(s) under the view bottom gained a row and moved it:\n%s\n→\n%s", off, strings.Join(before, "\n"), strings.Join(got, "\n"))
 		}
 	}
 }
@@ -220,7 +256,7 @@ func TestOnePatchManyFiles(t *testing.T) {
 	if got := a.statusLine().Text; !strings.HasPrefix(got, "drift · hard: README.md") || a.drift.soft == nil {
 		t.Fatalf("one patch's files are judged worst last, wherever they sit in it: %q", got)
 	}
-	if view := viewText(BuildLogView(a.log, 78)); !strings.Contains(view, "hard README.md") || !strings.Contains(view, "soft internal/tui/live_view.go") {
+	if view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true})); !strings.Contains(view, "hard README.md") || !strings.Contains(view, "soft internal/tui/live_view.go") {
 		t.Fatalf("every off-pin file of the patch is in the block:\n%s", view)
 	}
 }
@@ -253,7 +289,7 @@ func TestABatchThatMovesThePinIsJudgedAgainstTheNewPin(t *testing.T) {
 	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") || got != "▸ load-outline  Outline view" {
 		t.Fatalf("row 1: %q", got)
 	}
-	if view := viewText(BuildLogView(a.log, 78)); strings.Contains(view, "── drift") {
+	if view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true})); strings.Contains(view, "rex › drift") {
 		t.Fatalf("no drift block\n%s", view)
 	}
 }
@@ -287,7 +323,7 @@ func TestTheFinishedTasksLastEditIsNotDrift(t *testing.T) {
 		if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
 			t.Fatalf("patch=%v: row 1: %q", patch, got)
 		}
-		if view := viewText(BuildLogView(a.log, 78)); strings.Contains(view, "── drift") {
+		if view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true})); strings.Contains(view, "rex › drift") {
 			t.Fatalf("patch=%v: no drift block\n%s", patch, view)
 		}
 	}
@@ -333,7 +369,7 @@ func TestAskingTheAgentToSwitchTasksIsNotDrift(t *testing.T) {
 	if got := a.statusLine().Text; got != "▸ recovery  Recovery codes" {
 		t.Fatalf("row 1 %q", got)
 	}
-	if tape := viewText(BuildLogView(a.log, 100)); strings.Contains(tape, "── drift") {
+	if tape := viewText(BuildLogView(a.log, 100, viewOpt{tall: true})); strings.Contains(tape, "rex › drift") {
 		t.Fatalf("the switch left a drift block\n%s", tape)
 	}
 }
@@ -347,7 +383,7 @@ func TestNamingAnotherTaskDriftsWhenThePinStays(t *testing.T) {
 	if got := a.statusLine().Text; got != "drift · soft: start recovery · names recovery, not the pin" {
 		t.Fatalf("the turn ended on the old pin: %q", got)
 	}
-	if tape := viewText(BuildLogView(a.log, 100)); !strings.Contains(tape, "── drift · passkey-ui") || !strings.Contains(tape, "soft start recovery (names recovery, not the pin)") {
+	if tape := viewText(BuildLogView(a.log, 100, viewOpt{tall: true})); !strings.Contains(tape, "rex › drift · passkey-ui") || !strings.Contains(tape, "soft start recovery · names recovery, not the pin") {
 		t.Fatalf("recorded as before\n%s", tape)
 	}
 
@@ -359,7 +395,7 @@ func TestNamingAnotherTaskDriftsWhenThePinStays(t *testing.T) {
 		t.Fatalf("still held under the new pin: %q", got)
 	}
 	a.ingest([]watch.Event{at(c, 5*time.Second, watch.Event{Source: "claude", Kind: "idle"})})
-	if tape := viewText(BuildLogView(a.log, 100)); !strings.Contains(tape, "── drift · audit-log") || !strings.Contains(tape, "soft now do recovery (names recovery, not the pin)") {
+	if tape := viewText(BuildLogView(a.log, 100, viewOpt{tall: true})); !strings.Contains(tape, "rex › drift · audit-log") || !strings.Contains(tape, "soft now do recovery · names recovery, not the pin") {
 		t.Fatalf("the new pin's block\n%s", tape)
 	}
 }
@@ -391,9 +427,9 @@ func TestAnEditBeforeTheSwitchIsNotDrift(t *testing.T) {
 		a.ingest([]watch.Event{at(c, 4*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Done."})})
 		later(a, c)
 		c.t = c.t.Add(toastFor)
-		tape := viewText(BuildLogView(a.log, 100))
+		tape := viewText(BuildLogView(a.log, 100, viewOpt{tall: true}))
 		if how == "no switch" {
-			if !strings.Contains(tape, "── drift · passkey-ui") || !strings.Contains(tape, "soft start recovery (names recovery, not the pin)") || !strings.Contains(tape, "soft internal/recovery/codes.go (listed for recovery)") {
+			if !strings.Contains(tape, "rex › drift · passkey-ui") || !strings.Contains(tape, "soft start recovery · names recovery, not the pin") || !strings.Contains(tape, "soft internal/recovery/codes.go · listed for recovery") {
 				t.Fatalf("%s: the turn ended on the old pin: both are drift\n%s", how, tape)
 			}
 			continue
@@ -401,7 +437,7 @@ func TestAnEditBeforeTheSwitchIsNotDrift(t *testing.T) {
 		if got := a.statusLine().Text; got != "▸ recovery  Recovery codes" {
 			t.Fatalf("%s: row 1 %q", how, got)
 		}
-		if strings.Contains(tape, "── drift") {
+		if strings.Contains(tape, "rex › drift") {
 			t.Fatalf("%s: the switch left a drift block\n%s", how, tape)
 		}
 	}

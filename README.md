@@ -24,7 +24,7 @@
 
 Rex is a terminal sidecar for developers who work with an AI coding agent: Cursor, Claude Code, Codex or OpenCode. You keep talking to your agent as usual. Rex sits in a second terminal with a pixel-art dino and shows two tabs, always both on its top row (`[PLAN] AGENT`: the one on screen is highlighted, or in brackets without color):
 - **PLAN**: a JSON file in your repo that breaks the work into PR-sized tasks;
-- **AGENT**: what the agent is doing right now, as it happens (its thoughts, commands, edits, questions, replies and your prompts).
+- **AGENT**: what the agent is doing right now, as it happens: your prompts, its thoughts (a run of them folds to one line with the latest), the commands it runs, failed steps, questions and replies.
 
 Rex is **watch-only**. It never runs tools, approves them, steers the agent or sends it anything, and it never edits your plan. The agent drives the plan: you ask it to plan, to work a task or to continue, and it writes the plan file (which task is active, what is done and how it was checked). Rex shows each change as it lands. There is nothing to copy from Rex into the chat.
 

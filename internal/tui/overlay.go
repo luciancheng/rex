@@ -21,7 +21,8 @@ type Overlay struct {
 const helpKeyCol = 11
 
 // helpKey is one row of Help: a key (or a mark) and what it does. key
-// overrides the key's look, for marks that keep their own colors.
+// overrides the key's look, for marks that keep their own colors. With
+// neither a name nor a key it is a note under the keys, with no key column.
 type helpKey struct {
 	name, what string
 	key        []Span
@@ -79,14 +80,16 @@ var pageKeys = map[string][]helpKey{
 		{name: "home", what: "oldest (also ctrl+a)"},
 		{name: "end", what: "live (also ctrl+e)"},
 		{name: "enter", what: "switch PLAN to a new plan row 1 offers"},
+		// No key unfolds a run (docs/ux.md §10), so this is a note, not a key.
+		{what: "folding is display only: the feed keeps every thought"},
 	},
 }
 
 // helpLines is Help (docs/ux.md §13): THIS PAGE, for the page it opened over,
-// then what holds everywhere, the marks, the plan list's typing and what
-// Rex never does; the feed's health follows. tall puts a blank row above
-// each section. From 34 cells the key sits in an 11-cell column left of
-// what it does; narrower it sits above it.
+// then what holds everywhere, the marks, how AGENT names its blocks, the
+// plan list's typing and what Rex never does; the feed's health follows.
+// tall puts a blank row above each section. From 34 cells the key sits in
+// an 11-cell column left of what it does; narrower it sits above it.
 func helpLines(width int, page string, tall bool) []LogLine {
 	var lines []LogLine
 	section := func(label, meta string, keys []helpKey) {
@@ -95,6 +98,12 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		}
 		lines = append(lines, h2Line(label, meta, width))
 		for _, k := range keys {
+			if k.name == "" && k.key == nil {
+				for _, w := range wrap(k.what, max(8, width-2)) {
+					lines = append(lines, LogLine{Kind: "muted", Text: "  " + w})
+				}
+				continue
+			}
 			key := k.key
 			if key == nil {
 				key = []Span{{Text: k.name, Role: "text", Bold: true}}
@@ -137,6 +146,14 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{what: "news on the other tab (! an ask or an error)", key: []Span{{Text: "•", Role: "accent", Bold: true}, {Text: " "}, {Text: "!", Role: "error", Bold: true}}},
 		{name: "following", what: "Rex opens each plan your agent writes"},
 		{name: "latched", what: "you picked this plan; another the agent writes shows on row 1, and enter switches"},
+	})
+	section("AGENT TAB", "", []helpKey{
+		{name: "thinking", what: "a run of N thoughts (×N); the latest shows"},
+		{name: "$", what: "a command; over 5 in a row, all but the last 4 fold into one line"},
+		{name: "✗", what: "a failed step, or the turn's own error"},
+		{what: "the agent waits on you", key: pill("ASK", "pickbg", "error")},
+		{name: "reply ───", what: "the agent's reply"},
+		{name: "rex ›", what: "Rex's own line, plan news or drift, never sent"},
 	})
 	section("PLAN LIST", "", []helpKey{
 		{name: "type", what: "find a plan, filter a folder, or name a new one"},

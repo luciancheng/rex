@@ -1102,9 +1102,11 @@ func TestHeaderColorsAskAndError(t *testing.T) {
 func TestH2AndFields(t *testing.T) {
 	var lines []LogLine
 	lines = append(lines, h2Line("VERIFY", "2", 38), h2Line("CONTEXT", "", 38))
-	lines = append(lines, fieldLines("needs", []string{"the pick and pickbg colors exist in mascot.UI"}, 38)...)
-	lines = append(lines, fieldLines("does", []string{"one", "two"}, 38)...)
-	lines = append(lines, fieldLines("files", []string{"internal/tui/plans.go", "internal/tui/live.go"}, 38)...)
+	lines = append(lines, fieldLines(h3{label: "needs", items: []string{"the pick and pickbg colors exist in mascot.UI"}}, 38, 8)...)
+	lines = append(lines, fieldLines(h3{label: "does", items: []string{"one", "two"}}, 38, 8)...)
+	lines = append(lines, fieldLines(h3{label: "files", items: []string{"internal/tui/plans.go", "internal/tui/live.go"}}, 38, 8)...)
+	lines = append(lines, fieldLines(h3{label: "after", items: []string{"✓ plans-ui  Home cards, folder browser, duplicate names refused"}, bare: true, rows: 2}, 38, 8)...)
+	lines = append(lines, fieldLines(h3{label: "changed", items: []string{"internal/tui/plans.go"}}, 38, h3Col(h3{label: "changed", items: []string{"x"}}))...)
 	var got []string
 	for _, l := range lines {
 		got = append(got, plainRow(l, 38))
@@ -1118,6 +1120,9 @@ func TestH2AndFields(t *testing.T) {
 		"          • two",
 		"  files   internal/tui/plans.go",
 		"          internal/tui/live.go",
+		"  after   ✓ plans-ui  Home cards,",
+		"          folder browser, duplicate n…",
+		"  changed  internal/tui/plans.go",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -1128,7 +1133,7 @@ func TestH2AndFields(t *testing.T) {
 	if h := h2Line("FEED", "", 38); !h.Spans[0].Bold || h.Spans[1].Role != "border" {
 		t.Fatalf("%+v", h.Spans)
 	}
-	if fieldLines("needs", nil, 38) != nil {
+	if fieldLines(h3{label: "needs"}, 38, 8) != nil {
 		t.Fatal("an empty field draws nothing")
 	}
 }

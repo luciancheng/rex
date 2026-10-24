@@ -32,18 +32,26 @@ Rex is **watch-only**. It never runs tools, approves them, steers the agent or s
 REX [PLAN] AGENT idle            following rex/plans/cuj/sendoff-demo.rex.json
 ▸ card-highlight  Selected plan card is one block                     1/3 done
   PLANS › Send-off demo                                                active
-  last ✓ plans-ui: Home cards, folder browser, duplicate names refused
+  A teammate opens this plan in Rex and sees what the work is and which task …
 
-  ✓ plans-ui        Plans navigator · Create, open and browse rex/plans in th…
-▌ ▸ card-highlight  Selected plan card is one block · Bar, border and fill co…
+╭─[PINNED]─ card-highlight · Selected plan card is one block ────────────────╮
+│ does    Bar, border and fill cover all three rows of the selected card     │
+│ needs   the pick and pickbg colors exist in mascot.UI                      │
+│ verify  go test ./internal/tui -run PlanCardSelection                      │
+│         Open latest: ▌ on all three card rows                              │
+│ files   plans.go  live.go  plans_test.go                                   │
+│ done    ✓ plans-ui  Home cards, folder browser, duplicate names refused    │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+TASKS ─────────────────────────────────────────────────────────────── 1/3 done
+  ✓ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
+▌ ▸ card-highlight  Selected plan card is one block · Bar, border and…  pinned
   · load-outline    Outline view · Opening a plan shows…  after card-highlight
-
-
 
 esc plans  tab agent  enter open  ? help  ↑↓ move
 ```
 
-The top row is the tabs (a `•` between them means the other tab has news, `!` that it needs you), the turn and the open plan; the second, the task the agent is on and the plan's progress; the third, where you are (Esc goes back along it). The bottom row lists the keys that work here.
+The top row is the tabs (a `•` between them means the other tab has news, `!` that it needs you), the turn and the open plan; the second, the task the agent is on and the plan's progress; the third, where you are (Esc goes back along it). Under the plan's goal, the **PINNED** card is what a fresh chat needs to work that task, read from the plan file: what it does and needs, how to check it, its files, and the done task it builds on (`NEXT UP` when no task is active yet). Then every task, the pinned one in yellow, each done one with what it accomplished. The bottom row lists the keys that work here.
 
 ## Requirements
 
@@ -79,7 +87,7 @@ This puts `rex` in `$(go env GOPATH)/bin`. Then wire your agent (see [Agents](#a
 
 1. Wire your agent (see [Agents](#agents)) and teach it the plan format with `rex ingest --install-skill`. Open a new terminal, `cd` into your repo and run `rex start`. It opens the plan you had open last time, else the newest plan in `rex/plans/`, else waits for one.
 2. Ask your agent to plan the work in `rex/plans/<name>.rex.json`. Rex opens the outline as soon as the agent writes the file, and updates it as the agent fills it in.
-3. Ask your agent to work the plan ("work the plan", "continue rex/plans/<name>.rex.json"). It sets the task it starts to `active`, and Rex shows it as the pin on the status line and in the outline. When it finishes, it marks the task `done` with what it did, what it changed and how it checked, and Rex shows `✓ <task> done · next up <next>`. Each task is one PR; ask it for the next one when you're ready.
+3. Ask your agent to work the plan ("work the plan", "continue rex/plans/<name>.rex.json"). It sets the task it starts to `active`, and Rex shows it as the pin on the status line and on the outline's PINNED card. When it finishes, it marks the task `done` with what it did, what it changed and how it checked, and Rex shows `✓ <task> done · next up <next>`; the card moves on to the next task. Enter on a task shows all of it; enter on the plan's title row shows its goal, scope and everything done so far. Each task is one PR; ask it for the next one when you're ready.
 4. Press Tab to watch the agent while it works, and Tab again to go back to the plan. `?` shows every key.
 5. The top row says `following` while Rex opens each plan your agent writes. Pick another plan yourself (Esc, then pick it from the list, or type a name and enter) and it says `latched`: a plan the agent writes then waits on the status line until you press enter.
 6. Ctrl+C twice quits.

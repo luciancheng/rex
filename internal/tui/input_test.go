@@ -156,7 +156,7 @@ func TestHelpOverlay(t *testing.T) {
 		if m := regexp.MustCompile(`(?m)^  [a-z]( |$)`).FindString(body); m != "" {
 			t.Fatalf("help at %d has a one-letter key %q\n%s", width, m, body)
 		}
-		for _, want := range []string{"THIS PAGE", "MARKS", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
+		for _, want := range []string{"THIS PAGE", "MARKS", "[PINNED]", "[NEXT UP]", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("help at %d lacks %q\n%s", width, want, body)
 			}

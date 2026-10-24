@@ -5,21 +5,21 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/luciancheng/rex/internal/plan"
+	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
 // Attach (docs/ux.md §1, §11): Rex opens the plan your agent writes. An
 // unlatched session follows each plan file its agent writes in this
-// repo's rex/plans; once you pick a plan in the list, or pin or finish a
-// task in it, it is latched, and another plan's write is only offered on
-// row 1. Typing in PLAN (except on the Wait screen, whose draft carries
-// over), a Name prompt, or a done, send-off or pin overlay holds an
-// attach until it clears.
+// repo's rex/plans; once you pick a plan in the list it is latched, and
+// another plan's write is only offered on row 1. Text in the plan list's
+// composer, or a Name prompt, holds an attach until it clears.
 
 // completedEdit reports whether ev is a file edit that happened: a result,
-// not a denied or failed write, never a read (docs/ux.md §8, §9a).
+// not a denied or failed write, never a read (docs/ux.md §9a, §11).
 func completedEdit(ev watch.Event) bool {
 	ok, has := ev.Meta["ok"].(bool)
 	return ev.Kind == "result" && watch.IsFileEditEvent(ev) && (!has || ok)
@@ -89,6 +89,20 @@ func (a *app) sawWrite(ev watch.Event) {
 	}
 }
 
+// writesOpen reports whether ev is a completed edit of the open plan.
+func (a *app) writesOpen(ev watch.Event) bool {
+	if !completedEdit(ev) {
+		return false
+	}
+	cwd, _ := ev.Meta["cwd"].(string)
+	for _, p := range watch.EventPaths(ev) {
+		if f := a.planFile(p, cwd); f != "" && a.isOpen(f) {
+			return true
+		}
+	}
+	return false
+}
+
 // planWritten acts on the plan writes of the batch just ingested: a write
 // of the open plan drops a held attach (the agent is back on it); another
 // plan is opened while following, and offered while latched.
@@ -133,24 +147,11 @@ func (a *app) attach(path string) bool {
 	return true
 }
 
-// attachBlocked: PLAN's draft has text, a Name prompt is open, or a
-// done, send-off or pin overlay is open in either place (opening a plan
-// would close it). Help holds nothing, and neither does a draft on the
-// Wait screen: it is a verb there as on the outline, so it carries over.
+// attachBlocked: the plan list's draft has text, or a Name prompt is
+// open, in either place (opening a plan would drop them). Help holds
+// nothing.
 func (a *app) attachBlocked() bool {
-	draft := a.draft
-	if a.pane != PanePlans {
-		draft = a.parked
-	}
-	if (draft != "" && a.at != atWait) || (a.at == atLibrary && a.plans.Prompting()) {
-		return true
-	}
-	for _, o := range a.overlay {
-		if o == overlayPin || o == overlayDone || o == overlaySendoff {
-			return true
-		}
-	}
-	return false
+	return a.draft != "" || (a.at == atLibrary && a.plans.Prompting())
 }
 
 // applyPending opens a held attach once nothing blocks it (settle). A held
@@ -167,13 +168,17 @@ func (a *app) applyPending() bool {
 	return true
 }
 
-// latch stops following: you picked this plan, or wrote to it with p⏎ or
-// d⏎ (docs/ux.md §11). A held attach becomes an offer, neither lost nor
-// opened.
-func (a *app) latch() {
-	a.follow = false
-	if a.pending != "" {
-		a.offer, a.pending = a.pending, ""
+// latch stops following: you picked another plan in the list, or created
+// one there (docs/ux.md §11).
+func (a *app) latch() { a.follow = false }
+
+// offerHeld makes a write held while you picked or created a plan in the
+// list the row-1 offer, neither opened nor lost, unless it is the plan you
+// picked (docs/ux.md §11). openedPlan clears pending, so callers save it
+// first.
+func (a *app) offerHeld(held string) {
+	if held != "" && !a.isOpen(held) {
+		a.offer = held
 	}
 }
 
@@ -198,12 +203,11 @@ func (a *app) takeOffer() bool {
 	return true
 }
 
-// offerTakes: ⏎ on an empty draft takes the offer here, which is only
-// while row 1 shows it (docs/ux.md §4): not under the plan file's error,
-// a toast or hard drift. Not in the Library either, where ⏎ opens the
-// selected row, nor in an overlay, nor while this place's draft has text
-// (⏎ runs it); and not while an attach would be held, since opening the
-// plan would drop PLAN's draft or a form.
+// offerTakes: ⏎ takes the offer here, which is only while row 1 shows it
+// (docs/ux.md §4): not under the plan file's error, a toast or hard
+// drift. Not in the Library either, where ⏎ opens the selected row, nor
+// in Help, nor while an attach would be held, since opening the plan
+// would drop the plan list's draft or a Name prompt.
 func (a *app) offerTakes() bool {
 	if _, over := a.overOffer(); over {
 		return false
@@ -213,7 +217,7 @@ func (a *app) offerTakes() bool {
 
 // offerCan is offerTakes without asking what row 1 shows.
 func (a *app) offerCan() bool {
-	if a.offer == "" || a.overlay[a.pane] != overlayNone || strings.TrimSpace(a.draft) != "" || a.attachBlocked() {
+	if a.offer == "" || a.overlay[a.pane] != overlayNone || a.attachBlocked() {
 		return false
 	}
 	return a.pane == PaneChat || a.at != atLibrary
@@ -221,10 +225,14 @@ func (a *app) offerCan() bool {
 
 // offerStatus is row 1's new-plan line (docs/ux.md §4): a latched
 // session's agent wrote another plan, or a followed write waits for what
-// you are typing. It stays until taken or until you open a plan.
+// you are typing in the plan list. It stays until taken or until you open
+// a plan.
 func (a *app) offerStatus() (StatusLine, bool) {
 	p, tail, short := a.offer, "", ""
 	switch {
+	case a.pending != "" && a.at == atLibrary && a.plans.Prompting():
+		// Even an empty Name prompt holds it: only closing the prompt lets go.
+		p, tail, short = a.pending, " · opens when the prompt closes", " · waiting"
 	case a.pending != "":
 		p, tail, short = a.pending, " · opens when the line is clear", " · waiting"
 	case a.offer == "":
@@ -294,7 +302,16 @@ func (a *app) land() {
 	}
 	a.plans.open(p)
 	a.openedPlan()
-	if n := a.plans.Notice; n != "" {
+	// An older Rex's skill still teaches that Rex's workflow (the person
+	// marks tasks done in Rex), and an upgrader lands here, not on the Wait
+	// screen that says so. It wins over the Library's notice, which the
+	// Library still shows; Help shows the skill too. A missing skill isn't
+	// news: Wait and Help say so.
+	switch c, n := a.skill.look(a.plans.Repo, a.now()), a.plans.Notice; {
+	case c == skill.Stale || c == skill.StaleProject:
+		a.flash(skillHint(c), "accent")
+		a.toast.Short = "rex-plan skill out of date · ? help"
+	case n != "":
 		// The Library's notice (outside git, an old rex-plans/) is news at
 		// start, which no longer shows the Library.
 		a.flash(n, "muted")
@@ -319,7 +336,9 @@ func (a *app) scanPlans() bool {
 
 // waitBody is PLAN before any plan is open (docs/ux.md §11): Rex waits
 // for the agent to write one. With plans off it says only that and how
-// to turn them on; outside git it names the folder plans go to.
+// to turn them on; outside git it names the folder plans go to; with the
+// rex-plan skill nowhere an agent reads it, or an older Rex's copy there,
+// it says how to install it.
 func (a *app) waitBody(width int) []LogLine {
 	if width <= 0 {
 		return nil
@@ -341,25 +360,56 @@ func (a *app) waitBody(width int) []LogLine {
 	}
 	lines = append(lines, LogLine{Kind: "gap"})
 	lines = appendWrapped(lines, "idle", "Rex opens "+where+"<name>.rex.json here as soon as your agent writes it.", inner)
-	return appendWrapped(lines, "idle", "rex ingest --install-skill teaches agents the plan format.", inner)
+	if hint := skillHint(a.skill.look(a.plans.Repo, a.now())); hint != "" {
+		lines = appendWrapped(lines, "idle", hint, inner)
+	}
+	return lines
+}
+
+// skillHint is what to do about the rex-plan skill, or "" when every copy
+// agents read is this Rex's.
+func skillHint(c skill.Copy) string {
+	switch c {
+	case skill.Missing:
+		return "agents learn plans from the rex-plan skill · rex ingest --install-skill"
+	case skill.Stale:
+		return "rex-plan skill is out of date · rex ingest --install-skill"
+	case skill.StaleProject:
+		return "rex-plan skill is out of date · rex ingest --install-skill --project"
+	}
+	return ""
+}
+
+// skillSeen remembers how the rex-plan skill stands where agents read it,
+// looked up at most every few seconds: the wait screen is drawn on every
+// frame, and an install in another terminal still shows.
+type skillSeen struct {
+	at  time.Time
+	got skill.Copy
+}
+
+func (s *skillSeen) look(repo string, now time.Time) skill.Copy {
+	if !s.at.IsZero() && now.Sub(s.at) < 3*time.Second && !now.Before(s.at) {
+		return s.got
+	}
+	home, _ := os.UserHomeDir()
+	s.at, s.got = now, skill.Look(home, repo)
+	return s.got
 }
 
 // waitFooter is the wait screen's footer (docs/ux.md §4); more says the
 // copy runs past the screen.
 func (a *app) waitFooter(more bool) []string {
-	if pv := a.preview(); pv != "" {
-		return []string{"no plan", pv}
-	}
 	if more {
-		return []string{"no plan", "esc plans", "tab tape", "↑↓ scroll", "?⏎ help"}
+		return []string{"no plan", "esc plans", "tab tape", "↑↓ scroll", "? help"}
 	}
-	return []string{"no plan", "esc plans", "tab tape", "?⏎ help"}
+	return []string{"no plan", "esc plans", "tab tape", "? help"}
 }
 
-// waitKey handles keys on the wait screen: verbs, ↑↓ and pages to scroll
-// a short screen, and Esc or ← to the plan list.
+// waitKey handles keys on the wait screen, which has no composer: ↑↓ and
+// pages scroll a short screen, and Esc or ← go to the plan list.
 func (a *app) waitKey(key string) bool {
-	step := max(1, layoutFor(a.columns, a.lines).bodyH-2)
+	step := max(1, a.layout().bodyH-2)
 	switch key {
 	case "up", "down", "pageup", "pagedown":
 		delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
@@ -372,23 +422,7 @@ func (a *app) waitKey(key string) bool {
 		a.outline.scroll = 1 << 30
 		return true
 	case "esc", "left":
-		if a.draft != "" {
-			if key == "left" {
-				return false
-			}
-			a.draft = ""
-			return true
-		}
 		return a.toLibrary()
-	case "\r", "\n":
-		text := strings.TrimSpace(a.draft)
-		if text == "" {
-			return false
-		}
-		if !a.submit(text) {
-			a.flash("'"+text+"' is not a verb · ?⏎ help", "error")
-		}
-		return true
 	}
 	return false
 }

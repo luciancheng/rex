@@ -52,7 +52,7 @@ func TestRendererFullRepaintRules(t *testing.T) {
 }
 
 func TestComposeFrameStringMatchesRows(t *testing.T) {
-	opt := ComposeOptions{Enabled: false, Columns: 100, Lines: 24, Pane: PaneChat,
+	opt := ComposeOptions{Enabled: false, Columns: 100, Lines: 24, Pane: PanePlans, Plans: NewPlanBrowser(t.TempDir()), Composer: true,
 		Log: []watch.Event{watch.NewEvent("cursor", "text", "hello", nil)}}
 	f := composeRows("idle", "yellow", opt)
 	if got := ComposeFrame("idle", "yellow", opt); !strings.Contains(got, strings.Join(f.Rows, "\r\n")) {
@@ -60,6 +60,10 @@ func TestComposeFrameStringMatchesRows(t *testing.T) {
 	}
 	if len(f.Rows) != 24 || f.CursorRow != 22 {
 		t.Fatalf("rows=%d cursor=%d", len(f.Rows), f.CursorRow)
+	}
+	opt.Pane, opt.Composer = PaneChat, false // no composer, so no cursor
+	if f := composeRows("idle", "yellow", opt); f.CursorRow != 0 || !strings.HasSuffix(ComposeFrame("idle", "yellow", opt), HideCursor) {
+		t.Fatalf("the tape hides the cursor: row %d", f.CursorRow)
 	}
 }
 
@@ -77,17 +81,16 @@ func TestLogViewIsCachedPerRevision(t *testing.T) {
 	}
 }
 
-// The caches never show stale content: a note typed after the tape was
+// The caches never show stale content: a line Rex adds after the tape was
 // laid out appears, a trim-only ingest relays the tape, and the mascot is
 // cached per color mode.
 func TestCachesRefresh(t *testing.T) {
 	a := testApp(t)
 	press(a, "\t")
 	a.frame() // fills the tape cache
-	typeText(a, "a fresh note")
-	press(a, "\r")
-	if !strings.Contains(a.frame(), "a fresh note") {
-		t.Fatal("a note typed after the cache filled must show")
+	a.tapeLine("plan", "a fresh line")
+	if !strings.Contains(a.frame(), "a fresh line") {
+		t.Fatal("a line added after the cache filled must show")
 	}
 	var evs []watch.Event
 	for i := 0; i < MaxLog; i++ {

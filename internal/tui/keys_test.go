@@ -256,8 +256,8 @@ func TestCoalescePaste(t *testing.T) {
 
 func TestPasteGoesIntoTheDraftAndNeverSubmits(t *testing.T) {
 	a := testApp(t)
-	press(a, "\t", PastePrefix+"line one  line two")
-	if a.draft != "line one  line two" || len(a.log) != 0 {
+	press(a, "esc", PastePrefix+"line one  line two")
+	if a.draft != "line one  line two" || a.at != atLibrary || len(a.log) != 0 {
 		t.Fatalf("draft %q log %d", a.draft, len(a.log))
 	}
 	press(a, PastePrefix+strings.Repeat("é", 400))

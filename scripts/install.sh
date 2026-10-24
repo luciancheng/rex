@@ -79,18 +79,22 @@ claude="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 [[ -d "$claude" ]] && hints+=("rex ingest --install claude        # Claude Code (add --project for one repo)")
 [[ -d "${CODEX_HOME:-$HOME/.codex}" ]] && hints+=("rex ingest --install codex         # Codex, then trust the hooks in /hooks")
 [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/opencode" ]] && hints+=("rex ingest --install opencode      # OpenCode")
-# The skill lives in ~/.claude/skills: offered only where that folder is.
-skill_for="Claude Code, Cursor and OpenCode"
-[[ -n "${CLAUDE_CONFIG_DIR:-}" ]] && skill_for="Claude Code (it goes in \$CLAUDE_CONFIG_DIR)"
-[[ -d "$claude" ]] && hints+=("rex ingest --install-skill         # teach $skill_for the plan format")
 if ((${#hints[@]})); then
   say
   say "Other agents (opt-in):"
   for h in "${hints[@]}"; do say "  $h"; done
 fi
+# The skill goes in ~/.claude/skills and ~/.agents/skills, which every
+# agent reads: offered once any agent is here, under its own heading,
+# since it is no agent of its own.
+if [[ -d "$HOME/.cursor" || -d "$claude" || -d "${CODEX_HOME:-$HOME/.codex}" || -d "${XDG_CONFIG_HOME:-$HOME/.config}/opencode" ]]; then
+  say
+  say "Teach your agents Rex plans (opt-in):"
+  say "  rex ingest --install-skill         # the plan format and how to work a plan"
+fi
 
 say
-say "REX is installed. Open a new terminal, then, in the repo you want to send off:"
+say "REX is installed. Open a new terminal, then, in the repo you work in:"
 say "  cd <your-repo> && rex start"
 if ! command -v rex >/dev/null 2>&1 && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   say

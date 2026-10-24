@@ -20,11 +20,14 @@ func (l DriftLevel) String() string {
 }
 
 // Drift is one judgement: the level, what it was about (a path or a
-// prompt excerpt), and why, in words for row 1 and the tape.
+// prompt excerpt), and why, in words for row 1 and the tape. Names is the
+// task a prompt names instead of the pin: asking the agent to switch to
+// it may be what moves the pin next (docs/ux.md §9a).
 type Drift struct {
 	Level   DriftLevel
 	Subject string
 	Reason  string
+	Names   string
 }
 
 // CheckEdit judges a completed edit of rel, a repo-relative path with "/"
@@ -89,13 +92,10 @@ func CheckEdit(p *Plan, pin *Task, rel string, fold bool) Drift {
 }
 
 // CheckPrompt judges a user prompt against the pin, the plan goal and
-// scope. A brief pasted back (it carries the send-off fingerprint) and
-// short prompts never drift.
+// scope. Short prompts never drift.
 func CheckPrompt(p *Plan, pin *Task, prompt string) Drift {
 	d := Drift{Subject: excerpt(prompt)}
-	// A brief pasted back (the send-off's fingerprint, or Rex's planning
-	// brief) is about the plan itself.
-	if p == nil || pin == nil || strings.Contains(prompt, "rex-sendoff: ") || strings.HasPrefix(strings.TrimSpace(prompt), "Planning brief: ") {
+	if p == nil || pin == nil {
 		return d
 	}
 	words := significant(prompt)
@@ -137,7 +137,7 @@ func CheckPrompt(p *Plan, pin *Task, prompt string) Drift {
 	}
 	for i := range p.Tasks {
 		if t := &p.Tasks[i]; t != pin && t.ID != "" && !related[t.ID] && set[strings.ToLower(t.ID)] {
-			d.Level, d.Reason = Soft, "names "+t.ID+", not the pin"
+			d.Level, d.Reason, d.Names = Soft, "names "+t.ID+", not the pin", t.ID
 			return d
 		}
 	}

@@ -57,171 +57,193 @@ func (k *keys) spent(t *testing.T, budget int, what string) {
 	k.n = 0
 }
 
-// The journey: the agent creates the plan and Rex opens it → the plan
-// list as an escape hatch → watch a turn → done → pin next → send off →
-// drift → back to the Library → quit.
+// The journey (docs/ux.md §14): Rex waits → the agent writes a plan and
+// Rex opens it → the agent pins a task → an off-pin edit shows drift →
+// the agent marks the task done → Tab to the tape and back → Esc to the
+// plan list, where picking a plan latches → quit. The agent drives the
+// plan; Rex only shows it and never writes it.
 func TestCUJWholeLoop(t *testing.T) {
 	a := testApp(t)
 	c := &clock{t: time.Unix(1_800_000_000, 0)}
 	a.now = c.now
 	k := &keys{a: a}
-	var copied []string
-	a.copy = fakeCopy(&copied, copyResult{status: "copied (fake)"})
-
-	if a.pane != PanePlans || a.at != atWait || !strings.Contains(a.frame(), "no plan yet · tell your agent to make one") {
-		t.Fatalf("A. with no plan yet, start waits for one\n%s", a.frame())
-	}
 	repo := a.plans.Repo
 	path := filepath.Join(a.plans.Root, "cuj", "sendoff-demo.rex.json")
+	agent := func(body []byte) { // the agent edits the plan with its file tool
+		os.WriteFile(path, body, 0o644)
+		a.ingest([]watch.Event{at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Write", "path": path, "ok": true, "cwd": repo}})})
+		later(a, c)
+	}
+
+	if a.pane != PanePlans || a.at != atWait || !strings.Contains(a.frame(), "no plan yet · tell your agent to make one") || strings.Contains(a.frame(), "╭") {
+		t.Fatalf("A. with no plan yet, start waits for one, with no composer\n%s", a.frame())
+	}
+	if !strings.Contains(a.frame(), "agents learn plans from the rex-plan skill · rex ingest --install-skill") {
+		t.Fatalf("A. with the skill nowhere, the wait screen says how to teach the agent\n%s", a.frame())
+	}
+
+	// B. The agent writes the plan: a stub first, then its tasks, none
+	// active yet.
 	os.MkdirAll(filepath.Dir(path), 0o755)
-	os.WriteFile(path, plan.Stub("sendoff-demo"), 0o644)
-	a.ingest([]watch.Event{at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Write", "path": path, "ok": true, "cwd": repo}})})
-	k.spent(t, 0, "create (the agent writes the plan)") // docs/ux.md §14
-	if a.at != atOutline || a.plans.Current != path || !a.follow || !strings.Contains(a.frame(), "No tasks yet") || !strings.Contains(a.frame(), "following · rex/plans/cuj/sendoff-demo.rex.json") {
+	agent(plan.Stub("sendoff-demo"))
+	k.spent(t, 0, "create (the agent writes the plan)")
+	if a.at != atOutline || a.plans.Current != path || !a.follow || !strings.Contains(a.frame(), "No tasks yet · your agent fills this file") || !strings.Contains(a.frame(), "following · rex/plans/cuj/sendoff-demo.rex.json") {
 		t.Fatalf("B. the agent's write opens the plan, followed\n%s", a.frame())
 	}
-	os.WriteFile(path, cujFixture(t), 0o644)
-	later(a, c)
-	k.spent(t, 0, "open (Rex follows the write)")
+	active := cujFixture(t)
+	planned := []byte(strings.Replace(strings.Replace(string(active), `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "pending",
+      "depends_on": ["plans-ui"],`, 1), `"status": "active",
+  "scope"`, `"status": "pending",
+  "scope"`, 1))
+	agent(planned)
+	k.spent(t, 0, "see the plan (Rex follows the write)")
 	if a.outline.sel != "card-highlight" || !strings.Contains(a.frame(), "▌ ▸ card-highlight") || !strings.Contains(a.frame(), "plan updated · +3 tasks") {
 		t.Fatalf("B. the filled plan lands on its pin: sel=%q\n%s", a.outline.sel, a.frame())
 	}
+	c.t = c.t.Add(toastFor)
+	if got := a.statusLine().Text; got != "▸ card-highlight  Selected plan card is one block (next up)" {
+		t.Fatalf("B. row 1 names the next up task, with nothing to type: %q", got)
+	}
 
-	// The plan list stays an escape hatch: create, refuse a duplicate,
-	// open by name. Picking a plan there latches it.
-	k.press("esc")
-	k.typ("scratch")
-	k.press("\r")
-	k.spent(t, 1+len("scratch")+1, "create in Rex (Esc, find, ⏎)")
-	stub, err := plan.Load(filepath.Join(a.plans.Root, "scratch.rex.json"))
-	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || a.follow || !strings.Contains(a.frame(), "No tasks yet") || !strings.Contains(a.frame(), "latched") {
-		t.Fatalf("C. create writes a v1 stub, opens it and latches: %v %+v\n%s", err, stub, a.frame())
+	// C. The agent starts the task: it writes active, and Rex shows it.
+	agent(active)
+	k.spent(t, 0, "see the pin")
+	if got := a.statusLine().Text; got != "plan updated · card-highlight → active · plan → active" {
+		t.Fatalf("C. the agent's pin arrives as a reload: %q", got)
 	}
-	k.press("esc", "home", "down")
-	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowNew {
-		t.Fatal("C. Create sits under Continue")
+	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "card-highlight → active · plan → active" {
+		t.Fatalf("C. one plan line on the tape: %+v", last)
 	}
-	k.press("\r")
-	k.typ("scratch")
-	k.press("\r")
-	if !strings.Contains(a.frame(), "already exists") {
-		t.Fatalf("C. a duplicate name is refused\n%s", a.frame())
+	c.t = c.t.Add(toastFor)
+	if got := a.statusLine().Text; got != "▸ card-highlight  Selected plan card is one block (active)" || !strings.Contains(a.frame(), "▌ ▸ card-highlight") {
+		t.Fatalf("C. row 1 and the outline follow the file: %q\n%s", got, a.frame())
 	}
-	k.press("\x15", "esc", "home", "\r") // Ctrl+U, back to Home, ⏎ on Continue
-	if a.plans.Current != filepath.Join(a.plans.Root, "scratch.rex.json") || a.at != atOutline || a.follow {
-		t.Fatal("C. Continue reopens scratch and keeps it latched")
+
+	// The agent works the task; the old verbs do nothing on the outline.
+	k.press("p", "d", "s", "b", PastePrefix+"pin load-outline")
+	if got, _ := os.ReadFile(path); string(got) != string(active) || a.draft != "" || !strings.HasPrefix(a.statusLine().Text, "▸ card-highlight") {
+		t.Fatal("C. letters and a paste on the outline change nothing")
 	}
 	k.n = 0
-	k.press("esc")
-	k.typ("sendoff-demo")
-	k.press("\r")
-	k.spent(t, 1+len("sendoff-demo")+1, "open by name (Esc, name, ⏎)")
-	if a.at != atOutline || a.outline.sel != "card-highlight" || !strings.Contains(a.frame(), "▸ card-highlight  Selected plan card is one block (active)") {
-		t.Fatalf("D. the outline opens on the pin\n%s", a.frame())
-	}
-
-	k.press("\t")
-	k.spent(t, 1, "to the tape")
 	write := filepath.Join(repo, "internal/tui/plans.go")
-	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "make the selected card one block"})})
+	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "work the plan: continue rex/plans/cuj/sendoff-demo.rex.json"})})
 	if a.turn != TurnThinking {
-		t.Fatalf("E. a prompt starts the turn: %v", a.turn)
+		t.Fatalf("D. a prompt starts the turn: %v", a.turn)
 	}
 	a.ingest([]watch.Event{
 		at(c, 2*time.Second, watch.Event{Source: "claude", Kind: "thought", Text: "The card rows are painted separately."}),
 		at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "command", Text: "Edit " + write, Meta: map[string]any{"tool": "Edit", "path": write}}),
-	})
-	if a.turn != TurnRunning {
-		t.Fatalf("E. a tool runs the turn: %v", a.turn)
-	}
-	a.ingest([]watch.Event{
 		at(c, 4*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + write, Meta: map[string]any{"tool": "Edit", "path": write, "ok": true}}),
-		at(c, 5*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "ran go test ./internal/tui -run PlanCardSelection", Meta: map[string]any{"tool": "Bash", "command": "go test ./internal/tui -run PlanCardSelection", "ok": true}}),
-		at(c, 6*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Done: one block now.\n\naccomplished: the selection bar, border and fill cover all three card rows\nverified: go test ./internal/tui -run PlanCardSelection passed"}),
 	})
-	tape := viewText(BuildLogView(a.log, 78))
-	for _, want := range []string{"── thinking", "── run", "── reply", "Done: one block now."} {
-		if !strings.Contains(tape, want) {
-			t.Errorf("E. tape missing %q\n%s", want, tape)
-		}
+	if a.turn != TurnRunning || strings.HasPrefix(a.statusLine().Text, "drift") {
+		t.Fatalf("D. a listed file runs the turn and adds no drift: %v %q", a.turn, a.statusLine().Text)
 	}
-	if strings.Contains(tape, "wrote ") || strings.Contains(tape, "── done") {
-		t.Errorf("E. no wrote/done spam\n%s", tape)
-	}
-	if a.turn != TurnIdle {
-		t.Fatalf("E. the reply ends the turn: %v", a.turn)
-	}
-
-	k.typ("d")
-	k.press("\r", "\r")
-	k.spent(t, 3, "done with the agent's words")
-	p, _ := plan.Load(path)
-	ch := p.Task("card-highlight")
-	if ch.Status != plan.Done || ch.Accomplished[0] != "the selection bar, border and fill cover all three card rows" || !strings.Contains(strings.Join(ch.Modified, ","), "internal/tui/plans.go") || ch.VerifiedHow[0] != "go test ./internal/tui -run PlanCardSelection passed" {
-		t.Fatalf("F. the retrospective is on disk: %+v", ch)
-	}
-	if p.Task("load-outline").Status != plan.Pending || a.statusLine().Text != "✓ card-highlight done · next up load-outline · p⏎ pins it" {
-		t.Fatalf("F. nothing is auto-pinned: %q", a.statusLine().Text)
-	}
-
-	k.typ("p")
-	k.press("\r")
-	k.spent(t, 2, "pin next up")
-	if p, _ := plan.Load(path); p.Task("load-outline").Status != plan.Active {
-		t.Fatal("D. p⏎ pins next up")
-	}
-
-	k.typ("s")
-	k.press("\r")
-	k.spent(t, 2, "sendoff")
-	a.tick()
-	if len(copied) != 1 {
-		t.Fatal("G. the brief is copied")
-	}
-	brief := copied[0]
-	for _, want := range []string{"File: rex/plans/cuj/sendoff-demo.rex.json", "Goal\n", "- Out: extra palettes, web UI", "- [done] card-highlight (depends on: plans-ui)", "- [active] load-outline (depends on: card-highlight)", "### load-outline", "Done\n- plans-ui", "  actual: the selection bar, border and fill cover all three card rows", "Work only on the pinned task.", "rex-sendoff: rex/plans/cuj/sendoff-demo.rex.json#load-outline"} {
-		if !strings.Contains(brief, want) {
-			t.Errorf("G. brief missing %q\n%s", want, brief)
-		}
-	}
-	if strings.Contains(brief, "make the selected card one block") || strings.Contains(brief, "The card rows are painted") {
-		t.Fatal("G. nothing from the tape is in the brief")
-	}
-	k.press("esc")
-	k.spent(t, 1, "close the brief")
-
-	c.t = c.t.Add(toastFor) // a toast outranks drift on row 1 (docs/ux.md §4)
-	a.ingest([]watch.Event{at(c, 10*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote README.md", Meta: map[string]any{"tool": "Write", "path": filepath.Join(repo, "README.md"), "ok": true}})})
+	// D. An edit off the pin shows drift.
+	a.ingest([]watch.Event{at(c, 5*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote README.md", Meta: map[string]any{"tool": "Write", "path": filepath.Join(repo, "README.md"), "ok": true}})})
 	if !strings.HasPrefix(a.statusLine().Text, "drift · hard: README.md") {
-		t.Fatalf("H. drift shows: %q", a.statusLine().Text)
-	}
-	a.ingest([]watch.Event{at(c, 11*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote outline.go", Meta: map[string]any{"tool": "Write", "path": filepath.Join(repo, "internal/tui/outline.go"), "ok": true}})})
-	if line := a.statusLine().Text; !strings.HasPrefix(line, "drift · hard: README.md") || strings.Contains(line, "outline.go") {
-		t.Fatalf("H. a listed file adds no drift: %q", line)
+		t.Fatalf("D. drift shows: %q", a.statusLine().Text)
 	}
 
-	k.press("\t")
-	if a.pane != PanePlans || a.at != atOutline {
-		t.Fatal("I. Tab returns to the outline")
+	// E. The agent marks the task done, with its retrospective.
+	done := []byte(strings.Replace(string(active), `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "depends_on": ["plans-ui"],
+      "accomplished": ["the selection bar, border and fill cover all three card rows"],
+      "modified": ["internal/tui/plans.go"],
+      "verified_how": ["go test ./internal/tui -run PlanCardSelection (passed)"],
+      "completed_notes": "the pick colors were already in mascot.UI",`, 1))
+	agent(done)
+	a.ingest([]watch.Event{at(c, 6*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Done: one block now. card-highlight is marked done in the plan."})})
+	k.spent(t, 0, "mark done (the agent does)")
+	if got := a.statusLine().Text; got != "✓ card-highlight done · next up load-outline" {
+		t.Fatalf("E. the file finished the pin: %q", got)
+	}
+	if a.turn != TurnIdle || !strings.Contains(a.frame(), "last ✓ card-highlight: the selection bar") {
+		t.Fatalf("E. the reply ends the turn; the outline says where we left off\n%s", a.frame())
+	}
+	k.press("\r") // the selection stayed on the task the agent finished
+	if a.at != atTaskDetail || a.outline.sel != "card-highlight" {
+		t.Fatalf("E. ⏎ on the task opens its detail: at=%d sel=%q", a.at, a.outline.sel)
+	}
+	detail := viewText(taskDetail(a.doc, a.outline.sel, 78)) // it scrolls; all of it
+	for _, want := range []string{"── retrospective", "the selection bar, border and fill cover all three", "internal/tui/plans.go", "go test ./internal/tui -run PlanCardSelection (passed)", "the pick colors were already in mascot.UI"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("E. task detail shows %q\n%s", want, detail)
+		}
 	}
 	k.press("esc")
-	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowContinue {
-		t.Fatal("I. Esc climbs to the Library, on Continue")
+	k.n = 0
+
+	// F. Tab to the tape and back.
+	k.press("\t")
+	k.spent(t, 1, "watch the tape")
+	tape := viewText(BuildLogView(a.log, 78))
+	for _, want := range []string{"── thinking", "── run", "── reply", "Done: one block now.", "card-highlight → active", "card-highlight → done", "── drift · card-highlight"} {
+		if !strings.Contains(tape, want) {
+			t.Errorf("F. tape missing %q\n%s", want, tape)
+		}
 	}
+	if strings.Contains(tape, "wrote ") || strings.Contains(tape, "── done") || strings.Contains(tape, "── note") {
+		t.Errorf("F. no wrote/done spam, no notes\n%s", tape)
+	}
+	logged := len(a.log)
+	k.press("p", "d", "s", "b", "x", "\r")
+	if len(a.log) != logged || a.draft != "" {
+		t.Fatal("F. typing on the tape adds nothing")
+	}
+	k.n = 0
+	k.press("\t")
+	k.spent(t, 1, "back to the plan")
+	if a.pane != PanePlans || a.at != atOutline {
+		t.Fatal("F. Tab returns to the outline")
+	}
+
+	// G. The plan list: create a plan there, then open one by name. Picking
+	// a plan there latches it.
+	k.press("esc")
+	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowContinue || !strings.Contains(a.frame(), "╭") {
+		t.Fatal("G. Esc climbs to the plan list, on Continue, where the composer is")
+	}
+	k.press("\r")
+	if !a.follow || a.at != atOutline {
+		t.Fatal("G. ⏎ on Continue keeps following")
+	}
+	k.n = 0
+	k.press("esc")
+	k.typ("scratch")
+	k.press("\r")
+	k.spent(t, 1+len("scratch")+1, "create in Rex (Esc, name, ⏎)")
+	stub, err := plan.Load(filepath.Join(a.plans.Root, "scratch.rex.json"))
+	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || a.follow || !strings.Contains(a.frame(), "latched") {
+		t.Fatalf("G. create writes a v1 stub, opens it and latches: %v\n%s", err, a.frame())
+	}
+	k.press("esc")
+	k.typ("sendoff-demo")
+	k.press("\r")
+	k.spent(t, 1+len("sendoff-demo")+1, "open by name (Esc, name, ⏎)")
+	if a.plans.Current != path || a.at != atOutline || a.follow || a.outline.sel != "load-outline" {
+		t.Fatalf("G. the plan opens on its pin, latched: sel=%q\n%s", a.outline.sel, a.frame())
+	}
+
+	// H. Quit.
 	k.press(CtrlC)
 	if !strings.Contains(a.frame(), "ctrl+c again to quit") {
-		t.Fatal("J. the first Ctrl+C asks again")
+		t.Fatal("H. the first Ctrl+C asks again")
 	}
 	k.press(CtrlC)
-	k.spent(t, 4, "back home and quit")
-	if !a.quit || a.exitLine() != "rex: rex/plans/cuj/sendoff-demo.rex.json · pinned load-outline" {
-		t.Fatalf("J. quit with the plan named: %q", a.exitLine())
+	k.spent(t, 2, "quit")
+	if !a.quit || a.exitLine() != "rex: rex/plans/cuj/sendoff-demo.rex.json · next up load-outline" {
+		t.Fatalf("H. quit with the plan named: %q", a.exitLine())
+	}
+	if got, _ := os.ReadFile(path); string(got) != string(done) {
+		t.Fatalf("Rex never wrote the plan: the file is what the agent wrote\n%s", got)
 	}
 
 	b := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
-	(&keys{a: b}).spent(t, 0, "open last time's plan") // docs/ux.md §14
+	(&keys{a: b}).spent(t, 0, "open last time's plan")
 	if b.pane != PanePlans || b.at != atOutline || b.plans.Current != path || !b.follow || b.outline.sel != "load-outline" {
-		t.Fatalf("K. the next start opens it again, following: at=%d current=%q sel=%q", b.at, b.plans.Current, b.outline.sel)
+		t.Fatalf("I. the next start opens it again, following: at=%d current=%q sel=%q", b.at, b.plans.Current, b.outline.sel)
 	}
 }
 
@@ -272,13 +294,13 @@ func TestFrameMatrix(t *testing.T) {
 		{"new folder", func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r"); typeText(a, "notes") }, lib(ScreenFolder)},
 		{"outline", func(a *app) {}, at(atOutline)},
 		{"held attach", func(a *app) {
-			press(a, "\t")
-			typeText(a, "d")
-			press(a, "\r", "\t") // a done form on the tape holds it
+			list(a)
+			typeText(a, "zz")
+			press(a, "\t") // the list's find holds it, seen from the tape
 			other := filepath.Join(a.plans.Root, "cuj", "a-much-longer-plan-name-from-the-agent.rex.json")
 			os.WriteFile(other, []byte(`{"version": 1, "tasks": []}`), 0o644)
 			a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + other, Meta: map[string]any{"tool": "Write", "path": other, "ok": true}}})
-		}, func(a *app) bool { return at(atOutline)(a) && a.pending != "" }},
+		}, func(a *app) bool { return a.pane == PaneChat && a.pending != "" }},
 		{"new plan offer", func(a *app) {
 			list(a)
 			typeText(a, "scratch")
@@ -293,15 +315,11 @@ func TestFrameMatrix(t *testing.T) {
 			press(a, "\t")
 			a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "a reply with 中文 and ⚠️ in it \x1b[2J"}})
 		}, func(a *app) bool { return a.pane == PaneChat && a.overlay[a.pane] == overlayNone }},
-		{"help", func(a *app) { press(a, "\t"); typeText(a, "?"); press(a, "\r") }, over(overlayHelp)},
-		{"sendoff", func(a *app) { typeText(a, "s"); press(a, "\r") }, func(a *app) bool {
-			return over(overlaySendoff)(a) && !a.briefs[a.pane].planning
+		{"empty outline", func(a *app) { list(a); typeText(a, "scratch"); press(a, "\r") }, func(a *app) bool {
+			return at(atOutline)(a) && len(a.doc.plan.Tasks) == 0
 		}},
-		{"planning brief", func(a *app) { typeText(a, "b"); press(a, "\r") }, func(a *app) bool {
-			return over(overlaySendoff)(a) && a.briefs[a.pane].planning
-		}},
-		{"done form", func(a *app) { typeText(a, "d"); press(a, "\r") }, over(overlayDone)},
-		{"pin confirm", func(a *app) { press(a, "end"); typeText(a, "p"); press(a, "\r") }, over(overlayPin)},
+		{"help", func(a *app) { press(a, "\t", "?") }, over(overlayHelp)},
+		{"help over the list", func(a *app) { list(a); press(a, "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atLibrary }},
 	}
 	for _, size := range [][2]int{{24, 7}, {24, 12}, {24, 24}, {80, 7}, {80, 12}, {80, 24}, {120, 7}, {120, 12}, {120, 24}} {
 		for _, s := range screens {
@@ -326,6 +344,13 @@ func TestFrameMatrix(t *testing.T) {
 			for i, row := range f.Rows {
 				if cellLen(row) > size[0] {
 					t.Errorf("%s: row %d is %d cells", name, i, cellLen(row))
+				}
+				// Rex has no verbs: no footer, placeholder or empty-plan
+				// copy offers one (docs/ux.md §4, §6).
+				for _, verb := range []string{"p⏎", "d⏎", "s⏎", "b⏎", "o⏎", "brief", "send-off", "clipboard"} {
+					if strings.Contains(row, verb) {
+						t.Errorf("%s: row %d offers %q: %q", name, i, verb, row)
+					}
 				}
 				for _, r := range row {
 					if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {

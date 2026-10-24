@@ -1,49 +1,13 @@
 package tui
 
-import "github.com/luciancheng/rex/internal/plan"
-
+// overlayKind is what covers a place's body: only Help now, since Rex has
+// no actions of its own to ask about (docs/ux.md §1).
 type overlayKind int
 
 const (
 	overlayNone overlayKind = iota
 	overlayHelp
-	overlayPin
-	overlayDone
-	overlaySendoff
 )
-
-// pinAsk is a pin waiting for its confirm: the task, the status the user
-// saw, and why it needs asking.
-type pinAsk struct {
-	path     string // the plan it was asked about
-	id       string
-	title    string
-	seen     plan.Status
-	moving   []string // the active tasks it takes the pin off
-	warnings []string
-}
-
-func pinConfirmLines(ask pinAsk, width int) []LogLine {
-	lines := []LogLine{{Kind: "command", Text: rule("pin "+ask.id, width)}}
-	if ask.title != "" {
-		lines = append(lines, LogLine{Kind: "title", Text: "  " + clip(ask.title, width-2)})
-	}
-	lines = append(lines, LogLine{Kind: "gap"})
-	for _, w := range ask.warnings {
-		for i, row := range wrap(w, width-4) {
-			prefix := "    "
-			if i == 0 {
-				prefix = "  ! "
-			}
-			lines = append(lines, LogLine{Kind: "error", Text: prefix + clip(row, width-4)})
-		}
-	}
-	lines = append(lines, LogLine{Kind: "gap"})
-	for _, row := range wrap("p⏎ pins it anyway · esc cancels, nothing written", width-2) {
-		lines = append(lines, LogLine{Kind: "text", Text: "  " + row})
-	}
-	return lines
-}
 
 // Overlay covers the body of the current place (docs/ux.md §1). Tab leaves
 // it open there; Esc closes it.
@@ -83,36 +47,32 @@ func helpLines(width int) []LogLine {
 	head := func(s string) LogLine { return LogLine{Kind: "idle", Text: "  " + s} }
 	rows := []any{
 		LogLine{Kind: "command", Text: rule("help", width)},
-		head("keys"),
+		head("keys act at once"),
 		row("tab", "switch plan ↔ tape"),
 		row("↑↓ pgup pgdn", "move, or scroll"),
 		row("← →", "back / in: a folder, or a task's detail"),
 		row("home end", "first / last; tape: oldest / live"),
-		row("⏎", "open, or run what you typed"),
-		row("esc", "clear the line, then back one level"),
-		row("ctrl+u ctrl+w", "clear the line / delete a word"),
+		row("⏎", "open the selection, or switch to a plan row 1 offers"),
+		row("esc", "back one level (in the plan list, clear first)"),
+		row("?", "this screen"),
 		row("ctrl+a ctrl+e", "tape: oldest / live"),
 		row("ctrl+l", "repaint"),
 		row("ctrl+c ×2", "quit"),
 		LogLine{Kind: "gap"},
-		head("type a word, then ⏎"),
-		row("? help", "this screen"),
-		row("p  pin [id]", "pin the selected task, or next up, or that id"),
-		row("d  done", "mark the pin done: what was done, how it was checked"),
-		row("s  sendoff", "a brief of the plan to paste into the next chat"),
-		row("b  brief", "a brief that asks an agent to fill this plan"),
-		row("breakdance", "one dance"),
-		row("/word", "in plans, where typing finds or names, a verb starts with /"),
-		row("anything else", "on the tape, a note: local, never sent"),
+		head("plan list: type, then ⏎"),
+		row("text", "find a plan, filter a folder, or name a new plan"),
+		row("ctrl+u ctrl+w", "clear the line / delete a word"),
+		row("/help", "this screen"),
+		row("/breakdance", "one dance"),
 		LogLine{Kind: "gap"},
 		head("rex never"),
-		"runs or approves tools, sends anything to your agent, or reads transcripts",
+		"runs or approves tools, sends anything to your agent, reads transcripts, or writes your plan (only a new empty one you create in the list). Your agent pins and finishes tasks in the plan file; Rex shows it.",
 		LogLine{Kind: "gap"},
 		head("outline"),
 		row("▸ ○ ·", "pinned / ready / waiting (after another task)"),
 		row("✓ – !", "done / skipped / blocked; 1/3 a parent's progress"),
 		row("following", "Rex opens each plan file your agent writes"),
-		row("latched", "you picked this plan or wrote to it (p⏎, d⏎); another the agent writes shows on row 1, ⏎ switches"),
+		row("latched", "you picked this plan in the list; another the agent writes shows on row 1, ⏎ switches"),
 	}
 	for _, r := range rows {
 		switch v := r.(type) {

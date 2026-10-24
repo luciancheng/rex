@@ -55,21 +55,20 @@ func TestAppStartsOnTheWaitScreen(t *testing.T) {
 	}
 }
 
-func TestAppTabKeepsEachPlacesDraft(t *testing.T) {
+// The plan list's draft waits across Tab; the tape has no composer, so
+// typing there builds nothing (docs/ux.md §2).
+func TestAppTabKeepsThePlanListsDraft(t *testing.T) {
 	a := testApp(t)
+	press(a, "esc")
 	typeText(a, "abc")
 	press(a, "\t")
-	if a.pane != PaneChat || a.draft != "" {
-		t.Fatalf("pane=%d draft=%q", a.pane, a.draft)
+	if a.pane != PaneChat || strings.Contains(a.frame(), "abc") {
+		t.Fatalf("pane=%d: the tape shows no draft\n%s", a.pane, a.frame())
 	}
 	typeText(a, "hi")
 	press(a, "\t")
 	if a.pane != PanePlans || a.draft != "abc" {
-		t.Fatalf("plan draft lost across Tab: %q", a.draft)
-	}
-	press(a, "\t")
-	if a.draft != "hi" {
-		t.Fatalf("tape draft lost: %q", a.draft)
+		t.Fatalf("plan draft lost across Tab, or the tape typed into it: %q", a.draft)
 	}
 }
 
@@ -146,8 +145,8 @@ func TestAppIngestDrivesTheTurn(t *testing.T) {
 
 func TestAppBreakdancePlaysOnceThenResumes(t *testing.T) {
 	a := testApp(t)
-	press(a, "\t")
-	typeText(a, "breakdance")
+	press(a, "esc")
+	typeText(a, "/breakdance")
 	press(a, "\r")
 	if a.sequence.Name != "breakdance" {
 		t.Fatalf("anim=%s", a.sequence.Name)
@@ -160,16 +159,42 @@ func TestAppBreakdancePlaysOnceThenResumes(t *testing.T) {
 	}
 }
 
-func TestAppComposerNoteIsLoggedLocally(t *testing.T) {
+// The tape has no composer and no notes: words typed there go nowhere,
+// and its body takes the composer's rows (docs/ux.md §2, §10).
+func TestAppTapeHasNoComposer(t *testing.T) {
 	a := testApp(t)
 	press(a, "\t")
 	typeText(a, "a note")
-	press(a, "\r")
-	if len(a.log) != 1 || a.log[0].Source != "rex" || a.log[0].Kind != "note" || a.log[0].Text != "a note" {
-		t.Fatalf("%#v", a.log)
+	press(a, "\r", PastePrefix+"pasted")
+	if len(a.log) != 0 || a.draft != "" || a.turn != TurnIdle {
+		t.Fatalf("log %#v draft %q", a.log, a.draft)
 	}
-	if a.turn != TurnIdle {
-		t.Fatal("a note does not start a turn")
+	if f := a.frame(); strings.Contains(f, "╭") || strings.Contains(f, "a note") || strings.Contains(f, "pasted") {
+		t.Fatalf("no box, nothing typed\n%s", f)
+	}
+	if PaneBodyHeight(a.lines) != a.lines-3 {
+		t.Fatalf("the tape's body is every row but the header, row 1 and the footer: %d", PaneBodyHeight(a.lines))
+	}
+}
+
+// The plan list holds the only composer (docs/ux.md §2): / finds or
+// filters, + names; the screens without one draw no box at all.
+func TestThePlanListsComposerPrefix(t *testing.T) {
+	a := testApp(t)
+	if f := a.frame(); strings.Contains(f, "╭") {
+		t.Fatalf("the wait screen has no composer\n%s", f)
+	}
+	press(a, "esc")
+	if f := a.frame(); !strings.Contains(f, "│ / ") {
+		t.Fatalf("Home finds\n%s", f)
+	}
+	press(a, "\r")
+	if f := a.frame(); a.plans.Screen != ScreenCreate || !strings.Contains(f, "│ + ") {
+		t.Fatalf("the Name prompt names\n%s", f)
+	}
+	press(a, "\t")
+	if f := a.frame(); a.pane != PaneChat || strings.Contains(f, "╭") {
+		t.Fatalf("the tape has no composer\n%s", f)
 	}
 }
 

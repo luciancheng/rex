@@ -773,8 +773,13 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 		}
 		t.Fatalf("no row of kind %d", kind)
 	}
+	// A setup that writes a plan drops the cached walk (walkTTL), so the
+	// list is the same whenever it is next built: on a slow runner the
+	// cache can expire between the frames acts compares.
 	offered := func(a *app) {
-		a.ingest([]watch.Event{wrote(a.plans.Repo, writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan))})
+		path := writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan)
+		a.plans.walk = planWalk{}
+		a.ingest([]watch.Event{wrote(a.plans.Repo, path)})
 	}
 	// Latched on the demo, as picking it in the plan list would, so enter
 	// can still open a task.
@@ -789,6 +794,7 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 	// Into rex/plans/cuj/, which holds a folder to go deeper into.
 	browse := func(a *app) {
 		writePlan(t, a.plans.Repo, "cuj/sub/deep.rex.json", demoPlan)
+		a.plans.walk = planWalk{}
 		press(a, "esc")
 		a.plans.Screen, a.plans.Dir = ScreenBrowse, filepath.Join(a.plans.Root, "cuj")
 		a.plans.Rebuild()

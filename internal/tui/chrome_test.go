@@ -757,6 +757,140 @@ func TestHelpGapsFrom16Rows(t *testing.T) {
 	}
 }
 
+// docs/ux.md §3, §4, §13: Help's THIS PAGE names every key its page acts
+// on, not only the footer's. A key acts when it changes the frame, from
+// where the page starts or after the opposite key, or what Esc shows next
+// (so a Name prompt's Home and End must leave the list's cursor alone).
+// enter that takes row 1's offer is said in AGENT's words.
+func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
+	const switchWords = "switch PLAN to a new plan row 1 offers"
+	pick := func(a *app, kind PlanRowKind) {
+		for i, row := range a.plans.Rows {
+			if row.Kind == kind {
+				a.plans.Cursor = i
+				return
+			}
+		}
+		t.Fatalf("no row of kind %d", kind)
+	}
+	offered := func(a *app) {
+		a.ingest([]watch.Event{wrote(a.plans.Repo, writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan))})
+	}
+	// Latched on the demo, as picking it in the plan list would, so enter
+	// can still open a task.
+	latched := func(a *app) { a.latch() }
+	scrolls := func(a *app) {
+		var evs []watch.Event
+		for i := 0; i < 40; i++ {
+			evs = append(evs, watch.NewEvent("claude", "text", fmt.Sprintf("reply %d", i), nil))
+		}
+		a.ingest(evs)
+	}
+	// Into rex/plans/cuj/, which holds a folder to go deeper into.
+	browse := func(a *app) {
+		writePlan(t, a.plans.Repo, "cuj/sub/deep.rex.json", demoPlan)
+		press(a, "esc")
+		a.plans.Screen, a.plans.Dir = ScreenBrowse, filepath.Join(a.plans.Root, "cuj")
+		a.plans.Rebuild()
+	}
+	pages := []struct {
+		page  string
+		setup func(a *app)
+	}{
+		{"outline", func(a *app) {}},
+		{"outline", func(a *app) { press(a, "home") }},
+		{"outline", func(a *app) { latched(a); offered(a) }},
+		{"about", func(a *app) { press(a, "home", "\r") }},
+		{"about", func(a *app) { latched(a); press(a, "home", "\r"); offered(a) }},
+		{"task", func(a *app) { latched(a); press(a, "\r"); offered(a) }},
+		{"plans", func(a *app) { press(a, "esc") }},
+		{"plans", func(a *app) { press(a, "esc"); typeText(a, "s") }},
+		{"folder", browse},
+		{"folder", func(a *app) { browse(a); pick(a, PlanRowDir); press(a, "\r") }},
+		{"folder", func(a *app) { browse(a); typeText(a, "s") }},
+		{"new plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r") }},
+		{"new plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x") }},
+		{"new folder", func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r") }},
+		{"waiting", nil},
+		{"agent", func(a *app) { press(a, "\t"); scrolls(a) }},
+		{"agent", func(a *app) { latched(a); press(a, "\t"); scrolls(a); offered(a) }},
+	}
+	words := map[string]string{"up": "↑↓", "down": "↑↓", "pageup": "pgup", "pagedown": "pgdn", "home": "home", "end": "end", "left": "←", "right": "→", "esc": "esc", "\r": "enter"}
+	opposite := map[string]string{"up": "down", "down": "up", "pageup": "pagedown", "pagedown": "pageup", "home": "end", "end": "home"}
+	for _, size := range [][2]int{{24, 7}, {80, 12}, {120, 32}} {
+		for _, pg := range pages {
+			start := func() *app {
+				var a *app
+				if pg.setup == nil {
+					a = startIn(attachRepo(t))
+				} else {
+					a, _, _ = cujApp(t)
+					pg.setup(a)
+				}
+				a.settle(size[0], size[1])
+				if got := a.pageKind(); got != pg.page {
+					t.Fatalf("%d×%d: setup for %q lands on %q", size[0], size[1], pg.page, got)
+				}
+				return a
+			}
+			first := start()
+			var section []LogLine
+			for _, line := range helpLines(78, pg.page, false)[1:] {
+				if strings.HasPrefix(line.Text, "EVERYWHERE") {
+					break
+				}
+				section = append(section, line)
+			}
+			listed := map[string]bool{}
+			for _, line := range section {
+				for _, s := range line.Spans {
+					if s.Bold {
+						for _, w := range strings.Fields(s.Text) {
+							listed[w] = true
+						}
+					}
+				}
+			}
+			text := viewText(section)
+			for _, w := range strings.Fields(text) {
+				if w == "pgup" || w == "pgdn" {
+					listed[w] = true
+				}
+			}
+			// Both key readers turn Ctrl+A and Ctrl+E into Home and End.
+			if listed["home"] && (!strings.Contains(text, "ctrl+a") || !strings.Contains(text, "ctrl+e")) {
+				t.Errorf("%d×%d %s: home and end, but not ctrl+a and ctrl+e\n%s", size[0], size[1], pg.page, text)
+			}
+			// acts says whether key changes the frame, or what Esc shows next.
+			acts := func(before []string, key string) bool {
+				a := start()
+				press(a, before...)
+				was := a.frame()
+				if press(a, key); a.frame() != was {
+					return true
+				}
+				b := start()
+				press(b, before...)
+				press(a, "esc")
+				press(b, "esc")
+				return a.frame() != b.frame()
+			}
+			if first.offerTakes() && !strings.Contains(strings.Join(strings.Fields(text), " "), switchWords) {
+				t.Errorf("%d×%d %s: enter takes row 1's offer, but THIS PAGE doesn't say %q\n%s", size[0], size[1], pg.page, switchWords, text)
+			}
+			for key, word := range words {
+				if listed[word] {
+					continue
+				}
+				o, ok := opposite[key]
+				if acts(nil, key) || ok && acts([]string{o}, key) {
+					t.Errorf("%d×%d %s: %q acts, but THIS PAGE has no %q\n%s", size[0], size[1], pg.page, key, word, text)
+				}
+			}
+		}
+	}
+}
+
 // docs/ux.md §4: the longest prefix of segments that fits, joined by two
 // spaces; the last one kept may shorten; rank is display order.
 func TestFitFooter(t *testing.T) {

@@ -867,12 +867,12 @@ func (a *app) planKey(key string) bool {
 		b.Move(max(1, bodyH))
 		return true
 	case "home":
-		b.Cursor = 0
+		// Through Move, so a Name prompt leaves the list's cursor where its
+		// Esc comes back to, as ↑↓ do (docs/ux.md §3).
+		b.Move(-len(b.Rows))
 		return true
 	case "end":
-		if n := len(b.Rows); n > 0 {
-			b.Cursor = n - 1
-		}
+		b.Move(len(b.Rows))
 		return true
 	case "esc":
 		// Esc clears first, then climbs one level, and never leaves PLAN.

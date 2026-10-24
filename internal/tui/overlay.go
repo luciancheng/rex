@@ -27,25 +27,27 @@ type helpKey struct {
 	key        []Span
 }
 
-// pageKeys is THIS PAGE in Help: the keys of the page it was opened over
-// (docs/ux.md §13).
+// pageKeys is THIS PAGE in Help: every key the page it was opened over
+// takes, not only its footer's (docs/ux.md §13). enter's switch to row 1's
+// offer reads the same on every page that takes it.
 var pageKeys = map[string][]helpKey{
 	"outline": {
-		{name: "enter", what: "open the selected task; on the title row, about"},
-		{name: "→", what: "open the selected task"},
+		{name: "enter →", what: "open the selected task; on the title row, about"},
+		{name: "enter", what: "switch PLAN to a new plan row 1 offers"},
 		{name: "↑↓", what: "move · pgup pgdn a page"},
-		{name: "home end", what: "first / last row"},
+		{name: "home end", what: "first / last row (also ctrl+a ctrl+e)"},
 		{name: "esc ←", what: "back to PLANS"},
 	},
 	"about": {
+		{name: "enter", what: "switch PLAN to a new plan row 1 offers"},
 		{name: "↑↓", what: "scroll · pgup pgdn a page"},
-		{name: "home end", what: "top / bottom"},
+		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
 		{name: "esc ←", what: "back to the outline"},
 	},
 	"plans": {
 		{name: "enter", what: "open the selected plan, or create one"},
 		{name: "↑↓", what: "move · pgup pgdn a page"},
-		{name: "home end", what: "first / last"},
+		{name: "home end", what: "first / last (also ctrl+a ctrl+e)"},
 		{name: "type", what: "find a plan across rex/plans"},
 		{name: "esc ←", what: "with no plan open, back to waiting"},
 	},
@@ -53,6 +55,7 @@ var pageKeys = map[string][]helpKey{
 		{name: "enter", what: "open the plan, or go into the folder"},
 		{name: "→", what: "into the folder"},
 		{name: "↑↓", what: "move · pgup pgdn a page"},
+		{name: "home end", what: "first / last (also ctrl+a ctrl+e)"},
 		{name: "type", what: "filter this folder"},
 		{name: "esc ←", what: "up a folder; at the top, back to PLANS"},
 	},
@@ -68,7 +71,8 @@ var pageKeys = map[string][]helpKey{
 	},
 	"waiting": {
 		{name: "esc ←", what: "the plan list: open or create a plan yourself"},
-		{name: "↑↓", what: "scroll this page on a short screen"},
+		{name: "↑↓", what: "scroll this page on a short screen · pgup pgdn a page"},
+		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
 	},
 	"agent": {
 		{name: "↑↓", what: "scroll · pgup pgdn a page"},

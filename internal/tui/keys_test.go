@@ -246,7 +246,7 @@ func TestCoalescePaste(t *testing.T) {
 		t.Fatal("named keys are not a paste")
 	}
 	if got := coalescePaste([]string{"l", "s", "\r"}); len(got) != 3 {
-		t.Fatal("a letter and ⏎ read together are typing: ⏎ must still submit")
+		t.Fatal("a letter and enter read together are typing: enter must still submit")
 	}
 	long := strings.Split(strings.Repeat("x", minPasteBurst)+"\r", "")
 	if got := coalescePaste(long); len(got) != 1 {

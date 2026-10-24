@@ -20,7 +20,7 @@ func (l DriftLevel) String() string {
 }
 
 // Drift is one judgement: the level, what it was about (a path or a
-// prompt excerpt), and why, in words for row 1 and the tape. Names is the
+// prompt excerpt), and why, in words for row 1 and AGENT. Names is the
 // task a prompt names instead of the pin: asking the agent to switch to
 // it may be what moves the pin next (docs/ux.md §9a). Listed is the task
 // an edited file is listed for instead of the pin.

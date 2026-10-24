@@ -9,7 +9,7 @@ import (
 	"github.com/luciancheng/rex/internal/watch"
 )
 
-func TestFeedHealthOnTheEmptyTape(t *testing.T) {
+func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	h := feedHealth{
 		path: "/home/me/.rex/session.jsonl",
@@ -21,7 +21,7 @@ func TestFeedHealthOnTheEmptyTape(t *testing.T) {
 		read: time.Now(), // fresh: the test's statuses stand
 	}
 	text := viewText(h.lines(78, 4, skill.Missing, now, true))
-	for _, want := range []string{"── feed · waiting for agent events", "last event 3h ago (cursor)", "cursor   wired", "claude   not wired · rex ingest --install claude", "skill    missing · rex ingest --install-skill", "4 events from other folders hidden"} {
+	for _, want := range []string{"FEED ──", "last event 3h ago (cursor)", "cursor   wired", "claude   not wired · rex ingest --install claude", "skill    missing · rex ingest --install-skill", "4 events from other folders hidden"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q\n%s", want, text)
 		}
@@ -29,9 +29,13 @@ func TestFeedHealthOnTheEmptyTape(t *testing.T) {
 	a := testApp(t)
 	a.health = h
 	press(a, "\t")
-	if !strings.Contains(a.frame(), "waiting for agent events") || strings.Contains(a.frame(), "Ready. Watching") {
-		t.Fatal("the empty tape shows feed health")
+	if f := a.frame(); !strings.Contains(f, "AGENT") || !strings.Contains(f, "waiting for events") || !strings.Contains(f, "FEED ──") || strings.Contains(f, "Ready. Watching") {
+		t.Fatalf("the empty AGENT tab shows feed health, and says it waits in its page title\n%s", f)
 	}
+	if a.settle(120, 11); !strings.Contains(a.frame(), "FEED ─") || !strings.Contains(a.frame(), "waiting for agent events") {
+		t.Fatalf("with no page title, the FEED header says it\n%s", a.frame())
+	}
+	a.settle(120, 32)
 	typeText(a, "?")
 	press(a, "\r")
 	if a.overlay[PaneChat] != overlayHelp || !strings.Contains(viewText(a.helpBody(PaneTextWidth(a.columns))), "rex ingest --install claude") {

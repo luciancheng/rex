@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/luciancheng/rex/internal/plan"
-	"github.com/luciancheng/rex/internal/watch"
 )
 
 // planDoc is the open plan file: the last good read, and what is on disk
@@ -96,7 +95,7 @@ func (d *planDoc) poll(now time.Time) (bool, planNews) {
 }
 
 // planNews is what an edit of the plan changed: text sums it up for the
-// toast and the tape ("" when nothing was announced), and tasks says a
+// toast and AGENT ("" when nothing was announced), and tasks says a
 // task's status moved or a task came or went.
 type planNews struct {
 	text  string
@@ -175,7 +174,7 @@ const (
 )
 
 // outlineView is where you are in the open plan: the selected row by
-// identity ("" is the title rule, else a task key), the list's first
+// identity ("" is the title row, else a task key), the list's first
 // visible line, and the detail scroll.
 type outlineView struct {
 	sel    string
@@ -192,7 +191,7 @@ func taskKey(t *plan.Task) string {
 	return "#" + strconv.Itoa(t.Index)
 }
 
-// outlineRows are the selectable rows in order: the title rule, then
+// outlineRows are the selectable rows in order: the title row, then
 // every task in file order.
 func outlineRows(p *plan.Plan) []string {
 	rows := []string{""}
@@ -338,13 +337,14 @@ func sideBySide(left, right string, width int) string {
 	return padRight(left, width-cellLen(right)) + right
 }
 
-// outlineBody lays out the outline for width cells and viewH body rows.
-func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
+// outlineBody lays out the outline for width cells, under its page title
+// (docs/ux.md §6): the title row is the page title, which is chrome, so
+// the body starts with last ✓ and any warnings, which stay put while the
+// tasks under them scroll.
+func outlineBody(d *planDoc, v *outlineView, width int) []LogLine {
 	inner := max(1, width-2)
-	title := planTitle(nil, d.path)
 	if d.plan == nil {
-		lines := []LogLine{{Kind: "command", Text: rule(title, width)}, {Kind: "gap"}}
-		lines = append(lines, LogLine{Kind: "error", Text: "  " + clip("can't read this plan", inner)})
+		lines := []LogLine{{Kind: "error", Text: "  " + clip("can't read this plan", inner)}}
 		for _, row := range wrap(d.err, inner-2) {
 			lines = append(lines, LogLine{Kind: "error", Text: "    " + clip(row, inner-2)})
 		}
@@ -356,28 +356,6 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 	p := d.plan
 	g := p.Graph()
 	pin := g.Pin()
-	done, total := g.Progress()
-	// measured as rule() paints it, so a tab or newline can't push out the tail
-	title = strings.ReplaceAll(watch.CleanText(planTitle(p, d.path)), "\n", " ")
-	tail := " · " + string(p.Status) + " · " + fmt.Sprintf("%d/%d", done, total)
-	// fit is the rule's label for room cells: when it is narrow, the title
-	// is cut and the status and progress stay.
-	fit := func(room int) string {
-		switch r := room - 6 - cellLen(tail); {
-		case cellLen(title+tail)+6 <= room:
-			return title + tail
-		case r >= 4:
-			return cutCells(title, r-1) + "…" + tail
-		case cellLen(tail)+3 <= room:
-			return strings.TrimPrefix(tail, " · ") // no room for any title
-		}
-		return cutCells(title+tail, max(1, room-7)) + "…"
-	}
-	rw := width // the rule's width; the selection bar takes two cells
-	if v.sel == "" {
-		rw = max(1, width-2)
-	}
-	head := fit(rw)
 
 	var tasks []LogLine
 	idW := 0
@@ -459,7 +437,7 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 		top = append(top, LogLine{Kind: "error", Text: "  " + clip("read-only: "+p.ReadOnly, inner)})
 	}
 	if n := len(p.Problems); n > 0 {
-		top = append(top, LogLine{Kind: "error", Text: "  " + clip(plural(n, "! %d problem", "! %d problems")+" · ⏎ on the title lists them", inner)})
+		top = append(top, LogLine{Kind: "error", Text: "  " + clip(plural(n, "! %d problem", "! %d problems")+" · enter on the title lists them", inner)})
 	}
 	if len(p.Tasks) == 0 {
 		top = append(top, LogLine{Kind: "gap"}, LogLine{Kind: "idle", Text: "  " + clip("No tasks yet · your agent fills this file", inner)})
@@ -467,29 +445,10 @@ func outlineBody(d *planDoc, v *outlineView, width, viewH int) []LogLine {
 		top = append(top, LogLine{Kind: "gap"})
 	}
 
-	ruleText := rule(head, rw)
-	if 1+len(top)+len(tasks) > viewH && len(p.Tasks) > 0 {
-		at := 0
-		if v.sel != "" {
-			for i, k := range outlineRows(p)[1:] {
-				if k == v.sel {
-					at = i + 1
-				}
-			}
-		}
-		tag := fmt.Sprintf("tasks %d/%d", at, len(outlineRows(p))-1)
-		room := rw - cellLen(tag) - 1
-		ruleText = rule(fit(room), room) + " " + tag
+	for i := range top {
+		top[i].Head = true // last ✓ and warnings stay put while tasks scroll
 	}
-	lines := []LogLine{{Kind: "command", Text: ruleText}}
-	if v.sel == "" {
-		lines[0] = selectedLine(ruleText, width)
-	}
-	lines = append(lines, top...)
-	for i := range lines {
-		lines[i].Head = true // the rule, last ✓ and warnings stay put while tasks scroll
-	}
-	return append(lines, tasks...)
+	return append(top, tasks...)
 }
 
 // detailField is one labelled section of a detail screen.
@@ -522,9 +481,10 @@ func nonEmpty(s string) []string {
 	return []string{s}
 }
 
+// planDetail is About, under its page title (PLANS › title › about).
 func planDetail(d *planDoc, width int) []LogLine {
 	p := d.plan
-	lines := []LogLine{{Kind: "command", Text: rule("plan · "+planTitle(p, d.path), width)}}
+	var lines []LogLine
 	if p == nil {
 		return append(lines, LogLine{Kind: "error", Text: "  " + clip(d.err, width-2)})
 	}
@@ -563,6 +523,8 @@ func planDetail(d *planDoc, width int) []LogLine {
 	return lines
 }
 
+// taskDetail is a task under its page title (PLANS › title › id): its
+// status, its title, then its fields.
 func taskDetail(d *planDoc, key string, width int) []LogLine {
 	p := d.plan
 	var t *plan.Task
@@ -570,7 +532,7 @@ func taskDetail(d *planDoc, key string, width int) []LogLine {
 		t = findTask(p, key)
 	}
 	if t == nil {
-		return []LogLine{{Kind: "command", Text: rule(key, width)}, {Kind: "idle", Text: "  " + clip("this task is no longer in the file", width-2)}}
+		return []LogLine{{Kind: "idle", Text: "  " + clip("this task is no longer in the file", width-2)}}
 	}
 	g := p.Graph()
 	pin := g.Pin()
@@ -580,7 +542,7 @@ func taskDetail(d *planDoc, key string, width int) []LogLine {
 	if t == pin && t.Status != plan.Active {
 		status = "next up"
 	}
-	lines := []LogLine{{Kind: "command", Text: rule(taskKey(t)+" · "+status, width)}}
+	lines := []LogLine{{Kind: "muted", Text: "  " + clip(status, width-2)}}
 	for _, row := range wrap(t.Title, width-2) {
 		lines = append(lines, LogLine{Kind: "title", Text: "  " + clip(row, width-2)})
 	}
@@ -687,8 +649,57 @@ func pinStatus(p *plan.Plan) StatusLine {
 		}
 		return StatusLine{Text: "no pin · nothing unblocked", Kind: "muted"}
 	}
+	// The agent's active task needs no word; a pin Rex worked out says
+	// "(next up)" (docs/ux.md §4, §7).
+	mark, tail := "▸ "+flat(pin.ID), ""
 	if pin.Status != plan.Active {
-		return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (next up)", Short: "▸ " + pin.ID + " (next up)", Kind: "accent"}
+		tail = " (next up)"
 	}
-	return StatusLine{Text: "▸ " + pin.ID + "  " + pin.Title + " (active)", Short: "▸ " + pin.ID + " (active)", Kind: "accent"}
+	title := flat(pin.Title)
+	if strings.TrimSpace(title) == "" {
+		return StatusLine{Text: mark + tail, Kind: "text", Spans: func(text string) []Span {
+			return []Span{{Text: mark, Role: "title", Bold: true}, {Text: strings.TrimPrefix(text, mark), Role: "muted"}}
+		}}
+	}
+	return StatusLine{
+		Text:  mark + "  " + title + tail,
+		Short: mark + tail,
+		Kind:  "text",
+		Clip:  true,
+		Fit: func(w int) string {
+			room := w - cellLen(mark+"  "+tail)
+			if room < pinTitleMin {
+				return mark + tail
+			}
+			return mark + "  " + ellipsis(title, room) + tail
+		},
+		Spans: func(text string) []Span {
+			rest, ok := strings.CutPrefix(text, mark)
+			if !ok {
+				return nil
+			}
+			spans := []Span{{Text: mark, Role: "title", Bold: true}}
+			if body, ok := strings.CutSuffix(rest, tail); ok && tail != "" {
+				return append(spans, Span{Text: body}, Span{Text: tail, Role: "muted"})
+			}
+			return append(spans, Span{Text: rest})
+		},
+	}
+}
+
+// pinTitleMin is the fewest title cells row 1's pin line keeps; with
+// fewer, it is just the pin's id.
+const pinTitleMin = 8
+
+// progress is the open plan's progress for row 1: "1/3", or "" before it
+// has tasks.
+func progress(p *plan.Plan) string {
+	if p == nil {
+		return ""
+	}
+	done, total := p.Graph().Progress()
+	if total == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", done, total)
 }

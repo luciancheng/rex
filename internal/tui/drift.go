@@ -12,12 +12,12 @@ import (
 )
 
 // driftState is the drift seen while one task was the pin (docs/ux.md
-// §9a). It lives in memory and on the tape only: never in the feed, the
+// §9a). It lives in memory and on AGENT only: never in the feed, the
 // plan, or anything sent to the agent.
 type driftState struct {
 	key   string // pinKey of the plan and pin it is about
 	pin   string // the pin's id, for the block's title
-	gen   int    // this stint's block on the tape; each new pin gets its own
+	gen   int    // this stint's block on AGENT; each new pin gets its own
 	seen  map[string]bool
 	items []plan.Drift
 	// Row 1 shows the last unresolved hard notice, else the last soft one.
@@ -42,11 +42,11 @@ var foldPaths = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 func pinKey(planPath, task string) string { return planPath + "#" + task }
 
 // checkDrift queues one live event from this repo to be judged against
-// the pin once its batch is on the tape (so the block lands after it).
+// the pin once its batch is on AGENT (so the block lands after it).
 func (a *app) checkDrift(ev watch.Event) { a.driftQueue = append(a.driftQueue, ev) }
 
 // applyDrift judges the queued events: completed edits and user prompts
-// only. It reports whether row 1 or the tape changed.
+// only. It reports whether row 1 or AGENT changed.
 func (a *app) applyDrift() bool {
 	queue := a.driftQueue
 	a.driftQueue = nil
@@ -278,7 +278,7 @@ func (a *app) noteDrift(n driftNote) bool {
 			e.Text = text
 			a.logRev++
 			if below {
-				a.scroll += max(0, a.logLines()-before)
+				a.below(before)
 			}
 			return true
 		}
@@ -286,9 +286,7 @@ func (a *app) noteDrift(n driftNote) bool {
 	before := a.logLines()
 	a.log = append(a.log, watch.NewEvent("rex", "drift", text, map[string]any{"gen": s.gen, "pin": s.pin}))
 	a.logRev++
-	if a.scroll > 0 {
-		a.scroll += max(0, a.logLines()-before) // a new block below a scrolled-up view keeps it put
-	}
+	a.below(before) // a new block below a scrolled-up view keeps it put
 	return true
 }
 
@@ -315,7 +313,7 @@ func (a *app) driftStatus(level plan.DriftLevel) (StatusLine, bool) {
 	if d.Level == plan.Hard {
 		kind = "error"
 	}
-	// Short: a prompt's reason (its words are on the tape below), or an
+	// Short: a prompt's reason (its words are on AGENT below), or an
 	// edit's file name (the end of the path matters most).
 	short := path.Base(d.Subject)
 	if n.prompt != "" {

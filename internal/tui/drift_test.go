@@ -149,7 +149,7 @@ func TestTheOfferedPlansWorkIsNotDrift(t *testing.T) {
 		}
 	}
 	if press(a, "\r"); a.plans.Current != other || !a.follow || a.offer != "" {
-		t.Fatalf("⏎ switches: current=%q (was %q) follow=%v", a.plans.Current, path, a.follow)
+		t.Fatalf("enter switches: current=%q (was %q) follow=%v", a.plans.Current, path, a.follow)
 	}
 	a.ingest([]watch.Event{edit(a, c, 4*time.Second, "README.md")})
 	if got := a.statusLine().Text; got != "drift · hard: README.md · outside render files" {
@@ -250,7 +250,7 @@ func TestABatchThatMovesThePinIsJudgedAgainstTheNewPin(t *testing.T) {
 	}
 	later(a, c)
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") || got != "▸ load-outline  Outline view (active)" {
+	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") || got != "▸ load-outline  Outline view" {
 		t.Fatalf("row 1: %q", got)
 	}
 	if view := viewText(BuildLogView(a.log, 78)); strings.Contains(view, "── drift") {
@@ -330,7 +330,7 @@ func TestAskingTheAgentToSwitchTasksIsNotDrift(t *testing.T) {
 	a.ingest([]watch.Event{at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Started recovery."})})
 	later(a, c)
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; got != "▸ recovery  Recovery codes (active)" {
+	if got := a.statusLine().Text; got != "▸ recovery  Recovery codes" {
 		t.Fatalf("row 1 %q", got)
 	}
 	if tape := viewText(BuildLogView(a.log, 100)); strings.Contains(tape, "── drift") {
@@ -398,7 +398,7 @@ func TestAnEditBeforeTheSwitchIsNotDrift(t *testing.T) {
 			}
 			continue
 		}
-		if got := a.statusLine().Text; got != "▸ recovery  Recovery codes (active)" {
+		if got := a.statusLine().Text; got != "▸ recovery  Recovery codes" {
 			t.Fatalf("%s: row 1 %q", how, got)
 		}
 		if strings.Contains(tape, "── drift") {

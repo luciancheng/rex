@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/luciancheng/rex/internal/plan"
+	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -98,7 +100,7 @@ func TestCUJWholeLoop(t *testing.T) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	agent(plan.Stub("sendoff-demo"))
 	k.spent(t, 0, "create (the agent writes the plan)")
-	if a.at != atOutline || a.plans.Current != path || !a.follow || !strings.Contains(a.frame(), "No tasks yet · your agent fills this file") || !strings.Contains(a.frame(), "following · rex/plans/cuj/sendoff-demo.rex.json") {
+	if a.at != atOutline || a.plans.Current != path || !a.follow || !strings.Contains(a.frame(), "No tasks yet · your agent fills this file") || !strings.Contains(a.frame(), "following rex/plans/cuj/sendoff-demo.rex.json") {
 		t.Fatalf("B. the agent's write opens the plan, followed\n%s", a.frame())
 	}
 	active := cujFixture(t)
@@ -127,7 +129,7 @@ func TestCUJWholeLoop(t *testing.T) {
 		t.Fatalf("C. one plan line on the tape: %+v", last)
 	}
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; got != "▸ card-highlight  Selected plan card is one block (active)" || !strings.Contains(a.frame(), "▌ ▸ card-highlight") {
+	if got := a.statusLine().Text; got != "▸ card-highlight  Selected plan card is one block" || !strings.Contains(a.frame(), "▌ ▸ card-highlight") {
 		t.Fatalf("C. row 1 and the outline follow the file: %q\n%s", got, a.frame())
 	}
 
@@ -175,7 +177,7 @@ func TestCUJWholeLoop(t *testing.T) {
 	}
 	k.press("\r") // the selection stayed on the task the agent finished
 	if a.at != atTaskDetail || a.outline.sel != "card-highlight" {
-		t.Fatalf("E. ⏎ on the task opens its detail: at=%d sel=%q", a.at, a.outline.sel)
+		t.Fatalf("E. enter on the task opens its detail: at=%d sel=%q", a.at, a.outline.sel)
 	}
 	detail := viewText(taskDetail(a.doc, a.outline.sel, 78)) // it scrolls; all of it
 	for _, want := range []string{"── retrospective", "the selection bar, border and fill cover all three", "internal/tui/plans.go", "go test ./internal/tui -run PlanCardSelection (passed)", "the pick colors were already in mascot.UI"} {
@@ -218,13 +220,13 @@ func TestCUJWholeLoop(t *testing.T) {
 	}
 	k.press("\r")
 	if !a.follow || a.at != atOutline {
-		t.Fatal("G. ⏎ on Continue keeps following")
+		t.Fatal("G. enter on Continue keeps following")
 	}
 	k.n = 0
 	k.press("esc")
 	k.typ("scratch")
 	k.press("\r")
-	k.spent(t, 1+len("scratch")+1, "create in Rex (Esc, name, ⏎)")
+	k.spent(t, 1+len("scratch")+1, "create in Rex (Esc, name, enter)")
 	stub, err := plan.Load(filepath.Join(a.plans.Root, "scratch.rex.json"))
 	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || a.follow || !strings.Contains(a.frame(), "latched") {
 		t.Fatalf("G. create writes a v1 stub, opens it and latches: %v\n%s", err, a.frame())
@@ -232,7 +234,7 @@ func TestCUJWholeLoop(t *testing.T) {
 	k.press("esc")
 	k.typ("sendoff-demo")
 	k.press("\r")
-	k.spent(t, 1+len("sendoff-demo")+1, "open by name (Esc, name, ⏎)")
+	k.spent(t, 1+len("sendoff-demo")+1, "open by name (Esc, name, enter)")
 	if a.plans.Current != path || a.at != atOutline || a.follow || a.outline.sel != "load-outline" {
 		t.Fatalf("G. the plan opens on its pin, latched: sel=%q\n%s", a.outline.sel, a.frame())
 	}
@@ -258,17 +260,18 @@ func TestCUJWholeLoop(t *testing.T) {
 	}
 }
 
-// Every screen fits every size: no row wider than the terminal, no control
-// bytes from content, the header and its state word on top, and where to
-// go next at the bottom.
-func TestFrameMatrix(t *testing.T) {
-	type screen struct {
-		name    string
-		setup   func(a *app)
-		reached func(a *app) bool
-	}
-	// These start in a repo with no plans; the rest on the CUJ plan.
-	empty := map[string]bool{"wait": true, "wait plans off": true, "home no plans": true}
+// matrixScreen is one screen of the frame matrix: how to reach it from a
+// fresh start, and how to tell it was reached.
+type matrixScreen struct {
+	name    string
+	empty   bool // starts in a repo with no plans; the rest on the CUJ plan
+	setup   func(a *app)
+	reached func(a *app) bool
+}
+
+// matrixScreens is every screen and overlay Rex draws (AGENTS.md, Commands
+// and tests): a new one joins the list.
+func matrixScreens(t *testing.T) []matrixScreen {
 	list := func(a *app) { press(a, "esc") } // the outline at start, Esc to the plan list
 	lib := func(sc PlanScreen) func(a *app) bool {
 		return func(a *app) bool { return a.pane == PanePlans && a.at == atLibrary && a.plans.Screen == sc }
@@ -289,59 +292,87 @@ func TestFrameMatrix(t *testing.T) {
 			}
 		}
 	}
-	screens := []screen{
-		{"wait", func(a *app) {}, func(a *app) bool { return a.at == atWait && a.plans.Current == "" }},
-		{"wait plans off", func(a *app) {
+	write := func(a *app) {
+		other := filepath.Join(a.plans.Root, "cuj", "a-much-longer-plan-name-from-the-agent.rex.json")
+		os.WriteFile(other, []byte(`{"version": 1, "tasks": []}`), 0o644)
+		a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + other, Meta: map[string]any{"tool": "Write", "path": other, "ok": true}}})
+	}
+	return []matrixScreen{
+		{"wait", true, func(a *app) {}, func(a *app) bool { return a.at == atWait && a.plans.Current == "" }},
+		{"wait, skill installed", true, func(a *app) {
+			home, _ := os.UserHomeDir()
+			for _, dir := range skill.Dirs(home, a.plans.Repo, true) {
+				if err := skill.Install(dir, io.Discard); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}, func(a *app) bool { return a.at == atWait && skillHint(a.skill.look(a.plans.Repo, a.now())) == "" }},
+		{"wait plans off", true, func(a *app) {
 			os.WriteFile(filepath.Join(a.plans.Repo, "rex"), []byte("x"), 0o644)
 			a.plans.Rebuild()
 		}, func(a *app) bool { return a.at == atWait && a.plans.Notice == rexFileNotice }},
-		{"home no plans", list, func(a *app) bool { return lib(ScreenHome)(a) && len(a.plans.Rows) == 1 }},
-		{"home", list, lib(ScreenHome)},
-		{"find", func(a *app) { list(a); typeText(a, "send") }, func(a *app) bool {
+		{"home no plans", true, list, func(a *app) bool { return lib(ScreenHome)(a) && len(a.plans.Rows) == 1 }},
+		{"home", false, list, lib(ScreenHome)},
+		{"find", false, func(a *app) { list(a); typeText(a, "send") }, func(a *app) bool {
 			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan
 		}},
-		{"browse", browse, lib(ScreenBrowse)},
-		{"create", func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
-		{"new folder", func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r"); typeText(a, "notes") }, lib(ScreenFolder)},
-		{"outline", func(a *app) {}, at(atOutline)},
-		{"held attach", func(a *app) {
+		{"browse", false, browse, lib(ScreenBrowse)},
+		{"create", false, func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
+		{"new folder", false, func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r"); typeText(a, "notes") }, lib(ScreenFolder)},
+		{"outline", false, func(a *app) {}, at(atOutline)},
+		{"outline, title row", false, func(a *app) { press(a, "home") }, func(a *app) bool { return at(atOutline)(a) && a.outline.sel == "" }},
+		{"outline, a reply waiting", false, func(a *app) {
+			a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "done for now"}})
+		}, func(a *app) bool { return at(atOutline)(a) && a.unseen[PaneChat] == "•" }},
+		{"held attach", false, func(a *app) {
 			list(a)
 			typeText(a, "zz")
-			press(a, "\t") // the list's find holds it, seen from the tape
-			other := filepath.Join(a.plans.Root, "cuj", "a-much-longer-plan-name-from-the-agent.rex.json")
-			os.WriteFile(other, []byte(`{"version": 1, "tasks": []}`), 0o644)
-			a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + other, Meta: map[string]any{"tool": "Write", "path": other, "ok": true}}})
-		}, func(a *app) bool { return a.pane == PaneChat && a.pending != "" }},
-		{"new plan offer", func(a *app) {
+			press(a, "\t") // the list's find holds it, seen from AGENT
+			write(a)
+		}, func(a *app) bool { return a.pane == PaneChat && a.pending != "" && a.unseen[PanePlans] == "•" }},
+		{"new plan offer", false, func(a *app) {
 			list(a)
 			typeText(a, "scratch")
 			press(a, "\r") // made in the list: latched
-			other := filepath.Join(a.plans.Root, "cuj", "a-much-longer-plan-name-from-the-agent.rex.json")
-			os.WriteFile(other, []byte(`{"version": 1, "tasks": []}`), 0o644)
-			a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + other, Meta: map[string]any{"tool": "Write", "path": other, "ok": true}}})
+			write(a)
 		}, func(a *app) bool { return at(atOutline)(a) && a.offer != "" && !a.follow }},
-		{"task detail", func(a *app) { press(a, "\r") }, at(atTaskDetail)},
-		{"plan detail", func(a *app) { press(a, "home", "\r") }, at(atPlanDetail)},
-		{"tape", func(a *app) {
+		{"task detail", false, func(a *app) { press(a, "\r") }, at(atTaskDetail)},
+		{"plan detail", false, func(a *app) { press(a, "home", "\r") }, at(atPlanDetail)},
+		{"agent", false, func(a *app) {
 			press(a, "\t")
 			a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "a reply with 中文 and ⚠️ in it \x1b[2J"}})
 		}, func(a *app) bool { return a.pane == PaneChat && a.overlay[a.pane] == overlayNone }},
-		{"empty outline", func(a *app) { list(a); typeText(a, "scratch"); press(a, "\r") }, func(a *app) bool {
+		{"agent, empty", true, func(a *app) { press(a, "\t") }, func(a *app) bool { return a.pane == PaneChat && len(a.log) == 0 }},
+		{"empty outline", false, func(a *app) { list(a); typeText(a, "scratch"); press(a, "\r") }, func(a *app) bool {
 			return at(atOutline)(a) && len(a.doc.plan.Tasks) == 0
 		}},
-		{"help", func(a *app) { press(a, "\t", "?") }, over(overlayHelp)},
-		{"help over the list", func(a *app) { list(a); press(a, "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atLibrary }},
+		{"help", false, func(a *app) { press(a, "\t", "?") }, over(overlayHelp)},
+		{"help over the list", false, func(a *app) { list(a); press(a, "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atLibrary }},
+		{"help over a task", false, func(a *app) { press(a, "\r", "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atTaskDetail }},
 	}
-	for _, size := range [][2]int{{24, 7}, {24, 12}, {24, 24}, {80, 7}, {80, 12}, {80, 24}, {120, 7}, {120, 12}, {120, 24}} {
-		for _, s := range screens {
-			var a *app
-			if empty[s.name] {
-				a = testApp(t) // the wait screen
-			} else {
-				a, _, _ = cujApp(t)
-			}
-			s.setup(a)
-			a.settle(size[0], size[1])
+}
+
+// matrixApp is a fresh app on screen s at cols×lines.
+func matrixApp(t *testing.T, s matrixScreen, cols, lines int) *app {
+	var a *app
+	if s.empty {
+		a = testApp(t) // the wait screen
+	} else {
+		a, _, _ = cujApp(t)
+	}
+	s.setup(a)
+	a.settle(cols, lines)
+	return a
+}
+
+// Every screen fits every size: no row wider than the terminal, no control
+// bytes from content, the tab bar and its turn word on top, the page title
+// on row 2 (AGENT's from 12 rows), and where to go next at the bottom, in
+// words (docs/ux.md §4).
+func TestFrameMatrix(t *testing.T) {
+	for _, size := range [][2]int{{24, 7}, {24, 12}, {24, 24}, {80, 7}, {80, 12}, {80, 16}, {80, 20}, {80, 24}, {120, 7}, {120, 12}, {120, 24}} {
+		for _, s := range matrixScreens(t) {
+			a := matrixApp(t, s, size[0], size[1])
 			f := a.frameRows()
 			name := s.name + " " + strings.Join([]string{strconv.Itoa(size[0]), strconv.Itoa(size[1])}, "×")
 			if !s.reached(a) {
@@ -356,11 +387,12 @@ func TestFrameMatrix(t *testing.T) {
 				if cellLen(row) > size[0] {
 					t.Errorf("%s: row %d is %d cells", name, i, cellLen(row))
 				}
-				// Rex has no verbs: no footer, placeholder or empty-plan
-				// copy offers one (docs/ux.md §4, §6).
-				for _, verb := range []string{"p⏎", "d⏎", "s⏎", "b⏎", "o⏎", "brief", "send-off", "clipboard"} {
-					if strings.Contains(row, verb) {
-						t.Errorf("%s: row %d offers %q: %q", name, i, verb, row)
+				// Rex has no verbs, and keys are words: no footer,
+				// placeholder or copy offers a verb, an icon for a key, or
+				// the old name for AGENT (docs/ux.md §4, §6).
+				for _, never := range []string{"⏎", "↔", "tape", "brief", "send-off", "clipboard"} {
+					if strings.Contains(row, never) {
+						t.Errorf("%s: row %d has %q: %q", name, i, never, row)
 					}
 				}
 				for _, r := range row {
@@ -369,15 +401,57 @@ func TestFrameMatrix(t *testing.T) {
 					}
 				}
 			}
-			if !strings.Contains(f.Rows[0], "REX ") || !strings.Contains(f.Rows[0], "idle") {
-				t.Errorf("%s: header %q", name, f.Rows[0])
+			head := textOf(f.Rows[0], size[0])
+			if !strings.Contains(head, "PLAN") || !strings.Contains(head, "AGENT") || !strings.Contains(head, statusForTurn(a.turn, a.lastKind)) {
+				t.Errorf("%s: header %q", name, head)
 			}
-			footer := f.Rows[len(f.Rows)-1]
-			if strings.TrimSpace(footer) == "" {
-				t.Errorf("%s: empty footer", name)
+			if size[1] > 3 {
+				title := textOf(f.Rows[2], size[0])
+				switch {
+				case a.overlay[a.pane] != overlayNone:
+					if !strings.Contains(title, "› HELP") {
+						t.Errorf("%s: Help's page title %q", name, title)
+					}
+				case a.pane == PanePlans:
+					if !strings.HasPrefix(title, "  PLANS") && !strings.HasPrefix(title, "▌ PLANS") && !strings.HasPrefix(title, "  …") && !strings.HasPrefix(title, "▌ …") {
+						t.Errorf("%s: page title %q", name, title)
+					}
+				case strings.HasPrefix(title, "  AGENT") != (size[1] >= agentTitleRows):
+					t.Errorf("%s: AGENT's page title from %d rows: %q", name, agentTitleRows, title)
+				}
+			}
+			footer := textOf(f.Rows[len(f.Rows)-1], size[0])
+			if strings.TrimSpace(footer) == "" || strings.Contains(footer, "·") {
+				t.Errorf("%s: footer %q", name, footer)
 			}
 			if textW := PaneTextWidth(size[0]); textW >= 38 && a.overlay[a.pane] == overlayNone && !strings.Contains(footer, "tab") && !strings.Contains(footer, "esc") {
 				t.Errorf("%s: footer doesn't say where to go: %q", name, footer)
+			}
+		}
+	}
+}
+
+// docs/ux.md §5, rule 4: color never changes the characters. Every
+// screen's text column in color, stripped of its SGR, is its NO_COLOR
+// frame; only the composer's placeholder differs, in parentheses.
+func TestColorFrameSameText(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {120, 24}} {
+		for _, s := range matrixScreens(t) {
+			a := matrixApp(t, s, size[0], size[1])
+			plain := a.frameRows().Rows
+			a.enabled = true
+			color := a.frameRows().Rows
+			l := a.layout()
+			for i := range plain {
+				if i >= len(plain)-FooterRows-l.composer && i < len(plain)-FooterRows {
+					continue // the composer
+				}
+				if got, want := tailCells(stripSGR(color[i]), l.textW), tailCells(plain[i], l.textW); got != want {
+					t.Errorf("%s %d×%d row %d:\ncolor    %q\nno color %q", s.name, size[0], size[1], i, got, want)
+				}
+			}
+			if !strings.Contains(strings.Join(color, ""), "\033[1m") {
+				t.Errorf("%s: no bold anywhere", s.name)
 			}
 		}
 	}

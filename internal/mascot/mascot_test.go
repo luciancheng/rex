@@ -221,3 +221,24 @@ func TestColor256QuantizesTheSamePalette(t *testing.T) {
 		t.Fatalf("256 mode leaked truecolor: %v", err)
 	}
 }
+
+// Bold is the only attribute Rex adds (docs/ux.md §5), and only in color;
+// a fill under 256 colors goes through the same map as its text.
+func TestPaintStyleBold(t *testing.T) {
+	fg, bg := UI["pickbg"], UI["text"]
+	if got := PaintStyle("PLAN", &fg, &bg, true, false); got != "PLAN" {
+		t.Fatalf("no color, no SGR: %q", got)
+	}
+	got := PaintStyle("PLAN", &fg, &bg, true, true)
+	if want := FG(fg) + BG(bg) + "\033[1m" + "PLAN" + Reset; got != want {
+		t.Fatalf("%q want %q", got, want)
+	}
+	if got := PaintStyle("x", &fg, nil, false, true); strings.Contains(got, "\033[1m") || strings.Contains(got, "\033[48") {
+		t.Fatalf("no bold, no fill: %q", got)
+	}
+	defer func(d Depth) { ColorDepth = d }(ColorDepth)
+	ColorDepth = Color256
+	if got := PaintStyle("[", &bg, &bg, false, true); got != FG(bg)+BG(bg)+"["+Reset || !strings.Contains(got, "38;5;") || !strings.Contains(got, "48;5;") {
+		t.Fatalf("a bracket on its own fill stays fill on fill: %q", got)
+	}
+}

@@ -88,7 +88,7 @@ func TestStartOpensTheLastPlan(t *testing.T) {
 	if a.pane != PanePlans || a.at != atOutline || a.plans.Current != last || !a.follow || a.outline.sel != "card-highlight" {
 		t.Fatalf("at=%d current=%q follow=%v sel=%q", a.at, a.plans.Current, a.follow, a.outline.sel)
 	}
-	if !strings.Contains(a.frame(), "idle · following · rex/plans/cuj/last.rex.json") {
+	if !strings.Contains(a.frame(), "idle                    following rex/plans/cuj/last.rex.json") {
 		t.Fatalf("%s", a.frame())
 	}
 }
@@ -292,7 +292,7 @@ func TestLastWriteWinsAndTheOpenPlanStays(t *testing.T) {
 func TestLatchedOffersTheNewPlan(t *testing.T) {
 	a, c, path := openDemo(t, demoPlan, 120, 32)
 	repo := a.plans.Repo
-	if a.follow || !strings.Contains(a.frame(), "idle · latched · rex/plans/cuj/demo.rex.json") {
+	if a.follow || !strings.Contains(a.frame(), "latched rex/plans/cuj/demo.rex.json") {
 		t.Fatalf("a plan picked in the list is latched\n%s", a.frame())
 	}
 	other := writePlan(t, repo, "cuj/next.rex.json", demoPlan)
@@ -302,33 +302,33 @@ func TestLatchedOffersTheNewPlan(t *testing.T) {
 	}
 	c.t = c.t.Add(10 * toastFor)
 	a.tick()
-	if got := a.statusLine().Text; got != "new plan cuj/next · ⏎ switch" {
+	if got := a.statusLine().Text; got != "new plan cuj/next · enter switch" {
 		t.Fatalf("row 1 offers the plan until it is taken: %q", got)
 	}
-	if !strings.Contains(a.frame(), "⏎ switch") {
+	if !strings.Contains(a.frame(), "enter switch") {
 		t.Fatalf("%s", a.frame())
 	}
 	press(a, "esc")
 	if got := a.statusLine().Text; got != "new plan cuj/next" {
-		t.Fatalf("in the list ⏎ opens the selected row, so the offer doesn't claim it: %q", got)
+		t.Fatalf("in the list enter opens the selected row, so the offer doesn't claim it: %q", got)
 	}
 	press(a, "\r") // Continue
 	if a.offer != "" || a.plans.Current != path || a.follow {
 		t.Fatalf("opening a plan settles the offer: offer=%q current=%q", a.offer, a.plans.Current)
 	}
 	a.ingest([]watch.Event{wrote(repo, other)})
-	press(a, "s", "\r") // a letter does nothing on the outline; ⏎ switches
+	press(a, "s", "\r") // a letter does nothing on the outline; enter switches
 	if a.plans.Current != other || !a.follow || a.offer != "" || a.at != atOutline {
-		t.Fatalf("⏎ switches: current=%q follow=%v", a.plans.Current, a.follow)
+		t.Fatalf("enter switches: current=%q follow=%v", a.plans.Current, a.follow)
 	}
-	if !strings.Contains(a.frame(), "following · rex/plans/cuj/next.rex.json") {
+	if !strings.Contains(a.frame(), "following rex/plans/cuj/next.rex.json") {
 		t.Fatalf("%s", a.frame())
 	}
 }
 
 // Taking the offer opens the plan, so it never runs while that would drop
 // what you typed in the plan list: a find, or a Name prompt. Row 1 and the
-// footer stop saying ⏎ switch, and ⏎ does what it did before.
+// footer stop saying enter switch, and enter does what it did before.
 func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 	offered := func(t *testing.T) (*app, string, string) {
 		a, _, path := openDemo(t, demoPlan, 120, 32)
@@ -336,12 +336,12 @@ func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 	}
 	noSwitch := func(t *testing.T, a *app) {
 		t.Helper()
-		if got := a.statusLine().Text; got != "new plan cuj/next" || strings.Contains(a.frame(), "⏎ switch") {
+		if got := a.statusLine().Text; got != "new plan cuj/next" || strings.Contains(a.frame(), "enter switch") {
 			t.Fatalf("row 1 %q\n%s", got, a.frame())
 		}
 	}
 
-	// A find half typed in the plan list, ⏎ on the tape.
+	// A find half typed in the plan list, enter on the tape.
 	a, path, next := offered(t)
 	press(a, "esc")
 	typeText(a, "half")
@@ -353,14 +353,14 @@ func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 		t.Fatalf("the find was dropped: current=%q draft=%q", a.plans.Current, a.draft)
 	}
 	press(a, "\t", "\x15", "\t") // clear it, back to the tape
-	if a.statusLine().Text != "new plan cuj/next · ⏎ switch" {
+	if a.statusLine().Text != "new plan cuj/next · enter switch" {
 		t.Fatalf("with nothing to lose the offer is back: %q", a.statusLine().Text)
 	}
 	if press(a, "\r"); a.plans.Current != next || a.pane != PaneChat {
 		t.Fatalf("current=%q pane=%d", a.plans.Current, a.pane)
 	}
 
-	// A Name prompt in the plan list, ⏎ on the tape.
+	// A Name prompt in the plan list, enter on the tape.
 	a, path, next = offered(t)
 	press(a, "esc", "home", "down", "\r")
 	if !a.plans.Prompting() {
@@ -374,7 +374,7 @@ func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 	}
 }
 
-// From the tape, ⏎ takes the offer for PLAN and leaves you on the tape.
+// From the tape, enter takes the offer for PLAN and leaves you on the tape.
 func TestTakingTheOfferFromTheTape(t *testing.T) {
 	a, _, _ := openDemo(t, demoPlan, 120, 32)
 	other := writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan)
@@ -475,7 +475,7 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	if got := a.statusLine().Text; got != "new plan two · opens when the prompt closes" {
 		t.Fatalf("a named prompt: %q", got)
 	}
-	a.settle(66, 24)
+	a.settle(66, 24) // progress yields rather than cost the line why it waits
 	if got := strings.TrimRight(statusRow(a.statusLine(), a.layout().textW, false), " "); got != "new plan two · waiting" {
 		t.Fatalf("narrow: %q", got)
 	}
@@ -493,7 +493,7 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	if a.plans.Current != filepath.Join(PlansDir(repo), "mine.rex.json") || a.follow || a.pending != "" || a.offer != three {
 		t.Fatalf("creating latches and offers it: current=%q follow=%v pending=%q offer=%q", a.plans.Current, a.follow, a.pending, a.offer)
 	}
-	if got := a.statusLine().Text; got != "new plan three · ⏎ switch" {
+	if got := a.statusLine().Text; got != "new plan three · enter switch" {
 		t.Fatalf("row 1 %q", got)
 	}
 }
@@ -550,12 +550,12 @@ func TestLatchingOffersAHeldAttach(t *testing.T) {
 			t.Fatalf("%s: current=%q follow=%v pending=%q offer=%q", pick.find, a.plans.Current, a.follow, a.pending, a.offer)
 		}
 		a.settle(a.columns, a.lines)
-		if a.plans.Current != pick.want || a.statusLine().Text != "new plan two · ⏎ switch" {
+		if a.plans.Current != pick.want || a.statusLine().Text != "new plan two · enter switch" {
 			t.Fatalf("offered, not opened: current=%q row 1 %q", a.plans.Current, a.statusLine().Text)
 		}
 	}
 	if press(a, "\r"); a.plans.Current != two || !a.follow {
-		t.Fatalf("⏎ takes it and follows again: current=%q follow=%v", a.plans.Current, a.follow)
+		t.Fatalf("enter takes it and follows again: current=%q follow=%v", a.plans.Current, a.follow)
 	}
 
 	// The held write is the plan you pick: nothing left to offer.
@@ -571,7 +571,7 @@ func TestLatchingOffersAHeldAttach(t *testing.T) {
 	}
 }
 
-// The QA scenario: find a plan, the agent writes another meanwhile, ⏎
+// The QA scenario: find a plan, the agent writes another meanwhile, enter
 // opens the one you found. Yours is latched and the agent's is offered.
 func TestPickingWhileHeldKeepsTheAgentsPlan(t *testing.T) {
 	a, c, _ := cujApp(t)
@@ -589,7 +589,7 @@ func TestPickingWhileHeldKeepsTheAgentsPlan(t *testing.T) {
 	if a.plans.Current != scratch || a.follow || a.offer != other {
 		t.Fatalf("picked: current=%q follow=%v offer=%q", a.plans.Current, a.follow, a.offer)
 	}
-	if got := a.statusLine().Text; got != "new plan agent-new · ⏎ switch" {
+	if got := a.statusLine().Text; got != "new plan agent-new · enter switch" {
 		t.Fatalf("row 1 %q", got)
 	}
 }
@@ -638,39 +638,42 @@ func TestColdStartFindsAPlanWithoutAHook(t *testing.T) {
 	}
 }
 
-// docs/ux.md §4: the header says following or latched in words. The path
+// docs/ux.md §4: row 0 says following or latched in words. The path
 // drops rex/plans/ and .rex.json, then clips down to a few cells, before
 // the word goes; a dropped word never gives ".rex.json" its room back.
 // Both words come and go together, at 38 cells.
 func TestHeaderSaysFollowingOrLatched(t *testing.T) {
+	row := func(w int, state, follow, path string) string {
+		return strings.TrimRight(paintLine(headerRow(w, PanePlans, "", state, follow, path), w, false), " ")
+	}
 	cases := []struct {
-		width                     int
-		state, follow, path, meta string
+		width               int
+		state, follow, path string
+		want                string
 	}{
-		{78, "running", "following", "rex/plans/cuj/sendoff-demo.rex.json", "running · following · rex/plans/cuj/sendoff-demo.rex.json"},
-		{38, "running", "latched", "rex/plans/scratch.rex.json", "running · latched · scratch"},
-		{38, "running", "latched", "rex/plans/cuj/sendoff-demo.rex.json", "running · latched · …ff-demo"},
-		{38, "thinking", "following", "rex/plans/cuj/sendoff-demo.rex.json", "thinking · following · …demo"},
-		{38, "idle", "following", "rex/plans/plan_attach.rex.json", "idle · following · …n_attach"},
-		{30, "running", "following", "rex/plans/cuj/sendoff-demo.rex.json", "running · …doff-demo"},
-		{32, "idle", "following", "rex/plans/x.rex.json", "idle · x"},
-		{36, "idle", "latched", "rex/plans/scan.rex.json", "idle · scan"},
-		{37, "idle", "latched", "rex/plans/cuj/sendoff-demo.rex.json", "idle · cuj/sendoff-demo"},
-		{32, "idle", "", "rex/plans/x.rex.json", "idle · x.rex.json"},
-		{38, "running", "", "", "running"},
+		{78, "running", "following", "rex/plans/cuj/sendoff-demo.rex.json", "REX [PLAN] AGENT running         following rex/plans/cuj/sendoff-demo.rex.json"},
+		{38, "running", "latched", "rex/plans/scratch.rex.json", "[PLAN] AGENT running   latched scratch"},
+		{38, "running", "latched", "rex/plans/cuj/sendoff-demo.rex.json", "[PLAN] AGENT running  latched …ff-demo"},
+		{38, "thinking", "following", "rex/plans/cuj/sendoff-demo.rex.json", "[PLAN] AGENT thinking  following …demo"},
+		{38, "idle", "following", "rex/plans/plan_attach.rex.json", "[PLAN] AGENT idle  following …n_attach"},
+		{30, "running", "following", "rex/plans/cuj/sendoff-demo.rex.json", "[PLAN] AGENT running  …ff-demo"},
+		{32, "idle", "following", "rex/plans/x.rex.json", "[PLAN] AGENT idle              x"},
+		{36, "idle", "latched", "rex/plans/scan.rex.json", "[PLAN] AGENT idle               scan"},
+		{37, "idle", "latched", "rex/plans/cuj/sendoff-demo.rex.json", "[PLAN] AGENT idle    cuj/sendoff-demo"},
+		{32, "idle", "", "rex/plans/x.rex.json", "[PLAN] AGENT idle     x.rex.json"},
+		{38, "running", "", "", "[PLAN] AGENT running"},
 	}
 	for _, tc := range cases {
-		got := headerRow(tc.width, "plan", tc.state, tc.follow, tc.path, false)
-		if !strings.HasPrefix(got, "REX plan ") || !strings.HasSuffix(got, " "+tc.meta) || cellLen(got) != tc.width {
-			t.Errorf("%d %s %s:\n got %q\nwant %q on the right", tc.width, tc.follow, tc.path, got, tc.meta)
+		if got := row(tc.width, tc.state, tc.follow, tc.path); got != tc.want {
+			t.Errorf("%d %s %s:\n got %q\nwant %q", tc.width, tc.follow, tc.path, got, tc.want)
 		}
 	}
 	// From 38 cells the word always shows; a name under 5 cells lets it in
 	// a little sooner.
-	for w := 1; w <= 130; w++ {
+	for w := 24; w <= 130; w++ {
 		for path, from := range map[string]int{"rex/plans/x.rex.json": 34, "rex/plans/scan.rex.json": 37, "rex/plans/cuj/sendoff-demo.rex.json": 38} {
-			f := strings.Contains(headerRow(w, "plan", "idle", "following", path, false), " · following")
-			l := strings.Contains(headerRow(w, "plan", "idle", "latched", path, false), " · latched")
+			f := strings.Contains(row(w, "idle", "following", path), " following")
+			l := strings.Contains(row(w, "idle", "latched", path), " latched")
 			if f != l || f != (w >= from) {
 				t.Errorf("%d cells, %s: following %v, latched %v", w, path, f, l)
 			}
@@ -681,7 +684,7 @@ func TestHeaderSaysFollowingOrLatched(t *testing.T) {
 	for _, state := range []string{"idle", "thinking", "running", "ask", "error"} {
 		for _, follow := range []string{"following", "latched"} {
 			for _, path := range []string{"rex/plans/cuj/sendoff-demo.rex.json", "rex/plans/a-rather-long/plan_attach_and_more.rex.json"} {
-				if got := headerRow(w, "tape", state, follow, path, false); !strings.Contains(got, state+" · "+follow+" · ") || cellLen(got) != w {
+				if got := paintLine(headerRow(w, PaneChat, "", state, follow, path), w, false); !strings.Contains(got, state+"  ") || !strings.Contains(got, " "+follow+" ") || cellLen(got) != w {
 					t.Errorf("80 columns, %s %s %s: %q", state, follow, path, got)
 				}
 			}
@@ -692,13 +695,13 @@ func TestHeaderSaysFollowingOrLatched(t *testing.T) {
 		t.Fatal("no plan, no word")
 	}
 	b, _, _ := openDemo(t, demoPlan, 80, 24)
-	if row := b.frameRows().Rows[0]; !strings.Contains(row, "idle · latched · ") {
+	if row := b.frameRows().Rows[0]; !strings.Contains(row, "idle     latched cuj/demo") {
 		t.Fatalf("row 0 at 80x24: %q", row)
 	}
 }
 
 // The old verbs are gone: on the Wait screen and the tape, p, d, s, b and
-// ⏎ change nothing and write nothing.
+// enter change nothing and write nothing.
 func TestOldVerbsDoNothingWithoutAPlan(t *testing.T) {
 	for _, tab := range []bool{false, true} {
 		repo := attachRepo(t)
@@ -721,7 +724,7 @@ func TestOldVerbsDoNothingWithoutAPlan(t *testing.T) {
 }
 
 // docs/ux.md §4: the plan file's error, a toast and hard drift outrank a
-// new-plan offer on row 1, soft drift sits under it, and ⏎ switches only
+// new-plan offer on row 1, soft drift sits under it, and enter switches only
 // while row 1 shows the offer; under anything else it does what it did.
 func TestRowOneOutranksTheOffer(t *testing.T) {
 	// Any drift comes in the batch that brings the offer, which is judged
@@ -741,12 +744,12 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 	}
 	hidden := func(t *testing.T, a *app, path, want string) {
 		t.Helper()
-		if got := a.statusLine().Text; !strings.HasPrefix(got, want) || strings.Contains(a.frame(), "⏎ switch") {
+		if got := a.statusLine().Text; !strings.HasPrefix(got, want) || strings.Contains(a.frame(), "enter switch") {
 			t.Fatalf("row 1 %q, want %q\n%s", got, want, a.frame())
 		}
-		press(a, "\r") // the outline's own ⏎
+		press(a, "\r") // the outline's own enter
 		if a.plans.Current != path || a.at != atTaskDetail || a.offer == "" {
-			t.Fatalf("⏎ switched to an offer row 1 didn't show: current=%q at=%d", a.plans.Current, a.at)
+			t.Fatalf("enter switched to an offer row 1 didn't show: current=%q at=%d", a.plans.Current, a.at)
 		}
 		press(a, "esc")
 	}
@@ -757,20 +760,20 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 	later(a, c)
 	hidden(t, a, path, "plan updated · load-outline → skipped")
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; got != "new plan cuj/next · ⏎ switch" {
+	if got := a.statusLine().Text; got != "new plan cuj/next · enter switch" {
 		t.Fatalf("the offer is back once the toast is gone: %q", got)
 	}
 	if press(a, "\r"); a.plans.Current != next || !a.follow {
 		t.Fatalf("current=%q follow=%v", a.plans.Current, a.follow)
 	}
 
-	// Hard drift: it stays until resolved, and so does ⏎'s usual meaning.
+	// Hard drift: it stays until resolved, and so does enter's usual meaning.
 	a, _, path, _ = offered(t, "README.md")
 	hidden(t, a, path, "drift · hard: README.md")
 
 	// Soft drift sits under the offer, and shows once it is settled.
 	a, _, _, _ = offered(t, "internal/tui/live.go")
-	if s, ok := a.driftStatus(plan.Soft); !ok || a.statusLine().Text != "new plan cuj/next · ⏎ switch" {
+	if s, ok := a.driftStatus(plan.Soft); !ok || a.statusLine().Text != "new plan cuj/next · enter switch" {
 		t.Fatalf("soft drift %q (%v) is under the offer: %q", s.Text, ok, a.statusLine().Text)
 	}
 	press(a, "esc", "\r") // Continue settles the offer
@@ -816,7 +819,7 @@ func TestOnlyThePlanListLatches(t *testing.T) {
 	}
 }
 
-// ⏎ on Continue reopens the plan already open: it picks nothing new, so
+// enter on Continue reopens the plan already open: it picks nothing new, so
 // a followed plan stays followed (docs/ux.md §11).
 func TestContinueKeepsFollowing(t *testing.T) {
 	repo := attachRepo(t)
@@ -827,7 +830,7 @@ func TestContinueKeepsFollowing(t *testing.T) {
 		t.Fatal("setup: on Continue")
 	}
 	press(a, "\r")
-	if a.plans.Current != one || a.at != atOutline || !a.follow || !strings.Contains(a.frame(), "following · rex/plans/one.rex.json") {
+	if a.plans.Current != one || a.at != atOutline || !a.follow || !strings.Contains(a.frame(), "following rex/plans/one.rex.json") {
 		t.Fatalf("follow=%v\n%s", a.follow, a.frame())
 	}
 	two := writePlan(t, repo, "two.rex.json", demoPlan)
@@ -853,10 +856,10 @@ func TestKeysActBeforeTheEventsReadWithThem(t *testing.T) {
 		t.Fatalf("clearing the find lets it through: current=%q at=%d", a.plans.Current, a.at)
 	}
 	if a.step([]string{"\r"}, []watch.Event{wrote(repo, one)}); a.plans.Current != one || a.at != atOutline {
-		t.Fatalf("⏎ opened two's task detail, then one opened: current=%q at=%d", a.plans.Current, a.at)
+		t.Fatalf("enter opened two's task detail, then one opened: current=%q at=%d", a.plans.Current, a.at)
 	}
 
-	// Latched: ⏎ read with the write that makes the offer opens the task
+	// Latched: enter read with the write that makes the offer opens the task
 	// you were on; the offer waits on row 1.
 	b, _, path := openDemo(t, demoPlan, 120, 32)
 	next := writePlan(t, b.plans.Repo, "cuj/next.rex.json", demoPlan)
@@ -1026,7 +1029,7 @@ func TestAnotherSpellingIsTheSamePlan(t *testing.T) {
 		t.Fatalf("opened again: current=%q sel %q -> %q", b.plans.Current, sel, b.outline.sel)
 	}
 
-	// An offer that has become the open plan: ⏎ only follows again.
+	// An offer that has become the open plan: enter only follows again.
 	c, _, path := openDemo(t, demoPlan, 120, 32)
 	next := writePlan(t, c.plans.Repo, "cuj/next.rex.json", demoPlan)
 	c.ingest([]watch.Event{wrote(c.plans.Repo, next)})
@@ -1086,7 +1089,7 @@ func TestWaitCopyFollowsWherePlansGo(t *testing.T) {
 	a := testApp(t)
 	os.WriteFile(filepath.Join(a.plans.Repo, "rex"), []byte("x"), 0o644)
 	a.plans.Rebuild()
-	off := text(a.waitBody(300))
+	off := text(a.waitBody(300, 40))
 	if !strings.Contains(off, rexFileNotice) || !strings.Contains(off, "Move it to turn plans on") {
 		t.Fatalf("plans off:\n%s", off)
 	}
@@ -1096,11 +1099,76 @@ func TestWaitCopyFollowsWherePlansGo(t *testing.T) {
 		}
 	}
 
+	// Outside git the notice names the folder, and step 2 keeps the short
+	// path, so the long one never wraps through HOW IT GOES.
 	out := t.TempDir() // not a git repo
 	b := newApp("yellow", false, "idle", NewPlanBrowser(out), 120, 32)
-	body := text(b.waitBody(300))
-	if want := "Rex opens " + homePath(PlansDir(out)) + "/<name>.rex.json here"; !strings.Contains(body, want) || !strings.Contains(body, "not in a git repo") {
-		t.Fatalf("outside git, want %q:\n%s", want, body)
+	body := text(b.waitBody(300, 40))
+	if !strings.Contains(body, "it writes rex/plans/<name>.rex.json\n") || !strings.Contains(body, "not in a git repo · plans go to "+homePath(PlansDir(out))) {
+		t.Fatalf("outside git:\n%s", body)
+	}
+	if body := text(b.waitBody(38, 40)); strings.Count(body, homePath(PlansDir(out))) > 0 || !strings.Contains(body, "     rex/plans/<name>.rex.json\n") {
+		t.Fatalf("outside git at 38 cells, the folder is only in the notice:\n%s", body)
+	}
+}
+
+// docs/ux.md §11: the Wait screen's paths and hint never break mid-word
+// and are never clipped: a path breaks after a "/", the skill hint is one
+// line only where it fits, and its lead never leaves a word alone.
+func TestWaitCopyNeverBreaksMidWord(t *testing.T) {
+	a := testApp(t)
+	look := func(c skill.Copy) { a.skill.got, a.skill.at = c, a.now() }
+	copies := []skill.Copy{skill.Missing, skill.Stale, skill.StaleProject}
+	for _, c := range copies {
+		look(c)
+		_, cmd, _ := strings.Cut(skillHint(c), " · ")
+		for width := MinTextCols; width <= 120; width++ {
+			body := a.waitBody(width, 40)
+			hint := 0 // the rows after the last blank one are the hint
+			for i, line := range body {
+				if line.Kind == "gap" {
+					hint = i
+				}
+			}
+			for i, line := range body {
+				if cellLen(line.Text) > width {
+					t.Errorf("copy %d, %d cells: %q is clipped", c, width, line.Text)
+				}
+				if i > hint && line.Kind == "muted" && !strings.Contains(strings.TrimSpace(line.Text), " ") {
+					t.Errorf("copy %d, %d cells: %q alone above the command\n%s", c, width, line.Text, viewText(body))
+				}
+			}
+			if width >= cellLen(cmd)+2 && !strings.Contains(viewText(body), "  "+cmd+"\n") && !strings.Contains(viewText(body), " · "+cmd+"\n") {
+				t.Errorf("copy %d, %d cells: the command isn't whole\n%s", c, width, viewText(body))
+			}
+		}
+		// As drawn, at 62 and 70 text cells (with the mascot and without):
+		// the whole command, never a "…".
+		for _, cols := range []int{62, 62 + 42, 70 + 42} {
+			a.settle(cols, 24)
+			for _, row := range a.frameRows().Rows {
+				if strings.Contains(row, "rex ingest") && (!strings.Contains(row, cmd) || strings.Contains(row, "…")) {
+					t.Errorf("copy %d at %d columns: %q", c, cols, strings.TrimSpace(row))
+				}
+			}
+		}
+	}
+	look(skill.Missing)
+	if got := viewText(a.waitBody(24, 40)); !strings.Contains(got, "  2  it writes\n     rex/plans/\n     <name>.rex.json\n") {
+		t.Errorf("24 cells: the path breaks after a /\n%s", got)
+	}
+	if got := viewText(a.waitBody(50, 40)); !strings.Contains(got, "\n  agents learn plans from the rex-plan skill:\n  rex ingest --install-skill\n") {
+		t.Errorf("50 cells: the shorter lead, over the command\n%s", got)
+	}
+	if got := viewText(a.waitBody(60, 40)); !strings.Contains(got, "\n  agents learn the plan format from the rex-plan skill:\n  rex ingest --install-skill\n") {
+		t.Errorf("60 cells: the fuller lead fits a row\n%s", got)
+	}
+	a.settle(50, 12)
+	if frame := strings.Join(a.frameRows().Rows, "\n"); !strings.Contains(frame, "HOW IT GOES") || !strings.Contains(frame, "rex ingest --install-skill") {
+		t.Errorf("50×12 keeps HOW IT GOES and the hint\n%s", frame)
+	}
+	if got := wrapPath("see /a/very-long-folder-name/x", 12); strings.Join(got, "|") != "see|/a/|…older-name/|x" {
+		t.Errorf("wrapPath: %q", got)
 	}
 }
 
@@ -1199,7 +1267,7 @@ func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 	if got := a.statusLine().Text; got != "rex-plan skill is out of date · rex ingest --install-skill" {
 		t.Fatalf("row 1 on the first frame: %q", got)
 	}
-	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "rex-plan skill is out of date · rex ingest --install-skill" {
+	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "rex-plan skill is out of date · rex ingest --install-skill            1/3 done" {
 		t.Fatalf("drawn: %q", row)
 	}
 	a.settle(80, 24)
@@ -1245,41 +1313,105 @@ func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 	}
 }
 
-// docs/ux.md §11: every line of the Wait screen can be reached on a short
-// terminal: ↑↓, pages, Home and End scroll it.
+// docs/ux.md §11: on a short screen the Wait screen sheds its blank rows,
+// then its key rows, then HOW IT GOES, then the long skill hint, and the
+// headline and the short hint never go; what still doesn't fit scrolls:
+// ↑↓, pages, Home and End reach every line.
 func TestTheWaitScreenScrolls(t *testing.T) {
 	a := testApp(t)
-	a.settle(60, 7) // text only: rows are the text column
-	body := a.waitBody(60)
+	body := func(w, h int) string { return viewText(a.waitBody(w, h)) }
+	steps := []struct {
+		h          int
+		want, gone []string
+	}{
+		{40, []string{"no plan yet", "HOW IT GOES", "esc  open a plan", "agents learn the plan format", "rex ingest --install-skill"}, nil},
+		{17, []string{"HOW IT GOES", "esc  open a plan", "agents learn the plan format"}, nil},
+		{16, []string{"HOW IT GOES", "esc  open a plan", "agents learn the plan format"}, nil},
+		{12, []string{"HOW IT GOES", "agents learn the plan format"}, []string{"esc  open a plan"}},
+		{10, []string{"agents learn the plan format"}, []string{"HOW IT GOES"}},
+		{4, []string{"teach it: rex ingest --install-skill"}, []string{"agents learn the plan format"}},
+		{2, []string{"no plan yet · tell your agent to", "teach it: rex ingest --install-skill"}, nil},
+	}
+	for _, s := range steps {
+		got := body(38, s.h)
+		// The headline (2 rows at 38 cells) and the short hint are the floor.
+		if n := len(a.waitBody(38, s.h)); n > max(s.h, 3) {
+			t.Errorf("%d rows: %d lines", s.h, n)
+		}
+		for _, w := range s.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%d rows: %q missing\n%s", s.h, w, got)
+			}
+		}
+		for _, w := range s.gone {
+			if strings.Contains(got, w) {
+				t.Errorf("%d rows: %q still there\n%s", s.h, w, got)
+			}
+		}
+	}
+	if !strings.Contains(body(38, 17), "\n\n") || strings.Contains(body(38, 16), "\n\n") {
+		t.Errorf("the blank rows go first:\n%s", body(38, 16))
+	}
+	// Narrow, the command wraps whole rather than clipping.
+	if got := body(24, 40); !strings.Contains(got, "  --install-skill\n") || strings.Contains(got, "…") {
+		t.Errorf("24 cells:\n%s", got)
+	}
+	if got := body(30, 4); !strings.Contains(got, "  teach it:\n  rex ingest --install-skill\n") {
+		t.Errorf("30 cells, 4 rows:\n%s", got)
+	}
+	// An older Rex's skill keeps its short hint at 38×3 (80×7): one line
+	// when it fits, else it scrolls rather than go.
+	for c, want := range map[skill.Copy]string{
+		skill.Stale:        "  no plan yet · tell your agent to\n  make one\n  update: rex ingest --install-skill\n",
+		skill.StaleProject: "  no plan yet · tell your agent to\n  make one\n  update:\n  rex ingest --install-skill --project\n",
+	} {
+		a.skill.got, a.skill.at = c, a.now()
+		if got := body(38, 3); got != want {
+			t.Errorf("copy %d at 38×3:\n%s", c, got)
+		}
+		a.settle(80, 7)
+		if c == skill.Stale && !strings.Contains(strings.Join(a.frameRows().Rows, "\n"), "update: rex ingest --install-skill") {
+			t.Errorf("80×7 shows the hint\n%s", strings.Join(a.frameRows().Rows, "\n"))
+		}
+	}
+	a.skill.got, a.skill.at = skill.Missing, a.now()
+	a.settle(80, 7)
+	if !strings.Contains(strings.Join(a.frameRows().Rows, "\n"), "teach it: rex ingest --install-skill") {
+		t.Errorf("80×7 shows the hint\n%s", strings.Join(a.frameRows().Rows, "\n"))
+	}
+
+	a.settle(24, 6) // text only: 2 body rows, and a headline of 3
+	l := a.layout()
+	all := a.waitBody(l.textW, l.bodyH)
 	seen := map[string]bool{}
 	look := func() {
-		for _, row := range a.frameRows().Rows[2:6] { // no composer: the body has row 5 too
+		for _, row := range a.frameRows().Rows[3 : 3+l.bodyH] {
 			seen[strings.TrimSpace(row)] = true
 		}
 	}
 	look()
-	if footer := a.frameRows().Rows[6]; !strings.Contains(footer, "↑↓ scroll") {
+	if footer := a.frameRows().Rows[5]; !strings.Contains(footer, "↑↓") && !strings.Contains(footer, "?") {
 		t.Fatalf("footer %q", footer)
 	}
-	for i := 0; i < len(body); i++ {
+	for i := 0; i < len(all); i++ {
 		press(a, "down")
 		look()
 	}
-	for _, line := range body {
+	for _, line := range all {
 		if text := strings.TrimSpace(line.Text); text != "" && !seen[text] {
 			t.Errorf("never on screen: %q", text)
 		}
 	}
 	press(a, "home")
-	if a.outline.scroll != 0 || !strings.Contains(a.frameRows().Rows[2], "plan") {
+	if a.outline.scroll != 0 || !strings.Contains(a.frameRows().Rows[3], "no plan") {
 		t.Fatal("Home is the top")
 	}
 	press(a, "end")
 	a.frameRows()
-	if a.outline.scroll != len(body)-layoutFor(60, 7).bare().bodyH {
+	if a.outline.scroll != len(all)-l.bodyH {
 		t.Fatalf("End is the bottom: %d", a.outline.scroll)
 	}
-	for range body {
+	for range all {
 		press(a, "pageup")
 	}
 	if a.frameRows(); a.outline.scroll != 0 {
@@ -1289,13 +1421,13 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 	if footer := a.frameRows().Rows[31]; strings.Contains(footer, "scroll") {
 		t.Fatalf("nothing to scroll at 32 rows: %q", footer)
 	}
-	if a.settle(20, 10); a.waitBody(0) != nil || len(a.frameRows().Rows) != 10 {
+	if a.settle(20, 10); a.waitBody(0, 10) != nil || len(a.frameRows().Rows) != 10 {
 		t.Fatal("too narrow: no copy, still a frame")
 	}
 }
 
 // The Wait screen has no composer: letters and pastes do nothing, ? opens
-// Help at once, ⏎ does nothing, and ← or Esc go to the plan list.
+// Help at once, enter does nothing, and ← or Esc go to the plan list.
 func TestWaitKeys(t *testing.T) {
 	a := testApp(t)
 	before := a.frame()
@@ -1327,21 +1459,23 @@ func TestSamePlanGoesByTheFile(t *testing.T) {
 }
 
 // docs/ux.md §4: row 1's offer keeps a clipped name while 5 cells are
-// free for it, then drops it whole.
+// free for it, then drops its tail, and only then the name.
 func TestTheOfferKeepsAClippedName(t *testing.T) {
 	cases := []struct {
 		width                   int
 		name, tail, short, want string
 	}{
-		{40, "cuj/sendoff-demo", " · ⏎ switch", " · ⏎ switch", "new plan cuj/sendoff-demo · ⏎ switch"},
-		{30, "cuj/sendoff-demo", " · ⏎ switch", " · ⏎ switch", "new plan …doff-demo · ⏎ switch"},
-		{25, "cuj/sendoff-demo", " · ⏎ switch", " · ⏎ switch", "new plan …demo · ⏎ switch"},
-		{24, "cuj/sendoff-demo", " · ⏎ switch", " · ⏎ switch", "new plan · ⏎ switch"},
+		{40, "cuj/sendoff-demo", " · enter switch", "", "new plan cuj/sendoff-demo · enter switch"},
+		{30, "cuj/sendoff-demo", " · enter switch", "", "new plan …-demo · enter switch"},
+		{25, "cuj/sendoff-demo", " · enter switch", "", "new plan cuj/sendoff-demo"},
+		{20, "cuj/sendoff-demo", " · enter switch", "", "new plan …ndoff-demo"},
+		{13, "cuj/sendoff-demo", " · enter switch", "", "new plan"},
 		{38, "a-much-longer-plan-name", " · opens when the line is clear", " · waiting", "new plan …h-longer-plan-name · waiting"},
+		{19, "two", " · opens when the prompt closes", " · waiting", "new plan two"},
 		{14, "x", "", "", "new plan x"},
 	}
 	for _, tc := range cases {
-		if got := fitNewPlan(tc.name, tc.tail, tc.short, tc.width); got != tc.want || cellLen(got) > max(tc.width, cellLen("new plan · ⏎ switch")) {
+		if got := fitNewPlan(tc.name, tc.tail, tc.short, tc.width); got != tc.want || cellLen(got) > tc.width {
 			t.Errorf("%d %q: got %q, want %q", tc.width, tc.name, got, tc.want)
 		}
 	}
@@ -1349,7 +1483,7 @@ func TestTheOfferKeepsAClippedName(t *testing.T) {
 	next := writePlan(t, a.plans.Repo, "cuj/a-much-longer-plan-name-from-the-agent.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
 	a.toast = StatusLine{}
-	if row := strings.TrimSpace(a.frameRows().Rows[1]); !strings.HasPrefix(row, "new plan …") || !strings.HasSuffix(row, "-the-agent · ⏎ switch") {
+	if row := strings.TrimSpace(a.frameRows().Rows[1]); !strings.HasPrefix(row, "new plan …") || !strings.HasSuffix(row, "he-agent · enter switch") {
 		t.Fatalf("row 1 at 80 columns: %q", row)
 	}
 }

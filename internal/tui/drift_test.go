@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -115,13 +116,51 @@ func TestDriftBelongsToItsPlanAndStint(t *testing.T) {
 	}
 }
 
+// docs/ux.md §9a, §11: while a latched plan offers the one the agent
+// wrote, the agent is working on that plan. Its edits and prompts are not
+// drift from the latched pin, so they never hide the offer.
+func TestTheOfferedPlansWorkIsNotDrift(t *testing.T) {
+	a, c, path := openDemo(t, driftDemo, 120, 32)
+	repo := a.plans.Repo
+	other := filepath.Join(a.plans.Root, "a.rex.json")
+	if err := os.WriteFile(other, []byte(`{"tasks": [{"id": "render", "title": "Render", "status": "active", "files": ["src/a.go"]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.ingest([]watch.Event{at(c, time.Second, wrote(repo, other))})
+	c.t = c.t.Add(toastFor)
+	a.ingest([]watch.Event{
+		edit(a, c, 2*time.Second, "src/a.go"),
+		at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "user", Text: "now add three extra palettes for dark mode"}),
+	})
+	if got := a.statusLine().Text; !strings.HasPrefix(got, "new plan a · ") {
+		t.Fatalf("row 1 keeps the offer: %q", got)
+	}
+	if len(a.drift.items) != 0 {
+		t.Fatalf("the offered plan's work is not drift: %v", a.drift.items)
+	}
+	for _, ev := range a.log {
+		if ev.Kind == "drift" {
+			t.Fatalf("no drift block on the tape: %q", ev.Text)
+		}
+	}
+	if press(a, "\r"); a.plans.Current != other || !a.follow || a.offer != "" {
+		t.Fatalf("⏎ switches: current=%q (was %q) follow=%v", a.plans.Current, path, a.follow)
+	}
+	a.ingest([]watch.Event{edit(a, c, 4*time.Second, "README.md")})
+	if got := a.statusLine().Text; got != "drift · hard: README.md · outside render files" {
+		t.Fatalf("following again, edits are judged against the new pin: %q", got)
+	}
+}
+
 func TestDriftClearsWhenThePlanIsWidened(t *testing.T) {
 	a, c, path := openDemo(t, driftDemo, 120, 32)
 	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
 	os.WriteFile(path, []byte(strings.Replace(driftDemo, `"files": ["internal/tui/plans.go"`, `"files": ["README.md", "internal/tui/plans.go"`, 1)), 0o644)
 	later(a, c)
-	if s, ok := a.driftStatus(); ok {
-		t.Fatalf("README.md is listed now: %q", s.Text)
+	for _, level := range []plan.DriftLevel{plan.Soft, plan.Hard} {
+		if s, ok := a.driftStatus(level); ok {
+			t.Fatalf("README.md is listed now: %q", s.Text)
+		}
 	}
 }
 

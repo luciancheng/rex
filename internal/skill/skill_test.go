@@ -137,3 +137,21 @@ func TestTheSkillTeachesAReviewPass(t *testing.T) {
 		}
 	}
 }
+
+// The agent writes the plan and Rex opens it: the skill never sends the
+// person to Rex to create or open one (docs/ux.md §11).
+func TestTheSkillHasTheAgentWriteThePlan(t *testing.T) {
+	s := string(RexPlan)
+	for _, want := range []string{"## Writing the file", "Write it yourself at `rex/plans/<name>.rex.json`", "A running Rex that is following opens it", "Rex offers yours on its status line", "file write or edit tool", "Don't ask them to create or open it in Rex."} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	// Rex may be latched on another plan, not running, or not wired: the
+	// skill never promises the plan is on screen.
+	for _, never := range []string{"Create a plan", "Open a plan", "already on their screen", "shows the outline of the plan file you write"} {
+		if strings.Contains(s, never) {
+			t.Errorf("the skill sends the person to Rex: %q", never)
+		}
+	}
+}

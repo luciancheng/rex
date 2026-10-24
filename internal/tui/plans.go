@@ -43,7 +43,7 @@ const (
 	PlanRowRecent
 	PlanRowMkdir
 	PlanRowCreateNamed // "+ Create 'x'" at the end of a find
-	PlanRowContinue    // the open plan, else the last one opened in this repo
+	PlanRowContinue    // the open plan
 )
 
 type PlanRow struct {
@@ -64,8 +64,7 @@ type PlanBrowser struct {
 	Screen  PlanScreen
 	From    PlanScreen
 	Current string
-	// Continue is the plan the Continue card reopens: the open plan, else
-	// the last one opened in this repo (from ~/.rex/state.json).
+	// Continue is the plan the Continue card reopens: the open plan.
 	Continue string
 	Err      string
 	Notice   string
@@ -1005,6 +1004,11 @@ func BuildPlanView(b *PlanBrowser, width int) []LogLine {
 	}
 	if len(b.Rows) == 1 && b.Notice != rexFileNotice {
 		lines = appendWrapped(append(lines, LogLine{Kind: "gap", Text: ""}), "idle", "plans are JSON in rex/plans/ · commit them", inner)
+		if b.Current == "" {
+			// Create isn't the only way in: the agent's write opens a plan
+			// (docs/ux.md §11).
+			lines = appendWrapped(lines, "idle", "or ask your agent to write rex/plans/<name>.rex.json · Rex opens it", inner)
+		}
 	}
 	return lines
 }

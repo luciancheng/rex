@@ -35,13 +35,23 @@ func typeText(a *app, text string) {
 	}
 }
 
-func TestAppStartsOnPlansHome(t *testing.T) {
+// With no plan yet, start waits for the agent to write one (docs/ux.md
+// §11); Create is in the plan list, not the front door.
+func TestAppStartsOnTheWaitScreen(t *testing.T) {
 	a := testApp(t)
-	if a.pane != PanePlans || a.plans.Screen != ScreenHome {
-		t.Fatalf("pane=%d screen=%d", a.pane, a.plans.Screen)
+	if a.pane != PanePlans || a.at != atWait || a.plans.Current != "" {
+		t.Fatalf("pane=%d at=%d current=%q", a.pane, a.at, a.plans.Current)
 	}
-	if frame := a.frame(); !strings.Contains(frame, "Create a plan") || !strings.Contains(frame, "plans") {
+	frame := a.frame()
+	if !strings.Contains(frame, "no plan yet · tell your agent to make one") || strings.Contains(frame, "Create a plan") {
 		t.Fatalf("%s", frame)
+	}
+	if !strings.Contains(frame, "no plan · esc plans · tab tape") {
+		t.Fatalf("the footer says where to go\n%s", frame)
+	}
+	press(a, "esc")
+	if a.at != atLibrary || !strings.Contains(a.frame(), "Create a plan") {
+		t.Fatalf("Esc is the plan list, Create in it\n%s", a.frame())
 	}
 }
 
@@ -167,7 +177,7 @@ func TestAppComposerNoteIsLoggedLocally(t *testing.T) {
 // used to jump to the tape.
 func TestAppOpeningAPlanLandsOnItsOutline(t *testing.T) {
 	a := testApp(t)
-	press(a, "\r")
+	press(a, "esc", "\r")
 	if a.plans.Screen != ScreenCreate {
 		t.Fatalf("screen=%d", a.plans.Screen)
 	}
@@ -226,6 +236,7 @@ func TestAppScrolledViewStaysPut(t *testing.T) {
 // the same read open the row the filter selected.
 func TestAppKeysFromOneReadSettleInOrder(t *testing.T) {
 	a := testApp(t)
+	press(a, "esc")
 	root := filepath.Join(a.plans.Repo, "rex", "plans")
 	os.MkdirAll(root, 0o755)
 	for _, name := range []string{"alpha.rex.json", "beta.rex.json"} {

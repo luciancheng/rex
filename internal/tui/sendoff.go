@@ -100,6 +100,10 @@ func (a *app) recordBrief(v *briefView, task, status string) {
 
 // sendoffVerb is s⏎ / sendoff⏎ / handoff⏎.
 func (a *app) sendoffVerb() {
+	if a.doc == nil {
+		a.noPlanYet()
+		return
+	}
 	if why := a.briefBlocked(); why != "" {
 		a.flash(why, "error")
 		return
@@ -112,13 +116,12 @@ func (a *app) sendoffVerb() {
 	a.openBrief(v)
 }
 
-// briefBlocked says why no brief can be made from the open plan: there
-// is none, or the file on disk is gone or doesn't parse (a brief from the
-// last good copy would point the next chat at a file that says otherwise).
+// briefBlocked says why no brief can be made from the open plan (callers
+// check there is one): the file on disk is gone or doesn't parse (a brief
+// from the last good copy would point the next chat at a file that says
+// otherwise).
 func (a *app) briefBlocked() string {
 	switch {
-	case a.doc == nil:
-		return "no plan open · tab to plan and open one"
 	case a.doc.gone:
 		return "can't send off: the plan file is missing"
 	case a.doc.plan == nil || a.doc.err != "":
@@ -182,7 +185,7 @@ func (a *app) stale(v *briefView) string {
 // briefVerb is b⏎ / brief⏎: ask an agent to fill or refine the plan.
 func (a *app) briefVerb() {
 	if a.doc == nil {
-		a.flash("no plan open · tab to plan and open one", "error")
+		a.noPlanYet()
 		return
 	}
 	v := &briefView{path: a.doc.path, planning: true}

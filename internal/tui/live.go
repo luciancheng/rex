@@ -545,7 +545,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	}
 	enabled := opt.Enabled
 	rows := make([]string, height)
-	rows[0] = headerRow(width, placeWord(opt.Pane), opt.Status, opt.PlanRel, enabled)
+	rows[0] = headerRow(width, placeWord(opt.Pane), opt.Status, opt.Follow, opt.PlanRel, enabled)
 	if height > 1 {
 		rows[1] = statusRow(opt.Line, width, enabled)
 	}
@@ -583,7 +583,8 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 // (docs/ux.md §4). Kind picks the color.
 type StatusLine struct {
 	Text  string
-	Short string // used instead of Text when Text doesn't fit
+	Short string                 // used instead of Text when Text doesn't fit
+	Fit   func(width int) string // instead of Short: Text fitted to width cells
 	Kind  string
 }
 
@@ -596,7 +597,11 @@ func statusRow(s StatusLine, width int, enabled bool) string {
 		kind = "muted"
 	}
 	text := s.Text
-	if s.Short != "" && cellLen(text) > width {
+	switch {
+	case cellLen(text) <= width:
+	case s.Fit != nil:
+		text = s.Fit(width)
+	case s.Short != "":
 		text = s.Short
 	}
 	return mascot.Paint(clip(text, width), mascot.UI[kind], enabled)
@@ -634,6 +639,7 @@ type ComposeOptions struct {
 	Plans       *PlanBrowser
 	LogView     []LogLine // laid-out tape, when the caller already has it
 	PlanRel     string    // open plan, repo-relative, for the header
+	Follow      string    // "following" or "latched" while a plan is open
 	Line        StatusLine
 	Overlay     *Overlay
 	Placeholder string    // dim hint in an empty composer
@@ -854,10 +860,7 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 			default:
 			}
 			pressed := keys.Read(max(time.Millisecond, time.Until(nextTick)))
-			changed := a.ingest(tail.Poll())
-			if a.keys(pressed) {
-				changed = true
-			}
+			changed := a.step(pressed, tail.Poll())
 			if a.quit {
 				return nil
 			}

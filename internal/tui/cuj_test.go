@@ -12,24 +12,31 @@ import (
 	"github.com/luciancheng/rex/internal/watch"
 )
 
-// cujApp is a fresh app in a repo holding the CUJ fixture plan. The
-// fixture is a copy of rex/plans/cuj/sendoff-demo.rex.json, so trying Rex
-// on the repo's own demo can't change what the tests see.
-func cujApp(t *testing.T) (*app, *clock, string) {
+// cujFixture is the CUJ plan, a copy of rex/plans/cuj/sendoff-demo.rex.json,
+// so trying Rex on the repo's own demo can't change what the tests see.
+func cujFixture(t *testing.T) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", "sendoff-demo.rex.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := testApp(t)
+	return data
+}
+
+// cujApp is Rex started in a repo that holds the CUJ plan: start attaches
+// it, so it opens on the outline (docs/ux.md §11).
+func cujApp(t *testing.T) (*app, *clock, string) {
+	t.Helper()
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(PlansDir(repo), "cuj", "sendoff-demo.rex.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, cujFixture(t), 0o644)
+	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
 	c := &clock{t: time.Unix(1_800_000_000, 0)}
 	a.now = c.now
-	path := filepath.Join(a.plans.Root, "cuj", "sendoff-demo.rex.json")
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	os.WriteFile(path, data, 0o644)
-	a.plans.walk = planWalk{}
-	a.plans.fresh = true
-	a.plans.Rebuild()
 	return a, c, path
 }
 
@@ -50,46 +57,71 @@ func (k *keys) spent(t *testing.T, budget int, what string) {
 	k.n = 0
 }
 
-// The journey: create → open → watch a turn → done → pin next → send off
-// → drift → back to the Library → quit.
+// The journey: the agent creates the plan and Rex opens it → the plan
+// list as an escape hatch → watch a turn → done → pin next → send off →
+// drift → back to the Library → quit.
 func TestCUJWholeLoop(t *testing.T) {
-	a, c, path := cujApp(t)
+	a := testApp(t)
+	c := &clock{t: time.Unix(1_800_000_000, 0)}
+	a.now = c.now
 	k := &keys{a: a}
 	var copied []string
 	a.copy = fakeCopy(&copied, copyResult{status: "copied (fake)"})
 
-	if a.pane != PanePlans || a.plans.Screen != ScreenHome || !strings.Contains(a.frame(), "Open latest") {
-		t.Fatal("A. starts on the plans home")
+	if a.pane != PanePlans || a.at != atWait || !strings.Contains(a.frame(), "no plan yet · tell your agent to make one") {
+		t.Fatalf("A. with no plan yet, start waits for one\n%s", a.frame())
 	}
+	repo := a.plans.Repo
+	path := filepath.Join(a.plans.Root, "cuj", "sendoff-demo.rex.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, plan.Stub("sendoff-demo"), 0o644)
+	a.ingest([]watch.Event{at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Write", "path": path, "ok": true, "cwd": repo}})})
+	k.spent(t, 0, "create (the agent writes the plan)") // docs/ux.md §14
+	if a.at != atOutline || a.plans.Current != path || !a.follow || !strings.Contains(a.frame(), "No tasks yet") || !strings.Contains(a.frame(), "following · rex/plans/cuj/sendoff-demo.rex.json") {
+		t.Fatalf("B. the agent's write opens the plan, followed\n%s", a.frame())
+	}
+	os.WriteFile(path, cujFixture(t), 0o644)
+	later(a, c)
+	k.spent(t, 0, "open (Rex follows the write)")
+	if a.outline.sel != "card-highlight" || !strings.Contains(a.frame(), "▌ ▸ card-highlight") || !strings.Contains(a.frame(), "plan updated · +3 tasks") {
+		t.Fatalf("B. the filled plan lands on its pin: sel=%q\n%s", a.outline.sel, a.frame())
+	}
+
+	// The plan list stays an escape hatch: create, refuse a duplicate,
+	// open by name. Picking a plan there latches it.
+	k.press("esc")
 	k.typ("scratch")
 	k.press("\r")
-	k.spent(t, len("scratch")+1, "create through find") // docs/ux.md §14
+	k.spent(t, 1+len("scratch")+1, "create in Rex (Esc, find, ⏎)")
 	stub, err := plan.Load(filepath.Join(a.plans.Root, "scratch.rex.json"))
-	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || !strings.Contains(a.frame(), "No tasks yet") {
-		t.Fatalf("B. create writes a v1 stub and opens it: %v %+v\n%s", err, stub, a.frame())
+	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || a.follow || !strings.Contains(a.frame(), "No tasks yet") || !strings.Contains(a.frame(), "latched") {
+		t.Fatalf("C. create writes a v1 stub, opens it and latches: %v %+v\n%s", err, stub, a.frame())
 	}
 	k.press("esc", "home", "down")
 	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowNew {
-		t.Fatal("B. Create sits under Continue")
+		t.Fatal("C. Create sits under Continue")
 	}
 	k.press("\r")
 	k.typ("scratch")
 	k.press("\r")
 	if !strings.Contains(a.frame(), "already exists") {
-		t.Fatalf("B. a duplicate name is refused\n%s", a.frame())
+		t.Fatalf("C. a duplicate name is refused\n%s", a.frame())
 	}
-	k.press("\x15", "esc") // Ctrl+U, then back to Home
+	k.press("\x15", "esc", "home", "\r") // Ctrl+U, back to Home, ⏎ on Continue
+	if a.plans.Current != filepath.Join(a.plans.Root, "scratch.rex.json") || a.at != atOutline || a.follow {
+		t.Fatal("C. Continue reopens scratch and keeps it latched")
+	}
 	k.n = 0
+	k.press("esc")
 	k.typ("sendoff-demo")
 	k.press("\r")
-	k.spent(t, len("sendoff-demo")+1, "open by name")
+	k.spent(t, 1+len("sendoff-demo")+1, "open by name (Esc, name, ⏎)")
 	if a.at != atOutline || a.outline.sel != "card-highlight" || !strings.Contains(a.frame(), "▸ card-highlight  Selected plan card is one block (active)") {
 		t.Fatalf("D. the outline opens on the pin\n%s", a.frame())
 	}
 
 	k.press("\t")
 	k.spent(t, 1, "to the tape")
-	repo := a.plans.Repo
 	write := filepath.Join(repo, "internal/tui/plans.go")
 	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "make the selected card one block"})})
 	if a.turn != TurnThinking {
@@ -185,6 +217,12 @@ func TestCUJWholeLoop(t *testing.T) {
 	if !a.quit || a.exitLine() != "rex: rex/plans/cuj/sendoff-demo.rex.json · pinned load-outline" {
 		t.Fatalf("J. quit with the plan named: %q", a.exitLine())
 	}
+
+	b := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
+	(&keys{a: b}).spent(t, 0, "open last time's plan") // docs/ux.md §14
+	if b.pane != PanePlans || b.at != atOutline || b.plans.Current != path || !b.follow || b.outline.sel != "load-outline" {
+		t.Fatalf("K. the next start opens it again, following: at=%d current=%q sel=%q", b.at, b.plans.Current, b.outline.sel)
+	}
 }
 
 // Every screen fits every size: no row wider than the terminal, no control
@@ -196,7 +234,9 @@ func TestFrameMatrix(t *testing.T) {
 		setup   func(a *app)
 		reached func(a *app) bool
 	}
-	open := func(a *app) { typeText(a, "sendoff-demo"); press(a, "\r") }
+	// These start in a repo with no plans; the rest on the CUJ plan.
+	empty := map[string]bool{"wait": true, "wait plans off": true, "home no plans": true}
+	list := func(a *app) { press(a, "esc") } // the outline at start, Esc to the plan list
 	lib := func(sc PlanScreen) func(a *app) bool {
 		return func(a *app) bool { return a.pane == PanePlans && a.at == atLibrary && a.plans.Screen == sc }
 	}
@@ -204,47 +244,73 @@ func TestFrameMatrix(t *testing.T) {
 		return func(a *app) bool { return a.at == p && a.overlay[a.pane] == overlayNone }
 	}
 	over := func(o overlayKind) func(a *app) bool { return func(a *app) bool { return a.overlay[a.pane] == o } }
+	browse := func(a *app) {
+		list(a)
+		a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, a.plans.Root, true
+		a.plans.Rebuild()
+	}
+	pick := func(a *app, kind PlanRowKind) {
+		for i, row := range a.plans.Rows {
+			if row.Kind == kind {
+				a.plans.Cursor = i
+			}
+		}
+	}
 	screens := []screen{
-		{"home", func(a *app) {}, lib(ScreenHome)},
-		{"find", func(a *app) { typeText(a, "send") }, func(a *app) bool {
+		{"wait", func(a *app) {}, func(a *app) bool { return a.at == atWait && a.plans.Current == "" }},
+		{"wait plans off", func(a *app) {
+			os.WriteFile(filepath.Join(a.plans.Repo, "rex"), []byte("x"), 0o644)
+			a.plans.Rebuild()
+		}, func(a *app) bool { return a.at == atWait && a.plans.Notice == rexFileNotice }},
+		{"home no plans", list, func(a *app) bool { return lib(ScreenHome)(a) && len(a.plans.Rows) == 1 }},
+		{"home", list, lib(ScreenHome)},
+		{"find", func(a *app) { list(a); typeText(a, "send") }, func(a *app) bool {
 			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan
 		}},
-		{"browse", func(a *app) {
-			a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, a.plans.Root, true
-			a.plans.Rebuild()
-		}, lib(ScreenBrowse)},
-		{"create", func(a *app) { press(a, "home", "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
-		{"new folder", func(a *app) {
-			a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, a.plans.Root, true
-			a.plans.Rebuild()
-			for i, row := range a.plans.Rows {
-				if row.Kind == PlanRowMkdir {
-					a.plans.Cursor = i
-				}
-			}
-			press(a, "\r")
-			typeText(a, "notes")
-		}, lib(ScreenFolder)},
-		{"outline", open, at(atOutline)},
-		{"task detail", func(a *app) { open(a); press(a, "\r") }, at(atTaskDetail)},
-		{"plan detail", func(a *app) { open(a); press(a, "home", "\r") }, at(atPlanDetail)},
+		{"browse", browse, lib(ScreenBrowse)},
+		{"create", func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
+		{"new folder", func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r"); typeText(a, "notes") }, lib(ScreenFolder)},
+		{"outline", func(a *app) {}, at(atOutline)},
+		{"held attach", func(a *app) {
+			press(a, "\t")
+			typeText(a, "d")
+			press(a, "\r", "\t") // a done form on the tape holds it
+			other := filepath.Join(a.plans.Root, "cuj", "a-much-longer-plan-name-from-the-agent.rex.json")
+			os.WriteFile(other, []byte(`{"version": 1, "tasks": []}`), 0o644)
+			a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + other, Meta: map[string]any{"tool": "Write", "path": other, "ok": true}}})
+		}, func(a *app) bool { return at(atOutline)(a) && a.pending != "" }},
+		{"new plan offer", func(a *app) {
+			list(a)
+			typeText(a, "scratch")
+			press(a, "\r") // made in the list: latched
+			other := filepath.Join(a.plans.Root, "cuj", "a-much-longer-plan-name-from-the-agent.rex.json")
+			os.WriteFile(other, []byte(`{"version": 1, "tasks": []}`), 0o644)
+			a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + other, Meta: map[string]any{"tool": "Write", "path": other, "ok": true}}})
+		}, func(a *app) bool { return at(atOutline)(a) && a.offer != "" && !a.follow }},
+		{"task detail", func(a *app) { press(a, "\r") }, at(atTaskDetail)},
+		{"plan detail", func(a *app) { press(a, "home", "\r") }, at(atPlanDetail)},
 		{"tape", func(a *app) {
 			press(a, "\t")
 			a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "a reply with 中文 and ⚠️ in it \x1b[2J"}})
 		}, func(a *app) bool { return a.pane == PaneChat && a.overlay[a.pane] == overlayNone }},
 		{"help", func(a *app) { press(a, "\t"); typeText(a, "?"); press(a, "\r") }, over(overlayHelp)},
-		{"sendoff", func(a *app) { open(a); typeText(a, "s"); press(a, "\r") }, func(a *app) bool {
+		{"sendoff", func(a *app) { typeText(a, "s"); press(a, "\r") }, func(a *app) bool {
 			return over(overlaySendoff)(a) && !a.briefs[a.pane].planning
 		}},
-		{"planning brief", func(a *app) { open(a); typeText(a, "b"); press(a, "\r") }, func(a *app) bool {
+		{"planning brief", func(a *app) { typeText(a, "b"); press(a, "\r") }, func(a *app) bool {
 			return over(overlaySendoff)(a) && a.briefs[a.pane].planning
 		}},
-		{"done form", func(a *app) { open(a); typeText(a, "d"); press(a, "\r") }, over(overlayDone)},
-		{"pin confirm", func(a *app) { open(a); press(a, "end"); typeText(a, "p"); press(a, "\r") }, over(overlayPin)},
+		{"done form", func(a *app) { typeText(a, "d"); press(a, "\r") }, over(overlayDone)},
+		{"pin confirm", func(a *app) { press(a, "end"); typeText(a, "p"); press(a, "\r") }, over(overlayPin)},
 	}
 	for _, size := range [][2]int{{24, 7}, {24, 12}, {24, 24}, {80, 7}, {80, 12}, {80, 24}, {120, 7}, {120, 12}, {120, 24}} {
 		for _, s := range screens {
-			a, _, _ := cujApp(t)
+			var a *app
+			if empty[s.name] {
+				a = testApp(t) // the wait screen
+			} else {
+				a, _, _ = cujApp(t)
+			}
 			s.setup(a)
 			a.settle(size[0], size[1])
 			f := a.frameRows()

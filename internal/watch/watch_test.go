@@ -152,6 +152,49 @@ func TestDuplicateThoughtIsNotAppended(t *testing.T) {
 	}
 }
 
+// Two tool calls that wrote one file are two events however close they
+// come: attach and the new-plan offer act on every plan write. A call
+// reported twice is still one, and so is Cursor's afterFileEdit, which
+// repeats its postToolUse without naming the call.
+func TestDedupeKeepsSeparateToolCalls(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	p := "/repo/rex/plans/a.rex.json"
+	for i, id := range []string{"t1", "t2", "t2"} {
+		ev := Event{Source: "claude", Kind: "result", Text: "wrote " + p, TS: 100 + float64(i), Meta: map[string]any{"tool": "Write", "path": p, "ok": true, "cwd": "/repo", "tool_use_id": id}}
+		if _, err := AppendEvent(feed, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if evs := LastEvents(feed, 10); len(evs) != 2 || evs[0].Meta["tool_use_id"] != "t1" || evs[1].Meta["tool_use_id"] != "t2" {
+		t.Fatalf("want t1 and t2 once each: %+v", evs)
+	}
+
+	ingested := func(source string, raws ...string) int {
+		t.Helper()
+		feed := filepath.Join(t.TempDir(), "session.jsonl")
+		for _, raw := range raws {
+			if err := RunIngest(strings.NewReader(raw), source, feed); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return len(LastEvents(feed, 10))
+	}
+	if n := ingested("claude",
+		`{"hook_event_name":"PostToolUse","cwd":"/repo","tool_use_id":"t1","tool_name":"Write","tool_input":{"file_path":"/repo/rex/plans/a.rex.json","content":"{}"}}`,
+		`{"hook_event_name":"PostToolUse","cwd":"/repo","tool_use_id":"t2","tool_name":"Edit","tool_input":{"file_path":"/repo/rex/plans/a.rex.json","old_string":"a","new_string":"b"}}`,
+	); n != 2 {
+		t.Fatalf("a Write and then an Edit of one plan: %d lines, want 2", n)
+	}
+	for _, id := range []string{``, `"tool_use_id":"c9",`} {
+		if n := ingested("cursor",
+			`{"hook_event_name":"postToolUse","conversation_id":"c1",`+id+`"tool_name":"Write","tool_input":{"path":"/repo/a.go","contents":"x"}}`,
+			`{"hook_event_name":"afterFileEdit","conversation_id":"c1","file_path":"/repo/a.go","edits":[]}`,
+		); n != 1 {
+			t.Fatalf("Cursor's afterFileEdit repeats its postToolUse (%s): %d lines, want 1", id, n)
+		}
+	}
+}
+
 func TestCursorThoughtAndShell(t *testing.T) {
 	thought := MapPayload(map[string]any{
 		"hook_event_name": "afterAgentThought",

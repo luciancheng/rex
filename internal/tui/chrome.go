@@ -55,9 +55,12 @@ func placeWord(pane PaneKind) string {
 	return "tape"
 }
 
-// headerRow is row 0: "REX plan|tape", then the colored turn state and the
-// open plan's path, shortened to fit (docs/ux.md §4).
-func headerRow(width int, place, state, planRel string, enabled bool) string {
+// headerRow is row 0: "REX plan|tape", then the colored turn state, the
+// follow word ("following" or "latched") and the open plan's path,
+// shortened to fit (docs/ux.md §4): drop "rex/plans/", then ".rex.json",
+// then clip from the left down to a few cells, and only then drop the
+// word, which never gives its room back to ".rex.json".
+func headerRow(width int, place, state, follow, planRel string, enabled bool) string {
 	left := "REX " + place
 	state = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(state), "\n", " "))
 	if state == "" {
@@ -69,9 +72,28 @@ func headerRow(width int, place, state, planRel string, enabled bool) string {
 	room := width - cellLen(left) - 2
 	path := ""
 	if planRel = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(planRel), "\n", " ")); planRel != "" {
-		path = shortPlanPath(planRel, room-cellLen(state)-3)
+		stem := strings.TrimSuffix(strings.TrimPrefix(planRel, "rex/plans/"), ".rex.json")
+		// Judged against the longest turn state and the longer word, so the
+		// word doesn't come and go with the turn, and following and latched
+		// come and go together: below 38 cells (66-79 columns with the
+		// mascot) the word yields before the path.
+		keep := room - max(cellLen(state), cellLen("thinking")) - cellLen("following") - 6
+		switch {
+		case follow == "":
+			path = shortPlanPath(planRel, room-cellLen(state)-3)
+		case keep >= min(headPathMin, cellLen(stem)):
+			path = shortPlanPath(planRel, room-cellLen(state)-cellLen(follow)-6)
+		default:
+			follow = ""
+			path = shortPlanPath(stem, room-cellLen(state)-3)
+		}
+	} else {
+		follow = ""
 	}
 	meta := state
+	if follow != "" {
+		meta += " · " + follow
+	}
 	if path != "" {
 		meta += " · " + path
 	}
@@ -94,6 +116,10 @@ func headerRow(width int, place, state, planRel string, enabled bool) string {
 	}
 	return out
 }
+
+// headPathMin is the fewest cells of the plan's path the header keeps
+// next to the follow word: "…demo".
+const headPathMin = 5
 
 // shortPlanPath fits a repo-relative plan path into room cells: the whole
 // path when it fits, then without "rex/plans/", then without ".rex.json",

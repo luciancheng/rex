@@ -124,7 +124,7 @@ func gather(events []watch.Event, scope watch.Scope, since time.Time, rel, id st
 		tool := watch.MetaTool(e)
 		ok, hasOK := e.Meta["ok"].(bool)
 		switch {
-		case e.Kind == "result" && watch.IsFileEditEvent(e) && (!hasOK || ok):
+		case completedEdit(e):
 			for _, p := range watch.EventPaths(e) {
 				rel, in := scope.Rel(p)
 				if !in || rel == "" || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, "rex/plans/") || seenFile[rel] {

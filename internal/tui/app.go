@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"os"
 	"strings"
 	"time"
 
@@ -76,6 +75,16 @@ type app struct {
 	plainText  string                         // the brief on the normal screen, to print again after a stop
 	plainShown bool                           // the brief is on the normal screen; ⏎ returns
 	plainBack  bool                           // come back to the live screen
+
+	// Attach (docs/ux.md §11): follow opens the plan the agent writes;
+	// picking one in the list, or p⏎ or d⏎ writing to it, latches (follow
+	// false), and another plan's write is then only offered on row 1.
+	follow    bool
+	pending   string    // a write to open once PLAN's draft and overlays clear
+	offer     string    // latched: the plan the agent wrote, ⏎ switches to it
+	wrote     string    // the last other plan file written in the batch being ingested
+	wroteOpen bool      // the batch wrote the open plan too
+	scanned   time.Time // the last cold-start look for a plan file
 }
 
 // logViewCache keeps the laid-out tape for one log revision and width; the
@@ -88,17 +97,10 @@ type logViewCache struct {
 
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
 	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
-		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}, pinMoved: map[string]time.Time{}, lastPin: map[string]string{}}
+		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}, pinMoved: map[string]time.Time{}, lastPin: map[string]string{}, follow: true}
 	a.started = a.now()
 	if plans.Current == "" {
-		// The Continue card offers the plan last opened in this repo.
-		if last := plan.LoadState(a.statePath).Repos[plans.Repo].Plan; last != "" && IsPlanFile(last) {
-			if _, err := os.Stat(last); err == nil {
-				plans.Continue = last
-				plans.fresh = true
-				plans.Rebuild()
-			}
-		}
+		a.land()
 	}
 	a.sequence = mascot.MustAnimation(animation)
 	a.frameIndex = 0
@@ -151,6 +153,7 @@ func (a *app) composeOptions() ComposeOptions {
 		Pane:        a.pane,
 		Plans:       a.plans,
 		PlanRel:     a.plans.CurrentRel(),
+		Follow:      a.followWord(),
 		Line:        a.statusLine(),
 	}
 	textW := PaneTextWidth(a.columns)
@@ -165,6 +168,13 @@ func (a *app) composeOptions() ComposeOptions {
 		l := layoutFor(a.columns, a.lines)
 		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
 		opt.PlanFooter = a.planFooter()
+	}
+	if a.pane == PanePlans && a.at == atWait {
+		l := layoutFor(a.columns, a.lines)
+		body := a.waitBody(l.textW)
+		a.outline.scroll = max(0, min(a.outline.scroll, len(body)-l.bodyH))
+		opt.PlanView, opt.PlanScroll = body, a.outline.scroll
+		opt.PlanFooter = a.waitFooter(len(body) > l.bodyH)
 	}
 	if a.overlay[a.pane] == overlayPin {
 		lines := pinConfirmLines(a.pinAsk[a.pane], textW)
@@ -245,7 +255,11 @@ func (a *app) planFooter() []string {
 	if p := a.doc.plan; p == nil || len(p.Tasks) == 0 {
 		return []string{"outline", "b⏎ brief", "tab tape", "esc plans"}
 	}
-	return []string{"outline", "tab tape", "esc plans", "⏎ detail", "?⏎ help"}
+	enter := "⏎ detail"
+	if a.offerTakes() {
+		enter = "⏎ switch" // row 1's offer takes ⏎ (docs/ux.md §11)
+	}
+	return []string{"outline", "tab tape", "esc plans", enter, "?⏎ help"}
 }
 
 // verbHints are the verbs worth typing on the open plan, as the outline's
@@ -273,6 +287,9 @@ func (a *app) placeholder() string {
 	}
 	if a.pane == PaneChat {
 		return "note (not sent) · ?⏎ help"
+	}
+	if a.at == atWait {
+		return "?⏎ help"
 	}
 	if a.at != atLibrary {
 		return a.verbHints()
@@ -329,15 +346,16 @@ func (a *app) preview() string {
 }
 
 // statusLine picks row 1, the first of these that applies (docs/ux.md
-// §4): the plan file can't be read, a toast, drift, the pin.
+// §4): the plan file can't be read, a toast, hard drift, a new plan
+// (offered or held), soft drift, the pin.
 func (a *app) statusLine() StatusLine {
-	if s, ok := docStatus(a.doc); ok {
+	if s, ok := a.overOffer(); ok {
 		return s
 	}
-	if a.toast.Text != "" && a.now().Before(a.toastUntil) {
-		return a.toast
+	if s, ok := a.offerStatus(); ok {
+		return s
 	}
-	if s, ok := a.driftStatus(); ok {
+	if s, ok := a.driftStatus(plan.Soft); ok {
 		return s
 	}
 	if a.doc == nil {
@@ -346,10 +364,32 @@ func (a *app) statusLine() StatusLine {
 	return pinStatus(a.doc.plan, a.doc.writable() == "")
 }
 
+// overOffer is what row 1 shows over a new plan: the plan file can't be
+// read, a toast (it expires, and the offer is back), hard drift.
+func (a *app) overOffer() (StatusLine, bool) {
+	if s, ok := docStatus(a.doc); ok {
+		return s, true
+	}
+	if a.toast.Text != "" && a.now().Before(a.toastUntil) {
+		return a.toast, true
+	}
+	return a.driftStatus(plan.Hard)
+}
+
 // flash shows a toast on row 1 for a few seconds.
 func (a *app) flash(text, kind string) {
 	a.toast = StatusLine{Text: text, Kind: kind}
 	a.toastUntil = a.now().Add(toastFor)
+}
+
+// noPlanText is row 1 when a verb needs a plan and none is open: the agent
+// writes one and Rex opens it (docs/ux.md §11), so it doesn't send you to
+// the plan list.
+const noPlanText = "no plan yet · tell your agent to make one"
+
+func (a *app) noPlanYet() {
+	a.flash(noPlanText, "error")
+	a.toast.Short = "no plan yet"
 }
 
 const toastFor = 3 * time.Second
@@ -390,12 +430,19 @@ func (a *app) logLines() int {
 // ingest applies hook events: turn state for every event, the tape for the
 // ones worth drawing. A scrolled-up view keeps showing the same lines while
 // new ones arrive below (until MaxLog trims the oldest).
-func (a *app) ingest(fresh []watch.Event) bool {
+func (a *app) ingest(fresh []watch.Event) (changed bool) {
 	for _, ev := range fresh {
 		a.health.saw(ev)
 	}
 	hidden := a.hidden
 	fresh = a.own(fromFeed(fresh), true)
+	// A plan file the agent wrote is opened once the batch is on the tape
+	// and judged for drift against the plan it was written under.
+	defer func() {
+		if a.planWritten() {
+			changed = true
+		}
+	}()
 	if len(fresh) == 0 {
 		// A hidden event still changes the count the empty tape shows.
 		return a.hidden != hidden && len(a.log) == 0
@@ -445,6 +492,20 @@ func (a *app) keys(pressed []string) bool {
 	return changed
 }
 
+// step applies one read of the loop: its keys first, so each acts on the
+// frame you saw, then the events polled with it, so a draft typed in that
+// read holds the attach they may bring (docs/ux.md §11).
+func (a *app) step(pressed []string, events []watch.Event) bool {
+	changed := a.keys(pressed)
+	if a.quit {
+		return changed
+	}
+	if a.ingest(events) {
+		changed = true
+	}
+	return changed
+}
+
 // feedKinds are the kinds an adapter writes (AGENTS.md, "Kinds").
 var feedKinds = map[string]bool{
 	"thought": true, "text": true, "user": true, "command": true,
@@ -475,6 +536,7 @@ func (a *app) own(events []watch.Event, live bool) []watch.Event {
 		a.remember(ev)
 		if live {
 			a.checkDrift(ev) // history from before Rex started never counts
+			a.sawWrite(ev)   // nor opens a plan; raw, since quiet results never reach the tape
 		}
 		out = append(out, a.scope.Display(ev))
 	}
@@ -695,7 +757,7 @@ func (a *app) tapeKey(key string) bool {
 	case "\r", "\n":
 		text := strings.TrimSpace(a.draft)
 		if text == "" {
-			return false
+			return a.takeOffer() // PLAN switches; you stay on the tape
 		}
 		if a.submit(text) {
 			return true
@@ -712,6 +774,9 @@ func (a *app) tapeKey(key string) bool {
 }
 
 func (a *app) planKey(key string) bool {
+	if a.at == atWait {
+		return a.waitKey(key)
+	}
 	if a.at != atLibrary && a.doc != nil {
 		return a.docKey(key)
 	}
@@ -777,7 +842,8 @@ func (a *app) planKey(key string) bool {
 }
 
 // planBack goes up one level inside PLAN: cancel a name prompt, leave a
-// folder, leave Browse for Home. At Home it does nothing.
+// folder, leave Browse for Home, and from Home with no plan open go back
+// to the Wait screen (docs/ux.md §3). Otherwise Home is the top.
 func (a *app) planBack() bool {
 	b := a.plans
 	switch {
@@ -788,6 +854,9 @@ func (a *app) planBack() bool {
 	case b.Browsing():
 		b.Up()
 		a.draft = ""
+		return true
+	case b.Current == "":
+		a.at = atWait
 		return true
 	}
 	return false
@@ -800,6 +869,7 @@ func (a *app) planEnter() bool {
 		if b.CommitCreate(a.draft) == PlanOpenChat {
 			a.draft = ""
 			a.openedPlan()
+			a.latch() // you made it: latched (docs/ux.md §11)
 		}
 		return true
 	case ScreenFolder:
@@ -807,7 +877,7 @@ func (a *app) planEnter() bool {
 		a.draft = ""
 		return true
 	}
-	filter := b.Filter
+	filter, was := b.Filter, b.Current
 	switch b.Activate() {
 	case PlanStartCreate:
 		// From a Browse filter, what was typed becomes the name to edit.
@@ -824,16 +894,20 @@ func (a *app) planEnter() bool {
 		a.draft = ""
 	case PlanOpenChat:
 		a.openedPlan()
+		if !samePlan(b.Current, was) {
+			a.latch() // you picked it: latched (docs/ux.md §11); Continue picks nothing new
+		}
 	}
 	return true
 }
 
-// openedPlan runs after a plan is opened or created: Rex reads it, lands
-// on its outline with the pin selected, and remembers it for this repo.
+// openedPlan runs after a plan is opened, created or attached: Rex reads
+// it, lands PLAN on its outline with the pin selected, and remembers it as
+// this repo's last plan.
 func (a *app) openedPlan() {
 	path := a.plans.Current
 	now := a.now()
-	if a.doc == nil || a.doc.path != path {
+	if a.doc == nil || !samePlan(a.doc.path, path) {
 		a.doc = openDoc(path, now)
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
@@ -848,9 +922,14 @@ func (a *app) openedPlan() {
 		}
 	}
 	// Continue on the plan already open keeps its last good copy, its
-	// debounce and its selection.
+	// debounce and its selection. The Library's find text is done with;
+	// a Wait screen draft is a verb, as on the outline, so it carries over
+	// (docs/ux.md §11). The tape's draft is never PLAN's to clear.
+	if a.pane == PanePlans && a.at != atWait {
+		a.draft = ""
+	}
 	a.at = atOutline
-	a.draft = ""
+	a.offer, a.pending = "", "" // any open settles which plan is shown
 	a.notePin()
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
 		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
@@ -923,6 +1002,9 @@ func (a *app) docKey(key string) bool {
 	case "\r", "\n":
 		text := strings.TrimSpace(a.draft)
 		if text == "" {
+			if a.takeOffer() {
+				return true
+			}
 			if a.at == atOutline {
 				return a.openDetail()
 			}
@@ -1065,7 +1147,7 @@ func (a *app) pinCandidate() *plan.Task {
 // waits on unfinished work, or moves the pin off another task asks first.
 func (a *app) pinVerb(arg string) {
 	if a.doc == nil {
-		a.flash("no plan open · tab to plan and open one", "error")
+		a.noPlanYet()
 		return
 	}
 	if why := a.doc.writable(); why != "" {
@@ -1146,6 +1228,7 @@ func (a *app) writePin(id string, seen plan.Status, moving []string) {
 		return
 	}
 	a.doc.took(saved)
+	a.latch() // you acted on this plan: it stays (docs/ux.md §11)
 	now := a.now()
 	key := plan.PinKey(a.doc.path, id)
 	a.pinSeen[key], a.pinMoved[key], a.lastPin[a.doc.path] = now, now, key
@@ -1245,6 +1328,9 @@ func (a *app) syncPlanInput() bool {
 // mascot advances a frame.
 func (a *app) tick() bool {
 	changed := a.pollDoc()
+	if a.scanPlans() {
+		changed = true
+	}
 	if a.pollCopies() {
 		changed = true
 	}
@@ -1275,13 +1361,16 @@ func (a *app) tick() bool {
 	return changed
 }
 
-// settle runs after every key or tick: it applies the browse filter, picks
-// up a resize, and keeps the tape scroll in range.
+// settle runs after every key or tick: it applies the browse filter, opens
+// a held attach, picks up a resize, and keeps the tape scroll in range.
 func (a *app) settle(columns, lines int) bool {
 	changed := false
 	// An open overlay owns the composer: nothing typed in it filters the
 	// list underneath.
 	if a.pane == PanePlans && a.overlay[PanePlans] == overlayNone && a.syncPlanInput() {
+		changed = true
+	}
+	if a.applyPending() {
 		changed = true
 	}
 	if columns != a.columns || lines != a.lines {

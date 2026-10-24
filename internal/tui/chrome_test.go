@@ -1006,7 +1006,10 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 		{"task detail", func(a *app) { press(a, "\r") }, "esc outline  tab agent  ↑↓ scroll  ?"},
 		{"about", func(a *app) { press(a, "home", "\r") }, "esc outline  tab agent  ↑↓ scroll  ?"},
 		{"detail, offer", func(a *app) { press(a, "esc"); typeText(a, "scratch"); press(a, "\r", "\r"); offered(a) }, "enter switch  esc outline  tab agent"},
-		{"agent", func(a *app) { press(a, "\t") }, "tab plan  ? help  ↑↓ scroll"},
+		{"agent", func(a *app) { press(a, "\t"); a.ingest([]watch.Event{watch.NewEvent("claude", "text", "done", nil)}) }, "tab plan  ? help  ↑↓ scroll"},
+		// The empty tab is a page: ↑↓ only while it runs past (docs/ux.md §10).
+		{"agent, empty", func(a *app) { press(a, "\t") }, "tab plan  ? help  ctrl+c ×2 quit"},
+		{"agent, empty, runs past", func(a *app) { a.health, a.hidden = notWired(), 4; press(a, "\t"); a.settle(80, 12) }, "tab plan  ? help  ↑↓ scroll"},
 		{"agent, scrolled", scrolled, "end live  tab plan  ? help  ↑↓ scroll"},
 		{"agent, scrolled, short", func(a *app) { scrolled(a); a.settle(80, 11) }, "1↑  end live  tab plan  ? help"},
 		{"agent, offer", func(a *app) { press(a, "esc"); typeText(a, "scratch"); press(a, "\r", "\t"); offered(a) }, "enter switch  tab plan  ? help"},

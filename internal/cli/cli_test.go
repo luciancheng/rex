@@ -115,17 +115,18 @@ func TestComposeFrameShowsAgentEvents(t *testing.T) {
 		},
 		Status: "thinking",
 	})
+	// Each block is named by its first characters, with no rule (docs/ux.md §10).
 	for _, needle := range []string{
-		"I should inspect sprites.py",
+		"thinking  I should inspect sprites.py",
 		"$ pytest -q",
-		"? run tests?",
-		"── thinking",
-		"── run",
-		"── ask",
+		"[ASK] run tests?",
 	} {
 		if !strings.Contains(frame, needle) {
 			t.Fatalf("missing %q", needle)
 		}
+	}
+	if strings.Contains(frame, "── ") {
+		t.Fatalf("a rule on a block that has none\n%s", frame)
 	}
 	header := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
 	if !strings.Contains(header, "thinking") {
@@ -165,15 +166,16 @@ func TestComposeFrameFormatsMarkdownAndUserPrompt(t *testing.T) {
 }
 
 func TestComposeFrameScrollsOlderEvents(t *testing.T) {
+	// Replies, since a run of thoughts folds into one row.
 	events := make([]watch.Event, 0, 30)
 	for i := 0; i < 30; i++ {
-		events = append(events, watch.Event{Source: "cursor", Kind: "thought", Text: fmt.Sprintf("block-%02d", i)})
+		events = append(events, watch.Event{Source: "cursor", Kind: "text", Text: fmt.Sprintf("block-%02d", i)})
 	}
 	live := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
 		Enabled: false, Columns: 80, Lines: 24, Log: events, Scroll: 0,
 	})
 	older := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24, Log: events, Scroll: 40,
+		Enabled: false, Columns: 80, Lines: 24, Log: events, Scroll: 200,
 	})
 	if !strings.Contains(live, "block-29") {
 		t.Fatal("live missing newest")

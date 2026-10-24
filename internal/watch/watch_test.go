@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -486,6 +487,24 @@ func TestMarkdownLinesHeadingsListsAndCode(t *testing.T) {
 	}
 }
 
+// A reply draws its headings bold (docs/ux.md §10): MarkdownBlocks marks
+// them, and only them; a "#" inside code is not one.
+func TestMarkdownBlocksMarkHeadings(t *testing.T) {
+	got := MarkdownBlocks("# Title\nplain **text**\n\n### Sub\n```\n# a comment\n```\n#notaheading")
+	want := []MarkdownLine{{Text: "Title", Heading: true}, {Text: "plain text"}, {}, {Text: "Sub", Heading: true}, {Text: "│ # a comment"}, {Text: "#notaheading"}}
+	if len(got) != len(want) {
+		t.Fatalf("%+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("line %d: %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if lines := MarkdownLines("# Title\nplain"); len(lines) != 2 || lines[0] != "Title" {
+		t.Fatalf("MarkdownLines is its text: %q", lines)
+	}
+}
+
 func TestDuplicateThoughtsMatchEvenLater(t *testing.T) {
 	first := Event{Source: "cursor", Kind: "thought", Text: "Check the idle sprite.", TS: 1.0}
 	again := Event{Source: "cursor", Kind: "thought", Text: "Check  the idle sprite.", TS: 9.0}
@@ -634,5 +653,61 @@ func TestEventTailDropsPartialLineAfterDeleteAndRecreate(t *testing.T) {
 	os.WriteFile(feed, []byte(`{"source":"cursor","kind":"user","text":"b"}`+"\n"), 0o600)
 	if got := tail.Poll(); len(got) != 1 || got[0].Text != "b" {
 		t.Fatalf("%#v", got)
+	}
+}
+
+// AGENT reads a failure back from the line the adapter wrote (docs/ux.md
+// §10): each adapter's real failure payloads split into what failed and
+// why, a path says so, and a turn's own error loses only the lead.
+func TestFailuresReadBackFromEveryAdapter(t *testing.T) {
+	mapped := func(source, payload string) Event {
+		t.Helper()
+		var m map[string]any
+		if err := json.Unmarshal([]byte(payload), &m); err != nil {
+			t.Fatal(err)
+		}
+		ev := MapPayload(m, source)
+		if ev == nil || ev.Kind != "error" {
+			t.Fatalf("%s %s: %#v", source, payload, ev)
+		}
+		return *ev
+	}
+	for _, tc := range []struct {
+		source, payload string
+		what, why       string
+		path            bool
+	}{
+		{"claude", `{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"echo \"a: b\""},"error":"Exit code 2\nFAIL"}`, `echo "a: b"`, "Exit code 2", false},
+		{"claude", `{"hook_event_name":"PostToolUseFailure","tool_name":"Write","tool_input":{"file_path":"/r/internal/tui/view.go"},"error":"permission denied"}`, "/r/internal/tui/view.go", "permission denied", true},
+		{"claude", `{"hook_event_name":"PostToolUseFailure","tool_name":"Edit","error":"old_string not found"}`, "Edit", "old_string not found", false},
+		{"claude", `{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"make"}}`, "make", "", false},
+		{"cursor", `{"hook_event_name":"postToolUseFailure","tool_name":"Write","tool_input":{"file_path":"/repo/a.go"},"error_message":"permission denied\nstack"}`, "/repo/a.go", "permission denied", true},
+		{"cursor", `{"hook_event_name":"postToolUseFailure","tool_name":"Shell","tool_input":{"command":"go test ./..."},"error_message":"exit status 1"}`, "Shell", "exit status 1", false},
+		{"codex", `{"hook_event_name":"PostToolUse","turn_id":"t","cwd":"/r","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: a.go\n*** End Patch"},"tool_response":"Exit code: 0\nWall time: 0 seconds\nOutput:\napply_patch verification failed: no such file"}`, filepath.Join("/r", "a.go"), "apply_patch verification failed: no such file", true},
+		{"auto", `{"type":"message.part.updated","part":{"type":"tool","tool":"bash","state":{"status":"error","input":{"command":"go vet: x"},"error":"exit 1\nmore"}}}`, "go vet: x", "exit 1", false},
+		{"auto", `{"type":"message.part.updated","part":{"type":"tool","tool":"edit","state":{"status":"error","input":{"filePath":"/r/a.go"},"error":"File /r/a.go has been modified since it was last read"}}}`, "/r/a.go", "File /r/a.go has been modified since it was last read", true},
+	} {
+		ev := mapped(tc.source, tc.payload)
+		if MetaTool(ev) == "" {
+			t.Fatalf("%s: a failed tool call names its tool: %#v", tc.source, ev)
+		}
+		if what, why, path := FailParts(ev); what != tc.what || why != tc.why || path != tc.path {
+			t.Errorf("%s %q: (%q, %q, %v), want (%q, %q, %v)", tc.source, ev.Text, what, why, path, tc.what, tc.why, tc.path)
+		}
+	}
+	for _, tc := range []struct{ source, payload, text string }{
+		{"claude", `{"hook_event_name":"StopFailure","error":"rate limited\nretry later"}`, "rate limited"},
+		{"claude", `{"hook_event_name":"StopFailure"}`, "turn failed"},
+		{"cursor", `{"hook_event_name":"stop","status":"error"}`, "turn ended with an error"},
+		{"auto", `{"type":"session.error","error":{"name":"APIError","message":"rate limited\nresponse body"}}`, "rate limited"},
+		{"auto", `{"type":"session.error","error":{}}`, "session error"},
+	} {
+		ev := mapped(tc.source, tc.payload)
+		if MetaTool(ev) != "" {
+			t.Fatalf("%s: a turn's error names no tool: %#v", tc.source, ev)
+		}
+		if got := TurnErrorText(ev); got != tc.text {
+			t.Errorf("%s %q: %q, want %q", tc.source, ev.Text, got, tc.text)
+		}
 	}
 }

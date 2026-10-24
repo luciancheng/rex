@@ -28,7 +28,7 @@ const (
 var kindColor = map[string]string{
 	"before":   "muted",
 	"plan":     "muted",
-	"drift":    "accent", // each row says hard or soft; row 1 is red for hard
+	"drift":    "muted", // its rows carry hard's or soft's color
 	"thought":  "muted",
 	"command":  "accent",
 	"question": "error",
@@ -46,19 +46,6 @@ var kindStatus = map[string]string{
 	"text":     "idle",
 	"user":     "idle",
 	"result":   "idle",
-	"error":    "error",
-	"idle":     "idle",
-}
-
-var kindLabel = map[string]string{
-	"before":   "before rex started",
-	"plan":     "plan",
-	"thought":  "thinking",
-	"command":  "run",
-	"question": "ask",
-	"text":     "reply",
-	"user":     "you",
-	"result":   "done",
 	"error":    "error",
 	"idle":     "idle",
 }
@@ -155,13 +142,6 @@ func wrapPath(text string, width int) []string {
 	return append(lines, cur)
 }
 
-func asLogEntry(event watch.Event) (string, string) {
-	if watch.ProseKinds[event.Kind] {
-		return event.Kind, watch.CleanText(event.Text)
-	}
-	return event.Kind, watch.CleanText(event.DisplayText())
-}
-
 func rule(label string, width int) string {
 	label = strings.ReplaceAll(watch.CleanText(label), "\n", " ")
 	prefix := "── " + label + " "
@@ -171,13 +151,18 @@ func rule(label string, width int) string {
 	return prefix + strings.Repeat("─", width-cellLen(prefix))
 }
 
-func userRows(text string, width int) []string {
+// userRows is a prompt (docs/ux.md §10): a box at most half the row wide,
+// right-aligned, its text left-aligned inside, capped at maxPromptRows.
+// Short screens (not tall) drop its blank rows.
+func userRows(text string, width int, tall bool) []string {
 	boxW := max(8, width/2)
 	chunks := watch.MarkdownLines(text)
 	var wrapped []string
 	for _, chunk := range chunks {
 		if strings.TrimSpace(chunk) == "" {
-			wrapped = append(wrapped, "")
+			if tall {
+				wrapped = append(wrapped, "")
+			}
 			continue
 		}
 		var lines []string
@@ -222,41 +207,6 @@ func userRows(text string, width int) []string {
 	return rows
 }
 
-func bodyRows(kind, text string, width, inner int) []string {
-	if kind == "user" {
-		return userRows(text, width)
-	}
-	var chunks []string
-	if watch.ProseKinds[kind] {
-		chunks = watch.MarkdownLines(text)
-	} else {
-		chunks = []string{text}
-	}
-	var rows []string
-	for _, chunk := range chunks {
-		if strings.TrimSpace(chunk) == "" {
-			rows = append(rows, "")
-			continue
-		}
-		var wrapped []string
-		if strings.HasPrefix(chunk, "│ ") {
-			wrapped = hardWrap(chunk, inner)
-		} else {
-			wrapped = wrap(chunk, inner)
-		}
-		if len(wrapped) == 0 {
-			wrapped = []string{""}
-		}
-		for _, row := range wrapped {
-			rows = append(rows, "  "+row)
-		}
-	}
-	if len(rows) == 0 {
-		return []string{""}
-	}
-	return rows
-}
-
 type LogLine struct {
 	Kind     string
 	Text     string
@@ -275,64 +225,17 @@ func headOf(body []LogLine) int {
 	return n
 }
 
-func BuildLogView(log []watch.Event, width int) []LogLine {
-	if width <= 0 {
-		return nil
-	}
-	if len(log) == 0 {
-		return []LogLine{{Kind: "idle", Text: "Ready. Watching for agent events."}}
-	}
-	type group struct {
-		kind  string
-		label string // instead of the kind's label
-		texts []string
-	}
-	var groups []group
-	for _, entry := range log {
-		if watch.IsFileLookEvent(entry) || watch.IsQuietResult(entry) {
-			continue
-		}
-		kind, text := asLogEntry(entry)
-		if kind == "drift" {
-			// Its own block per pin, never merged: "drift · <pin>".
-			pin, _ := entry.Meta["pin"].(string)
-			groups = append(groups, group{kind: kind, label: "drift · " + pin, texts: strings.Split(watch.CleanText(entry.Text), "\n")})
-			continue
-		}
-		if n := len(groups); n > 0 && groups[n-1].kind == kind && kind != "text" && kind != "user" {
-			groups[n-1].texts = append(groups[n-1].texts, text)
-			continue
-		}
-		groups = append(groups, group{kind: kind, texts: []string{text}})
-	}
-	inner := max(1, width-2)
-	var lines []LogLine
-	for index, g := range groups {
-		if index > 0 {
-			lines = append(lines, LogLine{Kind: "gap", Text: ""})
-		}
-		if g.kind != "user" {
-			label := kindLabel[g.kind]
-			if g.label != "" {
-				label = g.label
-			} else if label == "" {
-				label = g.kind
-			}
-			lines = append(lines, LogLine{Kind: g.kind, Text: rule(label, width)})
-		}
-		if g.kind == "before" {
-			continue // just the rule
-		}
-		for _, text := range g.texts {
-			for _, row := range bodyRows(g.kind, text, width, inner) {
-				lines = append(lines, LogLine{Kind: g.kind, Text: row})
-			}
-		}
-	}
-	return lines
+// ExtendLog adds the events AGENT draws to log and returns them: a reply
+// that grows replaces its last copy, a repeat is dropped, and the log keeps
+// its newest MaxLog events.
+func ExtendLog(log *[]watch.Event, incoming []watch.Event) []watch.Event {
+	added, _ := extendLog(log, incoming)
+	return added
 }
 
-func ExtendLog(log *[]watch.Event, incoming []watch.Event) []watch.Event {
+// extendLog is ExtendLog that also says how many of the oldest events the
+// MaxLog cap dropped.
+func extendLog(log *[]watch.Event, incoming []watch.Event) ([]watch.Event, int) {
 	var added []watch.Event
 	for _, event := range incoming {
 		if !watch.KeepInPane(event) {
@@ -353,10 +256,9 @@ func ExtendLog(log *[]watch.Event, incoming []watch.Event) []watch.Event {
 		*log = append(*log, event)
 		added = append(added, event)
 	}
-	if len(*log) > MaxLog {
-		*log = (*log)[len(*log)-MaxLog:]
-	}
-	return added
+	dropped := max(0, len(*log)-MaxLog)
+	*log = (*log)[dropped:]
+	return added, dropped
 }
 
 type Turn int
@@ -531,9 +433,19 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	} else {
 		body = opt.LogView
 		if body == nil {
-			body = BuildLogView(opt.Log, width)
+			// app.viewOpt's rule, read from the turn's word: a run is live
+			// while the turn is in flight, scrolled or not.
+			live := opt.Status == "thinking" || opt.Status == "running"
+			body = BuildLogView(opt.Log, width, viewOpt{live: live, tall: height >= agentTitleRows})
 		}
-		scroll = ClampScroll(len(body), bodyH, scroll)
+		if len(opt.Log) == 0 {
+			// The empty tab is a page, not a stream: it starts at its top
+			// and scrolls from there, as Wait does (docs/ux.md §10).
+			scroll = min(scroll, max(0, len(body)-bodyH))
+			fromTop = true
+		} else {
+			scroll = ClampScroll(len(body), bodyH, scroll)
+		}
 	}
 	var visible []LogLine
 	if bodyH > 0 {

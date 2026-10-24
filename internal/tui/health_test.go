@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -32,8 +33,23 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 	if f := a.frame(); !strings.Contains(f, "AGENT") || !strings.Contains(f, "waiting for events") || !strings.Contains(f, "FEED ──") || strings.Contains(f, "Ready. Watching") {
 		t.Fatalf("the empty AGENT tab shows feed health, and says it waits in its page title\n%s", f)
 	}
-	if a.settle(120, 11); !strings.Contains(a.frame(), "FEED ─") || !strings.Contains(a.frame(), "waiting for agent events") {
-		t.Fatalf("with no page title, the FEED header says it\n%s", a.frame())
+	// A lead sentence heads it (docs/ux.md §10), with a blank row above FEED
+	// from 16 rows.
+	lead := viewText(a.emptyAgent(38))
+	if !strings.HasPrefix(lead, "  Rex shows your agent's work here as\n  its hooks report it.\n\nFEED ─") {
+		t.Fatalf("the lead\n%s", lead)
+	}
+	if a.settle(120, 12); !strings.HasPrefix(viewText(a.emptyAgent(78)), "  Rex shows your agent's work here as its hooks report it.\nFEED ─") {
+		t.Fatalf("no blank row under 16 rows\n%s", viewText(a.emptyAgent(78)))
+	}
+	if strings.Contains(viewText(a.emptyAgent(38)), "your agent's work here") {
+		t.Fatalf("no lead where it and the block don't both fit\n%s", viewText(a.emptyAgent(38)))
+	}
+	if a.settle(120, 11); !strings.Contains(a.frame(), "FEED ─") || !strings.Contains(a.frame(), "waiting for agent events") || strings.Contains(a.frame(), "your agent's work here") {
+		t.Fatalf("with no page title, the FEED header says it, and there is no lead\n%s", a.frame())
+	}
+	if strings.Contains(viewText(a.helpBody(78)), "your agent's work here") {
+		t.Fatal("Help's feed block has no lead")
 	}
 	a.settle(120, 32)
 	typeText(a, "?")
@@ -41,6 +57,147 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 	if a.overlay[PaneChat] != overlayHelp || !strings.Contains(viewText(a.helpBody(PaneTextWidth(a.columns))), "rex ingest --install claude") {
 		t.Fatal("help shows feed health too")
 	}
+}
+
+// The empty AGENT tab is a page (docs/ux.md §10): it starts at its top and
+// scrolls from there, and its lead comes whole, with the whole block
+// under it, or not at all; the blank row under the lead goes first. With
+// every harness found but not wired and the skill missing, the first body
+// row is the lead's first line or FEED, never the end of a sentence.
+func TestEmptyAgentNeverStartsMidSentence(t *testing.T) {
+	for _, size := range [][2]int{{80, 12}, {80, 16}, {80, 20}, {50, 12}, {80, 24}, {30, 8}, {24, 7}} {
+		a := testApp(t)
+		a.health = notWired()
+		a.hidden = 4
+		press(a, "\t")
+		a.settle(size[0], size[1])
+		body := agentBody(a)
+		full := len(body)
+		for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
+			body = body[:len(body)-1] // filler under a short page
+		}
+		lead := wrap(feedLead, max(8, PaneTextWidth(a.columns)-2))
+		name := fmt.Sprintf("%d×%d", size[0], size[1])
+		switch {
+		case strings.HasPrefix(body[0], "FEED ─"):
+			if strings.Contains(strings.Join(body, "\n"), "your agent's work") {
+				t.Errorf("%s: a lead under FEED\n%s", name, strings.Join(body, "\n"))
+			}
+		case body[0] == "  "+lead[0]:
+			for i, w := range lead {
+				if body[i] != "  "+w {
+					t.Errorf("%s: the lead is cut at row %d\n%s", name, i, strings.Join(body, "\n"))
+				}
+			}
+			at := len(lead)
+			if body[at] == "" {
+				at++
+			}
+			if !strings.HasPrefix(body[at], "FEED ─") || !strings.Contains(body[len(body)-1], "4 events from other folders hidden") {
+				t.Errorf("%s: the lead without the whole block under it\n%s", name, strings.Join(body, "\n"))
+			}
+			if blank := body[len(lead)] == ""; blank && size[1] < 16 || !blank && size[1] >= 16 && len(body) < full {
+				t.Errorf("%s: the blank row under the lead is from 16 rows, where it fits\n%s", name, strings.Join(body, "\n"))
+			}
+		default:
+			t.Errorf("%s: the page starts mid-block: %q\n%s", name, body[0], strings.Join(body, "\n"))
+		}
+	}
+	// At 38 cells: the whole page at 80×24; at 80×20 the blank row goes
+	// first and the lead stays.
+	a := testApp(t)
+	a.health = notWired()
+	press(a, "\t")
+	for rows, want := range map[int]string{
+		24: "  Rex shows your agent's work here as\n  its hooks report it.\n\nFEED ─",
+		20: "  Rex shows your agent's work here as\n  its hooks report it.\nFEED ─",
+	} {
+		a.settle(80, rows)
+		if body := strings.Join(agentBody(a), "\n"); !strings.HasPrefix(body, want) {
+			t.Fatalf("80×%d\n%s", rows, body)
+		}
+	}
+}
+
+// The empty AGENT tab scrolls like Wait (docs/ux.md §10): from its top,
+// ↑↓, pages and Home / End move it, ↑ more / ↓ more say it runs past, and
+// only then does its footer offer ↑↓. A first run's whole block is
+// reachable, the skill row and the hidden count with it.
+func TestEmptyAgentScrollsLikeWait(t *testing.T) {
+	a := testApp(t)
+	a.health, a.hidden = notWired(), 4
+	press(a, "\t")
+	a.settle(80, 16)
+	l := a.layout()
+	all := a.emptyAgent(l.textW)
+	footer := func() string {
+		rows := a.frameRows().Rows
+		return textOf(rows[len(rows)-1], a.columns)
+	}
+	if len(all) <= l.bodyH {
+		t.Fatalf("the block fits %d rows: %d", l.bodyH, len(all))
+	}
+	body := agentBody(a)
+	if body[len(body)-1] != "  ↓ more" || !strings.HasPrefix(body[0], "FEED ─") || footer() != "tab plan  ? help  ↑↓ scroll" {
+		t.Fatalf("the top, with ↓ more\n%s\n%s", strings.Join(body, "\n"), footer())
+	}
+	seen := map[string]bool{}
+	for range all {
+		for _, row := range agentBody(a) {
+			seen[strings.TrimSpace(row)] = true
+		}
+		press(a, "down")
+	}
+	for _, line := range all {
+		if text := strings.TrimSpace(line.Text); text != "" && !seen[text] {
+			t.Errorf("never on screen: %q", text)
+		}
+	}
+	if body := agentBody(a); body[0] != "  ↑ more" || !strings.Contains(body[len(body)-1], "4 events from other folders hidden") {
+		t.Fatalf("the bottom, with ↑ more\n%s", strings.Join(body, "\n"))
+	}
+	press(a, "home")
+	if a.frameRows(); a.emptyScroll != 0 || a.scroll != 0 {
+		t.Fatalf("Home is the top: %d", a.emptyScroll)
+	}
+	press(a, "end")
+	if a.frameRows(); a.emptyScroll != len(all)-l.bodyH {
+		t.Fatalf("End is the bottom: %d", a.emptyScroll)
+	}
+	press(a, "pageup")
+	if a.frameRows(); a.emptyScroll != max(0, len(all)-l.bodyH-(l.bodyH-2)) {
+		t.Fatalf("a page is the body less its two marker rows: %d", a.emptyScroll)
+	}
+	// A page that fits has no markers, and nothing to scroll.
+	a.settle(80, 32)
+	before := a.frame()
+	press(a, "down", "pagedown", "end")
+	if f := a.frame(); f != before || strings.Contains(f, "more") || footer() != "tab plan  ? help  ctrl+c ×2 quit" {
+		t.Fatalf("nothing to scroll at 32 rows\n%s", f)
+	}
+	// The first event ends the page: AGENT is live, at the bottom.
+	a.settle(80, 16)
+	press(a, "down", "down")
+	a.ingest([]watch.Event{watch.NewEvent("claude", "text", "done", nil)})
+	if a.settle(80, 16); a.scroll != 0 || !strings.Contains(a.frame(), "done") {
+		t.Fatalf("scroll=%d\n%s", a.scroll, a.frame())
+	}
+}
+
+// notWired is the feed's health on a first run: every harness found, none
+// wired, an old event, and (in the test's HOME) no skill.
+func notWired() feedHealth {
+	now := time.Now()
+	h := feedHealth{
+		path: "/home/me/.rex/session.jsonl",
+		// Half an hour off the hour, so the float stamp never rounds to 2h.
+		last: &watch.Event{Source: "cursor", TS: float64(now.Add(-3*time.Hour-30*time.Minute).UnixNano()) / 1e9},
+		read: now.Add(time.Hour), // never refreshed from the temp HOME mid-test
+	}
+	for _, name := range []string{"claude", "codex", "cursor", "opencode"} {
+		h.statuses = append(h.statuses, watch.HarnessStatus{Name: name, Present: true})
+	}
+	return h
 }
 
 func TestFeedHealthWrapsAndSaysWhatIsWiredHere(t *testing.T) {

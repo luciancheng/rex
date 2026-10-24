@@ -80,12 +80,31 @@ func IsDuplicate(event Event, recent []Event, window float64) bool {
 	return false
 }
 
+// MarkdownLine is one display line of Markdown. Heading marks a line that
+// was a heading, which AGENT draws bold (docs/ux.md §10).
+type MarkdownLine struct {
+	Text    string
+	Heading bool
+}
+
 func MarkdownLines(text string) []string {
+	blocks := MarkdownBlocks(text)
+	out := make([]string, len(blocks))
+	for i, b := range blocks {
+		out[i] = b.Text
+	}
+	return out
+}
+
+// MarkdownBlocks is text as display lines: headings, lists and emphasis
+// stripped to plain text, fenced code as "│ " lines, runs of blank lines
+// as one.
+func MarkdownBlocks(text string) []MarkdownLine {
 	if strings.TrimSpace(text) == "" {
-		return []string{""}
+		return []MarkdownLine{{}}
 	}
 	text = strings.ReplaceAll(text, "\r\n", "\n")
-	var out []string
+	var out []MarkdownLine
 	inFence := false
 	for _, raw := range strings.Split(text, "\n") {
 		stripped := strings.TrimSpace(raw)
@@ -94,16 +113,17 @@ func MarkdownLines(text string) []string {
 			continue
 		}
 		if inFence {
-			out = append(out, "│ "+strings.TrimRight(raw, "\r\n"))
+			out = append(out, MarkdownLine{Text: "│ " + strings.TrimRight(raw, "\r\n")})
 			continue
 		}
 		if ruleRe.MatchString(raw) {
-			if len(out) > 0 && out[len(out)-1] != "" {
-				out = append(out, "")
+			if len(out) > 0 && out[len(out)-1].Text != "" {
+				out = append(out, MarkdownLine{})
 			}
 			continue
 		}
-		out = append(out, inlineMD(blockMD(strings.TrimRight(raw, "\r\n"))))
+		line := strings.TrimRight(raw, "\r\n")
+		out = append(out, MarkdownLine{Text: inlineMD(blockMD(line)), Heading: headingRe.MatchString(line)})
 	}
 	return compactLines(out)
 }
@@ -160,14 +180,13 @@ func stripItalic(s string) string {
 	return b.String()
 }
 
-func compactLines(lines []string) []string {
-	var compacted []string
+func compactLines(lines []MarkdownLine) []MarkdownLine {
+	var compacted []MarkdownLine
 	blank := false
 	for _, line := range lines {
-		empty := strings.TrimSpace(line) == ""
-		if empty {
+		if strings.TrimSpace(line.Text) == "" {
 			if len(compacted) > 0 && !blank {
-				compacted = append(compacted, "")
+				compacted = append(compacted, MarkdownLine{})
 			}
 			blank = true
 			continue
@@ -176,7 +195,7 @@ func compactLines(lines []string) []string {
 		blank = false
 	}
 	if len(compacted) == 0 {
-		return []string{""}
+		return []MarkdownLine{{}}
 	}
 	return compacted
 }

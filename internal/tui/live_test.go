@@ -12,7 +12,7 @@ import (
 )
 
 func TestMarkdownUserPromptAlignment(t *testing.T) {
-	view := BuildLogView([]watch.Event{{Source: "cursor", Kind: "user", Text: "format this please"}}, 36)
+	view := BuildLogView([]watch.Event{{Source: "cursor", Kind: "user", Text: "format this please"}}, 36, viewOpt{tall: true})
 	if view[0].Kind != "user" {
 		t.Fatalf("kind %s", view[0].Kind)
 	}
@@ -41,7 +41,7 @@ func TestMarkdownUserPromptAlignment(t *testing.T) {
 func TestUserPromptBoxIsLeftAlignedInside(t *testing.T) {
 	prompt := "one two three four five six seven eight nine ten eleven"
 	width := 40
-	view := BuildLogView([]watch.Event{{Source: "cursor", Kind: "user", Text: prompt}}, width)
+	view := BuildLogView([]watch.Event{{Source: "cursor", Kind: "user", Text: prompt}}, width, viewOpt{tall: true})
 	var body []string
 	for _, line := range view {
 		if line.Kind == "user" && strings.TrimSpace(line.Text) != "" {
@@ -193,20 +193,20 @@ func TestBuildLogViewKeepsRunReplyHidesDone(t *testing.T) {
 		{Source: "cursor", Kind: "command", Text: "Read /tmp/a.go", Meta: map[string]any{"tool": "Read", "path": "/tmp/a.go"}},
 		{Source: "cursor", Kind: "text", Text: "First reply."},
 		{Source: "cursor", Kind: "text", Text: "Second reply."},
-	}, 48)
+	}, 48, viewOpt{tall: true})
 	text := viewText(view)
-	for _, needle := range []string{"── thinking", "── run", "── reply", "$ Write", "First reply", "Second reply"} {
+	for _, needle := range []string{"thinking  Checking the sprite.", "$ Write /tmp/a.go", "reply ───", "First reply", "Second reply"} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("missing %q in\n%s", needle, text)
 		}
 	}
-	if strings.Contains(text, "── done") || strings.Contains(text, "wrote /tmp") {
+	if strings.Contains(text, "done") || strings.Contains(text, "wrote /tmp") {
 		t.Fatalf("done spam still in\n%s", text)
 	}
 	if strings.Contains(text, "Read /tmp") {
 		t.Fatalf("file look still in\n%s", text)
 	}
-	replies := strings.Count(text, "── reply")
+	replies := strings.Count(text, "reply ───")
 	if replies != 2 {
 		t.Fatalf("want two reply blocks, got %d\n%s", replies, text)
 	}
@@ -362,8 +362,8 @@ func TestAppendOnlyFeedShowsOneGrowingReply(t *testing.T) {
 		}
 		ExtendLog(&log, tail.Poll())
 	}
-	view := viewText(BuildLogView(log, 48))
-	if strings.Count(view, "── reply") != 1 || !strings.Contains(view, "all three rows") {
+	view := viewText(BuildLogView(log, 48, viewOpt{tall: true}))
+	if strings.Count(view, "reply ───") != 1 || !strings.Contains(view, "all three rows") {
 		t.Fatalf("want one merged reply\n%s", view)
 	}
 }

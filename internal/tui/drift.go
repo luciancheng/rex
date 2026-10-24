@@ -19,7 +19,7 @@ type driftState struct {
 	pin   string // the pin's id, for the block's title
 	gen   int    // this stint's block on AGENT; each new pin gets its own
 	seen  map[string]bool
-	items []plan.Drift
+	items []driftNote // the block's rows, in the order they came
 	// Row 1 shows the last unresolved hard notice, else the last soft one.
 	hard, soft *driftNote
 	// Prompts that name another task, held until the turn ends: asking the
@@ -262,20 +262,26 @@ func (a *app) noteDrift(n driftNote) bool {
 		return true
 	}
 	s.seen[d.Subject] = true
-	s.items = append(s.items, d)
-	var rows []string
+	s.items = append(s.items, n)
+	var text []string
 	for _, it := range s.items {
-		rows = append(rows, fmt.Sprintf("%s %s (%s)", it.Level, it.Subject, it.Reason))
+		text = append(text, fmt.Sprintf("%s %s · %s", it.d.Level, it.d.Subject, it.d.Reason))
 	}
-	text := strings.Join(rows, "\n")
+	// AGENT draws the rows from meta, not by reading the text back: the
+	// block is Rex's own and never reaches the feed.
+	rows := append([]driftNote(nil), s.items...)
 	// One block per pin stint, updated where it first appeared. A scrolled-
-	// up view keeps showing the same lines: a block above it grows out of
-	// sight, and one below it moves the view by the rows it gains.
+	// up view keeps showing the same lines: a block that ends inside it
+	// grows into it, and one that ends under it moves the view by the rows
+	// it gains.
 	for i := len(a.log) - 1; i >= 0; i-- {
 		if e := &a.log[i]; e.Kind == "drift" && e.Meta["gen"] == s.gen {
 			before := a.logLines()
-			below := a.scroll > 0 && len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns))) < a.scroll
-			e.Text = text
+			// The rows under the block, measured from the head: blocks pack
+			// or space by kind, so the tail alone can't say.
+			below := a.scroll > 0 && before-len(BuildLogView(a.log[:i+1], PaneTextWidth(a.columns), a.viewOpt())) <= a.scroll
+			e.Text = strings.Join(text, "\n")
+			e.Meta["rows"] = rows
 			a.logRev++
 			if below {
 				a.below(before)
@@ -284,7 +290,7 @@ func (a *app) noteDrift(n driftNote) bool {
 		}
 	}
 	before := a.logLines()
-	a.log = append(a.log, watch.NewEvent("rex", "drift", text, map[string]any{"gen": s.gen, "pin": s.pin}))
+	a.log = append(a.log, watch.NewEvent("rex", "drift", strings.Join(text, "\n"), map[string]any{"gen": s.gen, "pin": s.pin, "rows": rows}))
 	a.logRev++
 	a.below(before) // a new block below a scrolled-up view keeps it put
 	return true

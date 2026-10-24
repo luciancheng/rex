@@ -680,3 +680,59 @@ func MapPayload(payload map[string]any, source string) *Event {
 		return MapCursor(payload)
 	}
 }
+
+// turnLeads start a turn's own error before its message, as Claude's
+// StopFailure and OpenCode's session.error word it ("turn failed: …").
+var turnLeads = []string{"turn failed: ", "session error: "}
+
+// TurnErrorText is a turn's own error (an error event with no tool) as
+// one clean line without the adapter's lead, which says error a second
+// time and spends the room the message needs (docs/ux.md §10).
+func TurnErrorText(ev Event) string {
+	text := NormalizeText(CleanText(ev.Text))
+	for _, lead := range turnLeads {
+		if rest, ok := strings.CutPrefix(text, lead); ok {
+			return rest
+		}
+	}
+	return text
+}
+
+// FailParts splits a failed tool call (an error event with a tool) into
+// what failed and why, reading back the line every adapter writes:
+// "<tool> failed[ · <what>][: <why>]". path says what is the file the
+// call touched rather than a command, so AGENT keeps its end when it
+// clips it. A command may hold ": " itself, so the split skips as many as
+// the command (or path) in the event's meta holds.
+func FailParts(ev Event) (what, why string, path bool) {
+	tool := MetaTool(ev)
+	text := NormalizeText(CleanText(ev.Text))
+	rest, ok := strings.CutPrefix(text, tool+" failed")
+	switch {
+	case !ok:
+		return text, "", false
+	case rest == "":
+		return tool, "", false
+	case strings.HasPrefix(rest, ": "):
+		return tool, rest[2:], false
+	}
+	if rest, ok = strings.CutPrefix(rest, " · "); !ok {
+		return text, "", false
+	}
+	named, _ := ev.Meta["command"].(string)
+	if named == "" {
+		named, _ = ev.Meta["path"].(string)
+		path = named != ""
+	}
+	at := 0
+	for skip := strings.Count(NormalizeText(CleanText(named)), ": "); ; skip-- {
+		i := strings.Index(rest[at:], ": ")
+		if i < 0 {
+			return rest, "", path
+		}
+		if skip <= 0 {
+			return rest[:at+i], rest[at+i+2:], path
+		}
+		at += i + 2
+	}
+}

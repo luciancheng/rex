@@ -45,6 +45,7 @@ type app struct {
 	view        logViewCache
 	scroll      int
 	unseenLines int // AGENT lines that arrived below a scrolled view
+	emptyScroll int // rows of the empty AGENT tab above the screen: a page, read from its top like Wait
 	turn        Turn
 	lastKind    string
 
@@ -80,10 +81,11 @@ type app struct {
 	scanned   time.Time // the last cold-start look for a plan file
 }
 
-// logViewCache keeps the laid-out AGENT stream for one log revision and width; the
-// loop needs it several times per tick.
+// logViewCache keeps the laid-out AGENT stream for one log revision, width
+// and layout (live, tall); the loop needs it several times per tick.
 type logViewCache struct {
 	rev, width int
+	opt        viewOpt
 	lines      []LogLine
 	ok         bool
 }
@@ -155,12 +157,17 @@ func (a *app) composeOptions() ComposeOptions {
 	if textW > 0 {
 		opt.LogView = a.logView(textW)
 		if len(a.log) == 0 {
-			a.health.refresh(time.Now())
-			opt.LogView = a.health.lines(textW, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), a.lines < agentTitleRows)
+			opt.LogView = a.emptyAgent(textW)
 		}
 	}
 	page := a.page()
 	switch {
+	case a.pane == PaneChat && len(a.log) == 0:
+		// The empty tab is a page (docs/ux.md §10): it scrolls from its
+		// top, as Wait does.
+		a.emptyScroll = max(0, min(a.emptyScroll, len(opt.LogView)-l.bodyH))
+		opt.Scroll = a.emptyScroll
+		opt.Footer = emptyFooter(len(opt.LogView) > l.bodyH, a.offerTakes())
 	case a.pane == PaneChat:
 		opt.Footer = agentFooter(a.scroll, page != nil, a.offerTakes())
 	case a.at == atWait:
@@ -478,10 +485,21 @@ func (a *app) exitLine() string {
 }
 
 func (a *app) logView(width int) []LogLine {
-	if !a.view.ok || a.view.rev != a.logRev || a.view.width != width {
-		a.view = logViewCache{rev: a.logRev, width: width, lines: BuildLogView(a.log, width), ok: true}
+	opt := a.viewOpt()
+	if !a.view.ok || a.view.rev != a.logRev || a.view.width != width || a.view.opt != opt {
+		a.view = logViewCache{rev: a.logRev, width: width, opt: opt, lines: BuildLogView(a.log, width, opt), ok: true}
 	}
 	return a.view.lines
+}
+
+// viewOpt is how AGENT lays out now (docs/ux.md §10): a thought run that
+// is the newest block is live while the turn is in flight, and blocks get
+// blank rows from agentTitleRows rows. Live never looks at the scroll or
+// at what the turn last did: scrolling and a hidden tool call (a file
+// look) leave the layout alone, so one ↑ is one row and nothing bounces.
+// A drawn block or the turn's end settles the run.
+func (a *app) viewOpt() viewOpt {
+	return viewOpt{live: a.turn == TurnThinking || a.turn == TurnRunning, tall: a.lines >= agentTitleRows}
 }
 
 func (a *app) logLines() int {
@@ -494,7 +512,8 @@ func (a *app) logLines() int {
 
 // ingest applies hook events: turn state for every event, AGENT for the
 // ones worth drawing. A scrolled-up view keeps showing the same lines while
-// new ones arrive below (until MaxLog trims the oldest).
+// new ones arrive below, a run under it settles, or MaxLog trims the oldest
+// above it (docs/ux.md §10).
 func (a *app) ingest(fresh []watch.Event) (changed bool) {
 	for _, ev := range fresh {
 		a.health.saw(ev)
@@ -512,7 +531,9 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 		// A hidden event still changes the count the empty AGENT tab shows.
 		return a.hidden != hidden && len(a.log) == 0
 	}
-	before := a.logLines()
+	// The layout as it was before the batch: a turn that ends settles the
+	// live run, so both the rows and a trim are measured on it.
+	opt, before := a.viewOpt(), a.logLines()
 	prevTurn := a.turn
 	for _, ev := range fresh {
 		a.turn = ApplyTurn(a.turn, ev)
@@ -524,12 +545,21 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 		}
 	}
 	n := len(a.log)
-	added := ExtendLog(&a.log, fresh)
+	var old []watch.Event // the log as it was, while scrolled: a trim is measured on it
+	if a.scroll > 0 {
+		old = append(old, a.log...) // a growing reply changes its last event in place
+	}
+	added, dropped := extendLog(&a.log, fresh)
 	if len(added) > 0 || len(a.log) != n {
 		a.logRev++ // a trim to MaxLog changes AGENT too
 	}
-	if len(added) > 0 {
-		a.below(before)
+	if dropped > 0 && a.scroll > 0 {
+		// The cap takes the oldest lines off the top, which a view counted
+		// from the bottom never moves for.
+		before -= trimmedRows(old, dropped, PaneTextWidth(a.columns), opt)
+	}
+	if len(added) > 0 || a.turn != prevTurn {
+		a.below(before) // a turn's end draws nothing but can settle a run
 	}
 	for _, ev := range added {
 		// Only what AGENT draws: never a file look, a result or a
@@ -803,6 +833,9 @@ func (a *app) submit(text string) bool {
 
 func (a *app) tapeKey(key string) bool {
 	defer a.live()
+	if len(a.log) == 0 && pageKey(&a.emptyScroll, key, a.layout().bodyH) {
+		return true // the empty tab scrolls like Wait (docs/ux.md §10)
+	}
 	bodyH := PaneBodyHeight(a.lines)
 	total := a.logLines()
 	maxScroll := ClampScroll(total, bodyH, total)
@@ -1250,12 +1283,14 @@ func (a *app) tapeLine(kind, text string) {
 }
 
 // below keeps a scrolled-up view on the lines it showed while the stream
-// grew from before lines, and counts the new ones for AGENT's page title.
+// went from before lines, and counts the new ones for AGENT's page title.
+// The change is signed (a block can take fewer rows than it did), and a
+// scrolled view stays scrolled (docs/ux.md §10).
 func (a *app) below(before int) {
 	if a.scroll > 0 {
-		grew := max(0, a.logLines()-before)
-		a.scroll += grew
-		a.unseenLines += grew
+		grew := a.logLines() - before
+		a.scroll = max(1, a.scroll+grew)
+		a.unseenLines = max(0, a.unseenLines+grew)
 	}
 }
 

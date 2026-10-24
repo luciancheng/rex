@@ -45,6 +45,7 @@ type app struct {
 	view        logViewCache
 	scroll      int
 	unseenLines int // AGENT lines that arrived below a scrolled view
+	emptyScroll int // rows of the empty AGENT tab above the screen: a page, read from its top like Wait
 	turn        Turn
 	lastKind    string
 
@@ -161,6 +162,12 @@ func (a *app) composeOptions() ComposeOptions {
 	}
 	page := a.page()
 	switch {
+	case a.pane == PaneChat && len(a.log) == 0:
+		// The empty tab is a page (docs/ux.md §10): it scrolls from its
+		// top, as Wait does.
+		a.emptyScroll = max(0, min(a.emptyScroll, len(opt.LogView)-l.bodyH))
+		opt.Scroll = a.emptyScroll
+		opt.Footer = emptyFooter(len(opt.LogView) > l.bodyH, a.offerTakes())
 	case a.pane == PaneChat:
 		opt.Footer = agentFooter(a.scroll, page != nil, a.offerTakes())
 	case a.at == atWait:
@@ -826,6 +833,9 @@ func (a *app) submit(text string) bool {
 
 func (a *app) tapeKey(key string) bool {
 	defer a.live()
+	if len(a.log) == 0 && pageKey(&a.emptyScroll, key, a.layout().bodyH) {
+		return true // the empty tab scrolls like Wait (docs/ux.md §10)
+	}
 	bodyH := PaneBodyHeight(a.lines)
 	total := a.logLines()
 	maxScroll := ClampScroll(total, bodyH, total)

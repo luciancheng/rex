@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -249,6 +250,10 @@ func whatWhy(lead, what, why string, width int, path bool) string {
 	return lead + fit(what, max(1, width-cellLen(lead)-cellLen(tail))) + tail
 }
 
+// pathSeps are where pathEllipsis cuts: "/", and the OS's own, which a
+// path outside the repo and home keeps (watch.Scope.Display).
+const pathSeps = "/" + string(filepath.Separator)
+
 // pathEllipsis is a path cut to width cells from the left: "…/" and as
 // many of its last parts as fit, else its file name alone, else "…" and
 // the name's tail.
@@ -257,13 +262,13 @@ func pathEllipsis(p string, width int) string {
 		return p
 	}
 	out := ""
-	for i := strings.LastIndex(p, "/"); i > 0; i = strings.LastIndex(p[:i], "/") {
+	for i := strings.LastIndexAny(p, pathSeps); i > 0; i = strings.LastIndexAny(p[:i], pathSeps) {
 		if cellLen("…"+p[i:]) > width {
 			break
 		}
 		out = "…" + p[i:]
 	}
-	switch base := p[strings.LastIndex(p, "/")+1:]; {
+	switch base := p[strings.LastIndexAny(p, pathSeps)+1:]; {
 	case out != "":
 		return out
 	case cellLen(base) <= width:

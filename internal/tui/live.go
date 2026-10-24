@@ -439,11 +439,13 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 			body = BuildLogView(opt.Log, width, viewOpt{live: live, tall: height >= agentTitleRows})
 		}
 		if len(opt.Log) == 0 {
-			// The empty tab is a page, not a stream: it keeps its top and
-			// crops from the bottom (docs/ux.md §10).
-			body = body[:min(len(body), bodyH)]
+			// The empty tab is a page, not a stream: it starts at its top
+			// and scrolls from there, as Wait does (docs/ux.md §10).
+			scroll = min(scroll, max(0, len(body)-bodyH))
+			fromTop = true
+		} else {
+			scroll = ClampScroll(len(body), bodyH, scroll)
 		}
-		scroll = ClampScroll(len(body), bodyH, scroll)
 	}
 	var visible []LogLine
 	if bodyH > 0 {

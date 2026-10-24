@@ -540,20 +540,31 @@ func waitFooter(more bool) []FooterSeg {
 // waitKey handles keys on the wait screen, which has no composer: ↑↓ and
 // pages scroll a short screen, and Esc or ← go to the plan list.
 func (a *app) waitKey(key string) bool {
-	step := max(1, a.layout().bodyH-2)
+	if pageKey(&a.outline.scroll, key, a.layout().bodyH) {
+		return true
+	}
 	switch key {
-	case "up", "down", "pageup", "pagedown":
-		delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
-		a.outline.scroll = max(0, a.outline.scroll+delta) // clamped when drawn
-		return true
-	case "home":
-		a.outline.scroll = 0
-		return true
-	case "end":
-		a.outline.scroll = 1 << 30
-		return true
 	case "esc", "left":
 		return a.toLibrary()
 	}
 	return false
+}
+
+// pageKey scrolls a page that starts at its top (Wait, the empty AGENT
+// tab) by key: ↑↓ a row, pages by the body less the two rows ↑ more and
+// ↓ more take, Home and End to its ends. at is clamped when drawn.
+func pageKey(at *int, key string, bodyH int) bool {
+	step := max(1, bodyH-2)
+	switch key {
+	case "up", "down", "pageup", "pagedown":
+		delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
+		*at = max(0, *at+delta)
+	case "home":
+		*at = 0
+	case "end":
+		*at = 1 << 30
+	default:
+		return false
+	}
+	return true
 }

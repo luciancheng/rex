@@ -221,6 +221,27 @@ func TestDriftRowsKeepTheirReason(t *testing.T) {
 	}
 }
 
+// docs/ux.md §10: a path outside the repo and home keeps the OS's own
+// separators (on Windows, `\`), and clips at them as it does at "/", so its
+// last folders stay whole.
+func TestPathEllipsisCutsAtTheOSSeparator(t *testing.T) {
+	sep := string(filepath.Separator)
+	p := strings.Join([]string{"D:", "scratch", "some", "deep", "folder", "view_handler.go"}, sep)
+	for width, want := range map[int]string{
+		22: "…" + sep + "view_handler.go",
+		24: "…" + sep + "folder" + sep + "view_handler.go",
+		16: "view_handler.go",
+	} {
+		if got := pathEllipsis(p, width); got != want {
+			t.Errorf("%d cells: %q, want %q", width, got, want)
+		}
+	}
+	write := watch.Event{Source: "claude", Kind: "error", Text: "Write failed · " + p + ": permission denied", Meta: map[string]any{"tool": "Write", "path": p}}
+	if got, want := viewRows([]watch.Event{write}, 44, viewOpt{tall: true}), "✗ …"+sep+"view_handler.go · permission denied"; len(got) != 1 || got[0] != want {
+		t.Fatalf("a failed write: %q, want %q", got, want)
+	}
+}
+
 // docs/ux.md §10, the spacing column: a blank row before a reply and an
 // ask and around a prompt; thoughts, commands and both ✗ lines pack.
 func TestBlockSpacing(t *testing.T) {

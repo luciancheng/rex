@@ -59,8 +59,8 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 	}
 }
 
-// The empty AGENT tab is a page (docs/ux.md §10): it keeps its top and
-// crops from the bottom, and its lead comes whole, with the whole block
+// The empty AGENT tab is a page (docs/ux.md §10): it starts at its top and
+// scrolls from there, and its lead comes whole, with the whole block
 // under it, or not at all; the blank row under the lead goes first. With
 // every harness found but not wired and the skill missing, the first body
 // row is the lead's first line or FEED, never the end of a sentence.
@@ -116,6 +116,71 @@ func TestEmptyAgentNeverStartsMidSentence(t *testing.T) {
 		if body := strings.Join(agentBody(a), "\n"); !strings.HasPrefix(body, want) {
 			t.Fatalf("80×%d\n%s", rows, body)
 		}
+	}
+}
+
+// The empty AGENT tab scrolls like Wait (docs/ux.md §10): from its top,
+// ↑↓, pages and Home / End move it, ↑ more / ↓ more say it runs past, and
+// only then does its footer offer ↑↓. A first run's whole block is
+// reachable, the skill row and the hidden count with it.
+func TestEmptyAgentScrollsLikeWait(t *testing.T) {
+	a := testApp(t)
+	a.health, a.hidden = notWired(), 4
+	press(a, "\t")
+	a.settle(80, 16)
+	l := a.layout()
+	all := a.emptyAgent(l.textW)
+	footer := func() string {
+		rows := a.frameRows().Rows
+		return textOf(rows[len(rows)-1], a.columns)
+	}
+	if len(all) <= l.bodyH {
+		t.Fatalf("the block fits %d rows: %d", l.bodyH, len(all))
+	}
+	body := agentBody(a)
+	if body[len(body)-1] != "  ↓ more" || !strings.HasPrefix(body[0], "FEED ─") || footer() != "tab plan  ? help  ↑↓ scroll" {
+		t.Fatalf("the top, with ↓ more\n%s\n%s", strings.Join(body, "\n"), footer())
+	}
+	seen := map[string]bool{}
+	for range all {
+		for _, row := range agentBody(a) {
+			seen[strings.TrimSpace(row)] = true
+		}
+		press(a, "down")
+	}
+	for _, line := range all {
+		if text := strings.TrimSpace(line.Text); text != "" && !seen[text] {
+			t.Errorf("never on screen: %q", text)
+		}
+	}
+	if body := agentBody(a); body[0] != "  ↑ more" || !strings.Contains(body[len(body)-1], "4 events from other folders hidden") {
+		t.Fatalf("the bottom, with ↑ more\n%s", strings.Join(body, "\n"))
+	}
+	press(a, "home")
+	if a.frameRows(); a.emptyScroll != 0 || a.scroll != 0 {
+		t.Fatalf("Home is the top: %d", a.emptyScroll)
+	}
+	press(a, "end")
+	if a.frameRows(); a.emptyScroll != len(all)-l.bodyH {
+		t.Fatalf("End is the bottom: %d", a.emptyScroll)
+	}
+	press(a, "pageup")
+	if a.frameRows(); a.emptyScroll != max(0, len(all)-l.bodyH-(l.bodyH-2)) {
+		t.Fatalf("a page is the body less its two marker rows: %d", a.emptyScroll)
+	}
+	// A page that fits has no markers, and nothing to scroll.
+	a.settle(80, 32)
+	before := a.frame()
+	press(a, "down", "pagedown", "end")
+	if f := a.frame(); f != before || strings.Contains(f, "more") || footer() != "tab plan  ? help  ctrl+c ×2 quit" {
+		t.Fatalf("nothing to scroll at 32 rows\n%s", f)
+	}
+	// The first event ends the page: AGENT is live, at the bottom.
+	a.settle(80, 16)
+	press(a, "down", "down")
+	a.ingest([]watch.Event{watch.NewEvent("claude", "text", "done", nil)})
+	if a.settle(80, 16); a.scroll != 0 || !strings.Contains(a.frame(), "done") {
+		t.Fatalf("scroll=%d\n%s", a.scroll, a.frame())
 	}
 }
 

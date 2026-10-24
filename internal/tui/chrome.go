@@ -285,6 +285,24 @@ func agentFooter(scroll int, titled, offer bool) []FooterSeg {
 	return out
 }
 
+// emptyFooter is the empty AGENT tab's footer (docs/ux.md §4): a page, so,
+// as on Wait, ↑↓ scroll only while it runs past the screen, and there is
+// no oldest or live to go to.
+func emptyFooter(more, offer bool) []FooterSeg {
+	var out []FooterSeg
+	if offer {
+		out = append(out, FooterSeg{Text: "enter switch"})
+	}
+	out = append(out, FooterSeg{Text: "tab plan"}, helpSeg)
+	if more {
+		out = append(out, FooterSeg{Text: "↑↓ scroll"})
+	}
+	if !offer {
+		out = append(out, FooterSeg{Text: "ctrl+c ×2 quit"})
+	}
+	return out
+}
+
 // composerRows draws the composer: a box when there is room, a bare row on
 // short terminals.
 func composerRows(l layout, draft, prefix, placeholder string, enabled bool) []string {

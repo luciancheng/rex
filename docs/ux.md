@@ -91,7 +91,7 @@ Keys are written as words everywhere Rex shows them: `enter`, `esc`, `tab`, `?`,
 | Ctrl+L | full repaint | full repaint | full repaint | full repaint | full repaint | full repaint | full repaint |
 | Ctrl+C | clear + arm quit | clear + arm quit | clear + arm quit | arm quit | arm quit | arm quit | close + arm quit |
 
-The Wait screen (§11) has no composer either: ↑↓, PgUp/PgDn and Home/End (or Ctrl+A/Ctrl+E) scroll its copy when it runs past a short screen; Esc or ← goes to the plan list's Home; `?` opens Help; enter and letters do nothing.
+The Wait screen (§11) has no composer either: ↑↓, PgUp/PgDn and Home/End (or Ctrl+A/Ctrl+E) scroll its copy when it runs past a short screen; Esc or ← goes to the plan list's Home; `?` opens Help; enter and letters do nothing. AGENT's empty tab (feed health, §10) is a page too and scrolls the same way: there Home/End (and Ctrl+A/Ctrl+E) are its top and bottom.
 
 enter switches to a new-plan offer only while row 1 shows it (the plan file's error, a toast or hard drift cover it, §4) and opening it would lose nothing: not while the plan list's composer has text or a Name prompt is open (§11), nor inside Help. Otherwise row 1 drops `· enter switch` (or doesn't show the offer) and enter does what it does without an offer.
 
@@ -255,6 +255,7 @@ The footer lists **keys**, never the screen's name: the tab pill and the page ti
 | Plan / Task detail | `esc outline  tab agent  ↑↓ scroll  ?` | `esc outline  tab agent  ↑↓ scroll  ? help` |
 | Plan / Task detail, offer | `enter switch  esc outline  tab agent` | `enter switch  esc outline  tab agent  ? help` |
 | AGENT, live | `tab plan  ? help  ↑↓ scroll` | `tab plan  ? help  ↑↓ scroll  home oldest  ctrl+c ×2 quit` |
+| AGENT, empty (feed health, §10) | `tab plan  ? help  ctrl+c ×2 quit` | `tab plan  ? help  ctrl+c ×2 quit`; when the page runs past a short screen, `↑↓ scroll` comes before `ctrl+c ×2 quit` (as on Wait), and 38 cells keep `tab plan  ? help  ↑↓ scroll` |
 | AGENT, scrolled (from 12 rows) | `end live  tab plan  ? help  ↑↓ scroll` | `end live  tab plan  ? help  ↑↓ scroll` |
 | AGENT, scrolled (under 12 rows) | `12↑  end live  tab plan  ? help` | `12↑  end live  tab plan  ? help  ↑↓ scroll` (a 4-digit count still keeps `? help`) |
 | AGENT, offer (scrolled or not) | `enter switch  tab plan  ? help` | `enter switch  tab plan  ? help  ↑↓ scroll`; with an offer `enter switch` takes `end live`'s place, since ↑↓ still reach live; under 12 rows the count leads it: `12↑  enter switch  tab plan  ? help` |
@@ -470,7 +471,7 @@ The stream is bottom-anchored, newest at the bottom. Each block is named by its 
 | thought run, settled | `thinking ×N  <the latest thought, clipped>`; one thought: `thinking  <text>` (muted, the label bold) | 1 | packed |
 | thought run, live | the same first row, then the rest of the latest thought, indented 2 | 2 (1 under 12 rows) | packed |
 | command run | `$ <cmd>` per command, clipped (yellow); over 5: `$ … +N earlier` (muted), then the last 4, so the fold always hides at least 2 | ≤ 5 | packed |
-| failed tool call (`error` with a tool) | `✗ <cmd or path> · <reason>` (red); when it doesn't fit, the command or path clips first and the reason keeps at least half the row; a path clips from the left, so its file name stays (`✗ …/view.go · permission denied`; when even the name doesn't fit, `…` and its end) | 1 | packed |
+| failed tool call (`error` with a tool) | `✗ <cmd or path> · <reason>` (red); when it doesn't fit, the command or path clips first and the reason keeps at least half the row; a path clips from the left, at a `/` or the OS's own separator (`\` on Windows, which a path outside the repo and home keeps), so its file name stays (`✗ …/view.go · permission denied`; when even the name doesn't fit, `…` and its end) | 1 | packed |
 | turn error | `✗ error · <text>` (red), later rows indented 2 | ≤ 3 | packed |
 | reply | `reply ───` across the row (the label bold), then the Markdown indented 2: headings bold, list items (`• `, `1. `) hanging under their text, code as muted `│ ` lines | all | a blank row before |
 | ask | `[ASK] <question>`, a red pill, wrapped under the question | all | a blank row before |
@@ -537,7 +538,7 @@ tab plan  ? help  ↑↓ scroll
   - Tabs are expanded.
 - **Scope.** Paths in tool lines are shown relative to the repo; replies, thoughts and prompts are shown as written. Where an event came from (its working directory or workspace roots) decides whose it is, so another repo's agent reading a file here stays hidden. Events from other repos' agents (same machine, same feed) are hidden, and the count appears under Help. An event with no working directory or roots is judged by the file it names; with nothing to go on at all, it is shown.
 - **Starting mid-turn.** If the newest feed event is under 2 minutes old, the turn state is restored, so the dino is already typing. The last ~20 events from this repo are drawn under a muted `── before rex started ──` rule, laid out like the live stream (runs fold, replies get their rule), with no blank row under the rule.
-- **Feed health** is the empty tab: a lead sentence, `Rex shows your agent's work here as its hooks report it.` (from 12 rows; a blank row under it from 16), then a `FEED` header (H2, §5); without a page title to say so, the header says `waiting for agent events`. The empty tab is a page, not a stream: it starts at the top and crops from the bottom, and the lead shows only whole and only with the whole block under it (the blank row goes first, then the lead), so it never starts mid-sentence. Help shows the same block, without the lead. The wiring is re-read every few seconds while it is on screen, so an install in another terminal shows up, and the last event follows the feed:
+- **Feed health** is the empty tab: a lead sentence, `Rex shows your agent's work here as its hooks report it.` (from 12 rows; a blank row under it from 16), then a `FEED` header (H2, §5); without a page title to say so, the header says `waiting for agent events`. The empty tab is a page, not a stream: it starts at the top and, when it runs past a short screen, scrolls from there as Wait does (§3): ↑↓, PgUp/PgDn and Home/End move it, `↑ more` / `↓ more` say what is past the screen, and only then does its footer offer `↑↓ scroll` (§4). The lead shows only whole and only with the whole block under it (the blank row goes first, then the lead), so it never starts mid-sentence, and a page that scrolls is the block alone. Help shows the same block, without the lead. The wiring is re-read every few seconds while it is on screen, so an install in another terminal shows up, and the last event follows the feed:
 
 ```
   Rex shows your agent's work here as

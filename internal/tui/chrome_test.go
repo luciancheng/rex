@@ -63,9 +63,9 @@ func TestTextOnlyBelow66AndWidenBelow24(t *testing.T) {
 	}
 	a := testApp(t)
 	a.settle(20, 10)
-	press(a, "\t", "x", "\r")
-	if a.pane != PanePlans || a.draft != "" {
-		t.Fatal("keys must not act on a UI that isn't visible")
+	press(a, "\t", "x", "\r", "?")
+	if a.pane != PanePlans || a.draft != "" || a.overlay[PanePlans] != overlayNone {
+		t.Fatal("keys must not act on a UI that isn't visible, ? included")
 	}
 	press(a, CtrlC, CtrlC)
 	if !a.quit {
@@ -74,35 +74,43 @@ func TestTextOnlyBelow66AndWidenBelow24(t *testing.T) {
 }
 
 func TestShortTerminalComposer(t *testing.T) {
-	rows := frameAt(t, 100, 12, ComposeOptions{Pane: PaneChat, Draft: "hi"})
-	if strings.Contains(strings.Join(rows, ""), "╭") {
-		t.Fatal("under 16 rows the composer is one bare row")
+	list := NewPlanBrowser(t.TempDir())
+	rows := frameAt(t, 100, 12, ComposeOptions{Pane: PanePlans, Plans: list, Composer: true, Draft: "hi"})
+	if !strings.Contains(rows[10], "/ hi") || strings.Contains(rows[10], "│") {
+		t.Fatalf("under 16 rows the composer is one bare row: %q", rows[10])
 	}
-	if !strings.Contains(rows[10], "> hi") {
-		t.Fatalf("composer row %q", rows[10])
+	if tape := frameAt(t, 100, 12, ComposeOptions{Pane: PaneChat, Draft: "hi"}); strings.Contains(strings.Join(tape, ""), "> hi") {
+		t.Fatal("the tape has no composer at any height")
 	}
 	a := testApp(t)
 	a.settle(100, 6)
-	press(a, "\t", "x")
-	if a.draft != "" {
+	press(a, "esc", "x")
+	if a.draft != "" || a.at != atLibrary {
 		t.Fatal("under 7 rows printable keys are ignored")
+	}
+	if press(a, "?"); a.overlay[PanePlans] != overlayHelp {
+		t.Fatal("? still opens Help: it types nothing")
 	}
 	// A draft typed before the terminal shrank is neither edited nor
 	// submitted blind.
 	b := testApp(t)
-	press(b, "\r")
+	press(b, "esc")
 	typeText(b, "blind")
 	b.settle(100, 6)
 	press(b, "\x7f", "\r")
 	if b.draft != "blind" || b.plans.Current != "" {
 		t.Fatalf("draft %q current %q", b.draft, b.plans.Current)
 	}
+	press(b, "?")
+	if b.overlay[PanePlans] != overlayNone || b.draft != "blind" {
+		t.Fatal("a ? after text would be typed blind, so it is ignored too")
+	}
 	press(b, CtrlC, "x")
 	if b.quitPending {
 		t.Fatal("a swallowed key still disarms quit")
 	}
 	// The one-row composer leaves the cursor on screen.
-	f := composeRows("idle", "yellow", ComposeOptions{Pane: PaneChat, Columns: 100, Lines: 12, Draft: strings.Repeat("x", 200)})
+	f := composeRows("idle", "yellow", ComposeOptions{Pane: PanePlans, Plans: list, Composer: true, Columns: 100, Lines: 12, Draft: strings.Repeat("x", 200)})
 	if f.CursorCol > 100 {
 		t.Fatalf("cursor at column %d of 100", f.CursorCol)
 	}
@@ -134,10 +142,70 @@ func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
 	}
 }
 
+// docs/ux.md §12: under 7 rows the plan list's hidden composer takes no
+// ⏎, so its footer offers none; the outline has no composer and ⏎ still
+// acts there, so its footer keeps it.
 func TestShortTerminalFooterOffersNoEnter(t *testing.T) {
-	rows := frameAt(t, 100, 6, ComposeOptions{Pane: PaneChat})
+	repo := t.TempDir()
+	b := NewPlanBrowser(repo)
+	for i, row := range b.Rows {
+		if row.Kind == PlanRowNew {
+			b.Cursor = i
+		}
+	}
+	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); !strings.Contains(strings.Join(segs, " "), "⏎") {
+		t.Fatalf("on Create the footer offers ⏎: %q", segs)
+	}
+	rows := frameAt(t, 100, 6, ComposeOptions{Pane: PanePlans, Plans: b, Composer: true})
 	if strings.Contains(rows[len(rows)-1], "⏎") {
-		t.Fatalf("no composer, no ⏎: %q", rows[len(rows)-1])
+		t.Fatalf("composer hidden, no ⏎: %q", rows[len(rows)-1])
+	}
+
+	a, _, _ := openDemo(t, demoPlan, 120, 32)
+	a.settle(120, 6)
+	rows = a.frameRows().Rows
+	if footer := rows[len(rows)-1]; !strings.Contains(footer, "⏎ detail") {
+		t.Fatalf("the outline keeps ⏎ detail at 6 rows: %q", footer)
+	}
+	if press(a, "\r"); a.at != atTaskDetail {
+		t.Fatalf("⏎ still opens the task: at=%d", a.at)
+	}
+}
+
+// docs/ux.md §12: under 7 rows typing is ignored in the plan list, so its
+// footer drops "type to find"; ⏎ on an empty draft still opens the
+// selected card, so "⏎ open" stays until a hidden draft would make ⏎ a
+// blind submit.
+func TestShortPlanListFooterSaysWhatWorks(t *testing.T) {
+	a, _, _ := cujApp(t)
+	press(a, "esc")
+	a.settle(50, 6)
+	footer := func() string { rows := a.frameRows().Rows; return rows[len(rows)-1] }
+	if f := footer(); strings.Contains(f, "type to") || !strings.Contains(f, "⏎ open") || !strings.Contains(f, "? help") {
+		t.Fatalf("Home at 50×6: %q", f)
+	}
+	if typeText(a, "zz"); a.draft != "" || strings.Contains(footer(), "type to") {
+		t.Fatalf("typing is ignored, and the footer doesn't offer it: %q %q", a.draft, footer())
+	}
+	if press(a, "\r"); a.at != atOutline {
+		t.Fatalf("⏎ opens Continue, as the footer says: at=%d", a.at)
+	}
+
+	press(a, "esc")
+	a.settle(120, 32)
+	typeText(a, "send")
+	a.settle(50, 6)
+	if f := footer(); strings.Contains(f, "⏎") || strings.Contains(f, "? help") || !strings.Contains(f, "esc clear") {
+		t.Fatalf("a hidden find: ⏎ and ? would act on it blind: %q", f)
+	}
+	a.settle(120, 32)
+	press(a, "esc", "home", "down", "down", "\r") // the find cleared, then Open a plan
+	if a.plans.Screen != ScreenBrowse {
+		t.Fatalf("browse: %d", a.plans.Screen)
+	}
+	a.settle(50, 6)
+	if f := footer(); strings.Contains(f, "type to") || !strings.Contains(f, "⏎ open") {
+		t.Fatalf("Browse at 50×6: %q", f)
 	}
 }
 
@@ -206,14 +274,13 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 	create := *b
 	create.Screen = ScreenCreate
 	screens := []screen{
-		{"home (no plans)", ComposeOptions{Pane: PanePlans, Plans: b}, []string{"plans", "⏎ create", "tab tape"}},
-		{"home", ComposeOptions{Pane: PanePlans, Plans: withPlans}, []string{"plans", "⏎ open", "tab tape"}},
-		{"find (create)", ComposeOptions{Pane: PanePlans, Plans: finding, Draft: "zz-new"}, []string{"find", "⏎ create", "esc clear", "tab tape"}},
-		{"find (open)", ComposeOptions{Pane: PanePlans, Plans: findOpen, Draft: "a"}, []string{"find", "⏎ open", "esc clear", "tab tape"}},
-		{"browse", ComposeOptions{Pane: PanePlans, Plans: &browse}, []string{"open", "⏎ open", "esc back", "tab tape"}},
-		{"create", ComposeOptions{Pane: PanePlans, Plans: &create}, []string{"new plan", "⏎ create", "esc cancel"}},
+		{"home (no plans)", ComposeOptions{Pane: PanePlans, Plans: b, Composer: true}, []string{"plans", "⏎ create", "tab tape"}},
+		{"home", ComposeOptions{Pane: PanePlans, Plans: withPlans, Composer: true}, []string{"plans", "⏎ open", "tab tape"}},
+		{"find (create)", ComposeOptions{Pane: PanePlans, Plans: finding, Composer: true, Draft: "zz-new"}, []string{"find", "⏎ create", "esc clear", "tab tape"}},
+		{"find (open)", ComposeOptions{Pane: PanePlans, Plans: findOpen, Composer: true, Draft: "a"}, []string{"find", "⏎ open", "esc clear", "tab tape"}},
+		{"browse", ComposeOptions{Pane: PanePlans, Plans: &browse, Composer: true}, []string{"open", "⏎ open", "esc back", "tab tape"}},
+		{"create", ComposeOptions{Pane: PanePlans, Plans: &create, Composer: true}, []string{"new plan", "⏎ create", "esc cancel"}},
 		{"tape", ComposeOptions{Pane: PaneChat}, []string{"tape", "tab plan", "↑↓ scroll"}},
-		{"typing", ComposeOptions{Pane: PaneChat, Draft: "x", Preview: "⏎ note (local, not sent)"}, []string{"tape", "⏎ note (local, not sent)"}},
 		{"quit", ComposeOptions{Pane: PaneChat, QuitPending: true}, []string{"ctrl+c again to quit"}},
 	}
 	for _, s := range screens {
@@ -233,8 +300,26 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 	if rows := wait.frameRows().Rows; !strings.Contains(rows[len(rows)-1], "no plan · esc plans · tab tape") {
 		t.Fatalf("wait footer at 38 cells: %q", rows[len(rows)-1])
 	}
+	// The open plan's screens, which have no composer: no verbs, the
+	// must-haves at 38 cells.
+	a, _, _ := openDemo(t, demoPlan, 80, 24)
+	for _, step := range []struct {
+		keys []string
+		must string
+	}{
+		{nil, "outline · tab tape · esc plans"},
+		{[]string{"\r"}, "detail · esc outline · ↑↓ scroll"},
+		{[]string{"esc", "\t"}, "tape · tab plan · ↑↓ scroll"},
+		{[]string{"?"}, "help · esc close · tab plan"},
+	} {
+		press(a, step.keys...)
+		rows := a.frameRows().Rows
+		if footer := rows[len(rows)-1]; !strings.Contains(footer, step.must) || strings.Contains(footer, "p⏎") {
+			t.Fatalf("footer at 38 cells %q, want %q", footer, step.must)
+		}
+	}
 	for _, w := range []int{24, 38, 78} {
-		got := fitFooter([]string{"outline", "tab tape", "esc plans", "⏎ detail", "?⏎ help"}, w)
+		got := fitFooter([]string{"outline", "tab tape", "esc plans", "⏎ detail", "? help"}, w)
 		if cellLen(got) > w || strings.HasSuffix(got, "·") {
 			t.Fatalf("width %d: %q", w, got)
 		}

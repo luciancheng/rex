@@ -20,7 +20,7 @@ type layout struct {
 	composer   int // 3 = boxed, 1 = one bare row, 0 = none
 	bodyH      int
 	locked     bool // too narrow: only Ctrl+C (and Ctrl+L) do anything
-	typing     bool // a composer is visible, so printable keys are accepted
+	typing     bool // tall enough for a composer: the plan list takes typing
 }
 
 func layoutFor(columns, lines int) layout {
@@ -44,6 +44,14 @@ func layoutFor(columns, lines int) layout {
 	}
 	l.typing = l.composer > 0 && !l.locked
 	l.bodyH = max(0, lines-2-FooterRows-l.composer)
+	return l
+}
+
+// bare is l on a screen without a composer: the body takes its rows.
+// typing still says whether the terminal is tall enough to type in.
+func (l layout) bare() layout {
+	l.bodyH += l.composer
+	l.composer = 0
 	return l
 }
 
@@ -167,12 +175,20 @@ func homeCreates(b *PlanBrowser) bool {
 	return b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowNew
 }
 
-// withoutEnter drops the ⏎ segments from a footer, for screens too short
-// to show the composer (⏎ does nothing there).
-func withoutEnter(segs []string) []string {
+// shortList is the plan list's footer when the screen is too short to
+// show its composer (docs/ux.md §12). Typing is ignored there, so "type
+// to …" goes; ⏎ never submits a draft blind, so every ⏎ goes but "⏎ open"
+// on an empty draft, which opens the selected row; and with a hidden
+// draft, ? would be text, so "? help" goes too. Screens without a
+// composer keep their footers, since their keys act at once.
+func shortList(segs []string, draft string) []string {
 	var out []string
 	for _, s := range segs {
-		if !strings.Contains(s, "⏎") {
+		switch {
+		case strings.HasPrefix(s, "type to "):
+		case strings.Contains(s, "⏎") && (s != "⏎ open" || draft != ""):
+		case s == "? help" && draft != "":
+		default:
 			out = append(out, s)
 		}
 	}
@@ -183,7 +199,7 @@ func withoutEnter(segs []string) []string {
 // (docs/ux.md §4): where you can go, not what you can type.
 func footerSegments(opt ComposeOptions, scroll int) ([]string, string) {
 	segs, kind := placeFooter(opt, scroll)
-	if n := runeLen(opt.Draft); n >= draftCap-16 && kind != "error" && len(segs) > 0 {
+	if n := runeLen(opt.Draft); n >= draftCap-16 && kind != "error" && len(segs) > 0 && opt.Composer {
 		// The cap is not silent: near it, the count is a must-have.
 		segs = append([]string{segs[0], fmt.Sprintf("%d/%d", n, draftCap)}, segs[1:]...)
 	}
@@ -220,7 +236,7 @@ func placeFooter(opt ComposeOptions, scroll int) ([]string, string) {
 		case ScreenFolder:
 			return []string{"new folder", "⏎ create", "esc cancel", "tab tape"}, "muted"
 		case ScreenBrowse:
-			return []string{"open", "⏎ open", "esc back", "tab tape", "type to filter"}, "muted"
+			return []string{"open", "⏎ open", "esc back", "tab tape", "type to filter", "? help"}, "muted"
 		}
 		if b := opt.Plans; b.Find != "" {
 			if b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowCreateNamed {
@@ -229,17 +245,14 @@ func placeFooter(opt ComposeOptions, scroll int) ([]string, string) {
 			return []string{"find", "⏎ open", "esc clear", "tab tape"}, "muted"
 		}
 		if homeCreates(opt.Plans) {
-			return []string{"plans", "⏎ create", "tab tape", "type to find", "ctrl+c×2 quit"}, "muted"
+			return []string{"plans", "⏎ create", "tab tape", "type to find", "? help", "ctrl+c×2 quit"}, "muted"
 		}
-		return []string{"plans", "⏎ open", "tab tape", "type to find", "ctrl+c×2 quit"}, "muted"
-	}
-	if strings.TrimSpace(opt.Draft) != "" && opt.Preview != "" {
-		return []string{"tape", opt.Preview}, "muted"
+		return []string{"plans", "⏎ open", "tab tape", "type to find", "? help", "ctrl+c×2 quit"}, "muted"
 	}
 	if scroll > 0 {
 		return []string{"tape", fmt.Sprintf("%d↑", scroll), "end live", "tab plan"}, "muted"
 	}
-	return []string{"tape", "tab plan", "↑↓ scroll", "?⏎ help", "ctrl+c×2 quit"}, "muted"
+	return []string{"tape", "tab plan", "↑↓ scroll", "? help", "ctrl+c×2 quit"}, "muted"
 }
 
 // composerRows draws the composer: a box when there is room, a bare row on

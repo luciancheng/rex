@@ -2,14 +2,17 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
 // feedHealth is what the empty tape and Help say about the feed: which
-// agents are wired (machine-wide, or for this repo only), when the last
-// event came, and what Rex hid. The wiring is re-read every few seconds
+// agents are wired (machine-wide, or for this repo only), whether they
+// can learn plans (the rex-plan skill), when the last event came, and
+// what Rex hid. The wiring is re-read every few seconds
 // while it is on screen, so an install in another terminal shows up; it
 // never installs anything.
 type feedHealth struct {
@@ -46,16 +49,39 @@ func (h *feedHealth) saw(ev watch.Event) {
 	}
 }
 
-// lines is the health block. waiting titles it for the empty tape; Help
-// just says "feed".
-func (h feedHealth) lines(width int, hidden int, now time.Time, waiting bool) []LogLine {
+// lines is the health block; sk is how the rex-plan skill stands. waiting
+// titles it for the empty tape; Help just says "feed".
+func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, waiting bool) []LogLine {
 	var lines []LogLine
+	// A row's words wrap in the value column. One wider than the column (a
+	// flag, a path) gets a row of its own, hung at column 4, whole: a
+	// command split mid-word can't be copied.
 	row := func(kind, name, what string) {
-		for i, w := range wrap(what, max(8, width-11)) {
-			if i > 0 {
-				name = ""
+		col, line := max(8, width-11), ""
+		flush := func() {
+			lines = append(lines, LogLine{Kind: kind, Text: strings.TrimRight("  "+padRight(name, 9)+line, " ")})
+			name, line = "", ""
+		}
+		for _, w := range strings.Fields(what) {
+			switch {
+			case cellLen(w) > col:
+				if line != "" || name != "" {
+					flush()
+				}
+				for _, part := range hardWrap(w, max(1, width-4)) { // split only when wider than the row
+					lines = append(lines, LogLine{Kind: kind, Text: "    " + part})
+				}
+			case line == "":
+				line = w
+			case cellLen(line)+1+cellLen(w) <= col:
+				line += " " + w
+			default:
+				flush()
+				line = w
 			}
-			lines = append(lines, LogLine{Kind: kind, Text: "  " + padRight(name, 9) + w})
+		}
+		if line != "" || name != "" {
+			flush()
 		}
 	}
 	title := "feed"
@@ -79,6 +105,18 @@ func (h feedHealth) lines(width int, hidden int, now time.Time, waiting bool) []
 		default:
 			row("idle", s.Name, "not found")
 		}
+	}
+	// The agent drives the plan only once it has the skill: shown wherever
+	// the wiring is, since start opens a plan and skips the Wait screen.
+	switch sk {
+	case skill.Current:
+		row("text", "skill", "rex-plan current")
+	case skill.Missing:
+		row("text", "skill", "missing · rex ingest --install-skill")
+	case skill.Stale:
+		row("text", "skill", "out of date · rex ingest --install-skill")
+	case skill.StaleProject:
+		row("text", "skill", "out of date · rex ingest --install-skill --project")
 	}
 	if hidden > 0 {
 		noun := "events"

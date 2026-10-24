@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  Write a plan, send the work off to your coding agent,<br />
-  and watch the tape from a terminal that stays out of the way.
+  Your coding agent writes and works the plan;<br />
+  watch it and the tape from a terminal that stays out of the way.
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@ Rex is a terminal sidecar for developers who work with an AI coding agent: Curso
 - **the plan**: a JSON file in your repo that breaks the work into PR-sized tasks;
 - **the tape**: what the agent is doing right now, as it happens (its thoughts, commands, edits, questions, replies and your prompts).
 
-Rex is **watch-only**. It never runs tools, approves them, steers the agent or sends it anything. When you want the agent to start a task, Rex builds a send-off brief from the plan for you to paste into the chat.
+Rex is **watch-only**. It never runs tools, approves them, steers the agent or sends it anything, and it never edits your plan. The agent drives the plan: you ask it to plan, to work a task or to continue, and it writes the plan file (which task is active, what is done and how it was checked). Rex shows each change as it lands. There is nothing to copy from Rex into the chat.
 
 ```
 REX plan                idle · following · rex/plans/cuj/sendoff-demo.rex.json
@@ -37,10 +37,10 @@ REX plan                idle · following · rex/plans/cuj/sendoff-demo.rex.json
   ✓ plans-ui        Plans navigator · Create, open and browse rex/plans in th…
 ▌ ▸ card-highlight  Selected plan card is one block · Bar, border and fill co…
   · load-outline    Outline view · Opening a plan shows…  after card-highlight
-╭────────────────────────────────────────────────────────────────────────────╮
-│ > (s⏎ sendoff · d⏎ done · p⏎ pin · ?⏎ help)                                │
-╰────────────────────────────────────────────────────────────────────────────╯
-outline · tab tape · esc plans · ⏎ detail · ?⏎ help
+
+
+
+outline · tab tape · esc plans · ⏎ detail · ? help
 ```
 
 ## Requirements
@@ -48,7 +48,6 @@ outline · tab tape · esc plans · ⏎ detail · ?⏎ help
 - [Go 1.22+](https://go.dev/dl/). There are no prebuilt binaries yet, so both installs build from source.
 - macOS, Linux or Windows 10+, and a terminal at least 24 columns wide (66+ to show the dino). It works in Terminal.app, iTerm, Windows Terminal and the VS Code terminal.
 - A git repo for your plans (outside one, Rex says where plans would go).
-- Optional, on Linux: `wl-copy`, `xclip` or `xsel` so Rex can copy briefs to the clipboard.
 
 ## Install
 
@@ -76,12 +75,14 @@ This puts `rex` in `$(go env GOPATH)/bin`. Then wire your agent (see [Agents](#a
 
 ## Quick start
 
-1. Wire your agent (see [Agents](#agents)), open a new terminal, `cd` into your repo and run `rex start`. It opens the plan you had open last time, else the newest plan in `rex/plans/`, else waits for one.
-2. Ask your agent to plan the work in `rex/plans/<name>.rex.json`. Rex opens the outline as soon as the agent writes the file, and updates it as the agent fills it in. (`rex ingest --install-skill` teaches Claude Code, Cursor and OpenCode the plan format. Without it, as with Codex, press Esc, type a plan name and ⏎ to create the plan in Rex, then `b⏎` copies a planning brief to paste into the agent.)
-3. The header says `following` while Rex opens each plan your agent writes. Pick another plan yourself (Esc, then ⏎ on one), or pin or finish a task in the open one, and it says `latched`: a plan the agent writes then waits on the status line until you press ⏎.
-4. `p⏎` pins the task to work on, and `s⏎` copies a send-off for it. Paste that into a fresh agent chat.
-5. Press Tab to watch the tape while the agent works. When it's done, Tab back and `d⏎` marks the task done, prefilled from what the agent said and what Rex saw.
+1. Wire your agent (see [Agents](#agents)) and teach it the plan format with `rex ingest --install-skill`. Open a new terminal, `cd` into your repo and run `rex start`. It opens the plan you had open last time, else the newest plan in `rex/plans/`, else waits for one.
+2. Ask your agent to plan the work in `rex/plans/<name>.rex.json`. Rex opens the outline as soon as the agent writes the file, and updates it as the agent fills it in.
+3. Ask your agent to work the plan ("work the plan", "continue rex/plans/<name>.rex.json"). It sets the task it starts to `active`, and Rex shows it as the pin on the status line and in the outline. When it finishes, it marks the task `done` with what it did, what it changed and how it checked, and Rex shows `✓ <task> done · next up <next>`. Each task is one PR; ask it for the next one when you're ready.
+4. Press Tab to watch the tape while the agent works, and Tab again to go back to the plan. `?` shows every key.
+5. The header says `following` while Rex opens each plan your agent writes. Pick another plan yourself (Esc, then type a name and ⏎) and it says `latched`: a plan the agent writes then waits on the status line until you press ⏎.
 6. Ctrl+C twice quits.
+
+**How does the agent know the pinned task?** It reads the plan file. The `rex-plan` skill tells it to re-read the plan at the start of every turn and work its `active` task, so a fresh chat picks up where the last one stopped when you say "continue the plan". Nothing is injected and no hook talks back to the agent, so it works the same in Cursor, Claude Code, Codex and OpenCode.
 
 If the agent edits files outside the pinned task, or you ask for something the plan's `scope.out` rules out, Rex shows **drift** on the status line and the tape. It never corrects the agent.
 
@@ -98,35 +99,29 @@ Rex watches agents through their hooks: each wired agent runs `rex ingest` on it
 
 - `rex ingest --install auto` wires every agent found on this machine.
 - Your other hooks and settings are kept byte for byte, and the previous file is saved next to it as `.bak`.
-- `rex ingest --install-skill` installs the `rex-plan` skill (`~/.claude/skills/rex-plan`, or `--project` for this repo; with `CLAUDE_CONFIG_DIR` set it goes there, where only Claude Code reads it). It teaches Claude Code, Cursor and OpenCode the plan format, stacked PRs and a review pass before each PR. Codex doesn't read Claude's skills folder: with Codex, use `b⏎` and `s⏎`.
+- `rex ingest --install-skill` installs the `rex-plan` skill for all four agents: `~/.claude/skills/rex-plan` for Claude Code (with `CLAUDE_CONFIG_DIR` set it goes there instead, and a copy Rex left in `~/.claude/skills`, which Cursor and OpenCode still read, is updated too) and `~/.agents/skills/rex-plan` for Codex. Cursor and OpenCode read both folders and may list the skill twice; the copies are identical. Add `--project` to put both copies in this repo's `.claude/skills` and `.agents/skills` instead. It teaches the plan format, how to work a plan (start a task, mark it done, re-read the file every turn), stacked PRs and a review pass before each PR. Run it again (with `--project` where you used that) after upgrading Rex: an older copy keeps teaching the older workflow. It never replaces a copy a newer Rex wrote (a teammate's, say); it says so and leaves it.
 
 ## Keys
 
-Nothing fires until you press ⏎: typed words are verbs.
+Keys act at once. The only place you type is the plans list, to find, filter or name a plan.
 
-| Key or verb | Does |
+| Key | Does |
 | --- | --- |
 | Tab | switch between the plan and the tape |
-| ⏎ | open the selection, or run what you typed |
-| Esc | clear what you typed, then go up one level |
+| ⏎ | open the selection; switch to a plan the agent wrote when the status line offers it |
+| Esc | go up one level (in the plans list, clear what you typed first) |
 | ↑ ↓ · PgUp PgDn | move, or scroll the tape |
-| ← → | plans: up a folder, into a folder or a task's detail |
+| ← → | up a level · into a folder or a task's detail |
 | Home End | first and last; on the tape, oldest and live (also Ctrl+A, Ctrl+E) |
-| Ctrl+U · Ctrl+W | clear the line · delete a word |
+| `?` | every key, and feed health |
 | Ctrl+L | repaint |
 | Ctrl+C twice | quit |
-| `p⏎` · `pin <id>⏎` | pin the selected task · pin any task |
-| `d⏎` | mark the pinned task done |
-| `s⏎` | copy a send-off for the pinned task (`c⏎` copies again, `o⏎` prints it plain) |
-| `b⏎` | copy a planning brief |
-| `?⏎` | every key and verb, and feed health |
-| `breakdance⏎` | one dance |
 
-In the plans list (Esc from the outline), typing finds a plan or names a new one; start a verb with `/` there (`/breakdance`). Anything else you type on the tape is a local note that never reaches your agent. The full key map is in [docs/ux.md](docs/ux.md).
+In the plans list (Esc from the outline), typing finds a plan or names a new one, Ctrl+U and Ctrl+W clear the line or a word, and a leading `/` runs a verb: `/help`, `/breakdance` (one dance). Pinning a task, marking it done and handing off to a fresh chat are your agent's job: ask it. The full key map is in [docs/ux.md](docs/ux.md).
 
 ## Plans
 
-Plans live in the repo at `rex/plans/` as `<name>.rex.json`; folders group them (`rex/plans/onboarding/auth.rex.json`). A plan is a goal, hard scope edges, and a flat list of PR-sized tasks, with `parent` for the outline and `depends_on` for order. A plan can also be a stack of PRs, one per task, and the send-off then says which branch to cut and which PR to stack on. The format is [docs/plan-format.md](docs/plan-format.md).
+Plans live in the repo at `rex/plans/` as `<name>.rex.json`; folders group them (`rex/plans/onboarding/auth.rex.json`). A plan is a goal, hard scope edges, and a flat list of PR-sized tasks, with `parent` for the outline and `depends_on` for order. A plan can also be a stack of PRs, one per task; the agent works out from the plan which branch to cut and which PR to stack on. The format is [docs/plan-format.md](docs/plan-format.md).
 
 Commit the `rex/plans/` folder so teammates open the same plans from git. A plan that is a stack of PRs is committed before the stack starts or after it lands, not on its branches (see [Stacks](docs/plan-format.md#stacks)).
 
@@ -135,11 +130,11 @@ Commit the `rex/plans/` folder so teammates open the same plans from git. A plan
 Rex makes no network connections, and everything stays on this machine:
 
 - **`~/.rex/session.jsonl`** (and the `session.jsonl.lock` next to it): the feed every wired agent appends to. It holds your prompts, the agent's thoughts and replies, the commands it runs, file paths and working folders, from every repo on this machine. File bodies and diffs are left out, and each event's text is capped at 32 KB. Only your user can read it (`0600`, in a `0700` folder). It only grows; delete it whenever you like. Set `REX_EVENTS` to keep it somewhere else.
-- **`~/.rex/state.json`**: the last plan opened in each repo (by you, or followed because your agent wrote it), and when each task was pinned.
-- **Your repo**: plans in `rex/plans/`, written only when you act in Rex. Create and New folder write the new plan or folder (and `rex/plans/.gitkeep` the first time); pin and done write task statuses, a task's completion fields and the plan's own status.
-- **Agent configs**: only the files in the [Agents](#agents) table, each with a `.bak` copy of what was there, and only when you run `--install`. `--install claude --project` also adds two lines to the repo's `.git/info/exclude`, and `--install-skill` writes the `rex-plan` skill folder.
+- **`~/.rex/state.json`**: the last plan opened in each repo (by you, or followed because your agent wrote it).
+- **Your repo**: Rex never edits a plan. Create and New folder in the plans list write a new empty plan or a folder (and `rex/plans/.gitkeep` the first time), never over an existing file. Everything else in `rex/plans/` is written by your agent or by you.
+- **Agent configs**: only the files in the [Agents](#agents) table, each with a `.bak` copy of what was there, and only when you run `--install`. `--install claude --project` also adds two lines to the repo's `.git/info/exclude`, and `--install-skill` writes the two `rex-plan` skill folders (and, with `CLAUDE_CONFIG_DIR` set, updates a copy Rex left in `~/.claude/skills`).
 
-Copying a brief runs your system's clipboard tool (`pbcopy`, `wl-copy`, `xclip`, `xsel`, `clip.exe`); over SSH, or when no tool works, it asks your terminal to copy (OSC 52). The install script downloads Rex's source through Go and git.
+The install script downloads Rex's source through Go and git.
 
 ## Configuration
 
@@ -161,19 +156,19 @@ Copying a brief runs your system's clipboard tool (`pbcopy`, `wl-copy`, `xclip`,
    rex ingest --uninstall claude      # in each repo you wired with --project: rex ingest --uninstall claude --project
    rex ingest --uninstall codex
    rex ingest --uninstall opencode
-   rex ingest --uninstall-skill       # if you installed it (add --project in each repo)
+   rex ingest --uninstall-skill       # if you installed it; every copy Rex wrote (add --project in each repo)
    ```
 2. Then delete the binary: `rm "$(command -v rex)"` (PowerShell: `Remove-Item ~\.local\bin\rex.exe`, then take that folder out of your user PATH). Do this last: hooks call `rex` by its path, so deleting it first leaves them pointing at nothing.
 3. Delete Rex's data: `rm -rf ~/.rex` (PowerShell: `Remove-Item -Recurse -Force ~\.rex`), and the file `REX_EVENTS` points to if you set it. The `.bak` files next to your agent configs still hold Rex's hooks: delete them, don't restore them. Your plans in `rex/plans/` are yours to keep or delete.
 
 ## Troubleshooting
 
-- **The tape stays empty.** Type `?⏎`. The feed block shows the feed path, the last event, and whether each agent is wired, with the command that wires it. Start a new agent session after wiring.
+- **The tape stays empty.** Press `?`. The feed block shows the feed path, the last event, and whether each agent is wired, with the command that wires it. Start a new agent session after wiring.
 - **Codex shows nothing.** Trust the Rex hooks in Codex's `/hooks`, and again after moving `rex`.
 - **Events stopped after moving `rex`, or installing it to a different folder.** Hooks call the binary by its path. Run the `rex ingest --install <agent>` command again.
 - **Events land in another file.** Hooks use the agent's `REX_EVENTS`, not your shell's. Set it in both places, or in neither.
 - **No dino, or "widen".** The dino needs 66+ columns. Under 24 columns of text Rex asks you to widen the terminal.
-- **"sent (OSC 52) · may be blocked".** Rex asked your terminal to copy, which it does over SSH or when no clipboard tool works. Allow clipboard access in your terminal (in tmux, `set -g set-clipboard on`), or use `o⏎` to print the brief plain and copy it by hand. On a local Linux desktop, installing `wl-copy`, `xclip` or `xsel` avoids it.
+- **The agent doesn't pin or finish tasks in the plan.** Install the skill (`rex ingest --install-skill`, then start a new agent session), and ask it to work the plan. The wait screen and Help (`?`, the `skill` row) say when the skill is installed nowhere Rex knows, or when a copy is from an older Rex (run the command they show); an older copy is also a status-line notice when Rex starts on a plan.
 - **"rex/ is a file here · plans off".** A file named `rex` sits at the repo root, where the plans folder goes. Move it.
 
 ## Contributing

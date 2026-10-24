@@ -178,7 +178,7 @@ func mapCodexHook(payload map[string]any, name string) *Event {
 			text := "Edit " + files[0].path
 			if post {
 				if failed, why := patchFailed(payload["tool_response"]); failed {
-					// A patch that didn't apply wrote nothing: not evidence,
+					// A patch that didn't apply wrote nothing: no attach,
 					// not drift.
 					meta["ok"] = false
 					text = "apply_patch failed · " + files[0].path

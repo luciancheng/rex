@@ -15,13 +15,17 @@ import (
 // §9a). It lives in memory and on the tape only: never in the feed, the
 // plan, or anything sent to the agent.
 type driftState struct {
-	key   string // plan.PinKey of the plan and pin it is about
+	key   string // pinKey of the plan and pin it is about
 	pin   string // the pin's id, for the block's title
 	gen   int    // this stint's block on the tape; each new pin gets its own
 	seen  map[string]bool
 	items []plan.Drift
 	// Row 1 shows the last unresolved hard notice, else the last soft one.
 	hard, soft *driftNote
+	// Prompts that name another task, held until the turn ends: asking the
+	// agent to switch tasks is how the pin moves (docs/ux.md §9a). Edits of
+	// a file listed for a task one of them names wait with them.
+	held []driftNote
 }
 
 // driftNote is one judgement row 1 may show, with what it judged, so it
@@ -34,6 +38,9 @@ type driftNote struct {
 
 var foldPaths = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
+// pinKey names one task of one plan: a pin stint's drift belongs to it.
+func pinKey(planPath, task string) string { return planPath + "#" + task }
+
 // checkDrift queues one live event from this repo to be judged against
 // the pin once its batch is on the tape (so the block lands after it).
 func (a *app) checkDrift(ev watch.Event) { a.driftQueue = append(a.driftQueue, ev) }
@@ -45,14 +52,83 @@ func (a *app) applyDrift() bool {
 	a.driftQueue = nil
 	changed := false
 	for _, ev := range queue {
+		if turnEdge(ev) && a.flushHeld() {
+			changed = true
+		}
+		notes := a.judge(ev)
+		if a.writesOpen(ev) && a.reloadDoc() {
+			// The edits before this save are judged against the plan they were
+			// made under, the ones after against what it wrote (a new pin, say);
+			// a patch that wrote both counts each file at its lesser level.
+			changed = true
+			notes = lesser(notes, a.judge(ev))
+		}
 		// One event's paths go in order of level, so row 1 ends on its worst
 		// (a patch's on-pin file can't hide its off-pin one).
-		notes := a.judge(ev)
 		sort.SliceStable(notes, func(i, j int) bool { return notes[i].d.Level < notes[j].d.Level })
 		for _, n := range notes {
+			if n.d.Names != "" || a.asked(n.d.Listed) {
+				a.syncDrift()
+				a.drift.held = append(a.drift.held, n)
+				continue
+			}
 			if a.noteDrift(n) {
 				changed = true
 			}
+		}
+	}
+	return changed
+}
+
+// lesser is each file of one event at its lesser drift of two judgements,
+// or none when either plan had no pin to judge it against.
+func lesser(was, now []driftNote) []driftNote {
+	if len(was) != len(now) {
+		return nil
+	}
+	for i := range was {
+		if now[i].d.Level < was[i].d.Level {
+			was[i] = now[i]
+		}
+	}
+	return was
+}
+
+// asked reports whether a held prompt names task id. An edit of a file
+// listed for it waits with that prompt: the agent asked to start id may
+// edit its files before it saves the plan that makes id the pin.
+func (a *app) asked(id string) bool {
+	if id == "" {
+		return false
+	}
+	a.syncDrift()
+	for _, n := range a.drift.held {
+		if n.rel == "" && n.d.Names == id {
+			return true
+		}
+	}
+	return false
+}
+
+// turnEdge reports that ev ends a turn, or starts the next one (a missed
+// turn end): either way, the prompts held from the turn before are judged.
+func turnEdge(ev watch.Event) bool {
+	if ev.Source == "rex" {
+		return false
+	}
+	return ev.Kind == "user" || ApplyTurn(TurnRunning, ev) == TurnIdle
+}
+
+// flushHeld records the held prompts as drift: their turn ended with the
+// pin where it was, so naming another task wasn't a switch.
+func (a *app) flushHeld() bool {
+	a.syncDrift()
+	held := a.drift.held
+	a.drift.held = nil
+	changed := false
+	for _, n := range held {
+		if a.noteDrift(n) {
+			changed = true
 		}
 	}
 	return changed
@@ -90,17 +166,43 @@ func (a *app) judge(ev watch.Event) []driftNote {
 
 // syncDrift starts over when the effective pin (of this plan) is not the
 // one the state is about: row 1 clears, and the next drift starts a new
-// block.
+// block. A held prompt that named the new pin asked for this move and
+// goes, with the edits held for it; one that names another task still
+// waits for its turn to end, and so do the edits of that task's files.
 func (a *app) syncDrift() {
 	key, id := "", ""
+	var p *plan.Plan
+	var pin *plan.Task
 	if a.doc != nil && a.doc.plan != nil {
-		if pin := a.doc.plan.Graph().Pin(); pin != nil {
-			key, id = plan.PinKey(a.doc.path, pin.ID), pin.ID
+		p = a.doc.plan
+		if pin = p.Graph().Pin(); pin != nil {
+			key, id = pinKey(a.doc.path, pin.ID), pin.ID
 		}
 	}
-	if key != a.drift.key {
-		a.driftGen++
-		a.drift = driftState{key: key, pin: id, gen: a.driftGen, seen: map[string]bool{}}
+	if key == a.drift.key {
+		return
+	}
+	held := a.drift.held
+	a.driftGen++
+	a.drift = driftState{key: key, pin: id, gen: a.driftGen, seen: map[string]bool{}}
+	if pin == nil {
+		return
+	}
+	asked := map[string]bool{}
+	for i := range held {
+		if n := &held[i]; n.rel == "" {
+			if n.d = plan.CheckPrompt(p, pin, n.prompt); n.d.Names != "" {
+				asked[n.d.Names] = true
+			}
+		}
+	}
+	for _, n := range held {
+		if n.rel != "" {
+			n.d = plan.CheckEdit(p, pin, n.rel, foldPaths)
+		}
+		if n.d.Names != "" || asked[n.d.Listed] {
+			a.drift.held = append(a.drift.held, n)
+		}
 	}
 }
 
@@ -198,7 +300,7 @@ func (a *app) driftStatus(level plan.DriftLevel) (StatusLine, bool) {
 		return StatusLine{}, false
 	}
 	pin := a.doc.plan.Graph().Pin()
-	if pin == nil || plan.PinKey(a.doc.path, pin.ID) != a.drift.key {
+	if pin == nil || pinKey(a.doc.path, pin.ID) != a.drift.key {
 		return StatusLine{}, false
 	}
 	n := a.drift.hard

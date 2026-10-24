@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/luciancheng/rex/internal/plan"
+	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -159,7 +161,6 @@ func TestEveryHarnessWriteOpensThePlan(t *testing.T) {
 		repo := attachRepo(t)
 		a := startIn(repo)
 		press(a, "\t")
-		typeText(a, "a note in progress")
 		path := writePlan(t, repo, tc.name, demoPlan)
 		evs := hook(t, tc.source, tc.payload(repo, path))
 		if len(evs) == 0 {
@@ -169,8 +170,8 @@ func TestEveryHarnessWriteOpensThePlan(t *testing.T) {
 		if a.plans.Current != path || a.at != atOutline || !a.follow {
 			t.Fatalf("%s %s: current=%q at=%d", tc.source, tc.name, a.plans.Current, a.at)
 		}
-		if a.pane != PaneChat || a.draft != "a note in progress" {
-			t.Fatalf("%s: an attach moved you or ate the tape's draft: pane=%d draft=%q", tc.source, a.pane, a.draft)
+		if a.pane != PaneChat {
+			t.Fatalf("%s: an attach moved you: pane=%d", tc.source, a.pane)
 		}
 		if !strings.Contains(a.statusLine().Text, "following "+planStem(tc.name)) {
 			t.Fatalf("%s: row 1 says why the plan changed: %q", tc.source, a.statusLine().Text)
@@ -316,10 +317,9 @@ func TestLatchedOffersTheNewPlan(t *testing.T) {
 		t.Fatalf("opening a plan settles the offer: offer=%q current=%q", a.offer, a.plans.Current)
 	}
 	a.ingest([]watch.Event{wrote(repo, other)})
-	typeText(a, "s")
-	press(a, "\x7f", "\r")
+	press(a, "s", "\r") // a letter does nothing on the outline; ⏎ switches
 	if a.plans.Current != other || !a.follow || a.offer != "" || a.at != atOutline {
-		t.Fatalf("⏎ on an empty draft switches: current=%q follow=%v", a.plans.Current, a.follow)
+		t.Fatalf("⏎ switches: current=%q follow=%v", a.plans.Current, a.follow)
 	}
 	if !strings.Contains(a.frame(), "following · rex/plans/cuj/next.rex.json") {
 		t.Fatalf("%s", a.frame())
@@ -327,14 +327,11 @@ func TestLatchedOffersTheNewPlan(t *testing.T) {
 }
 
 // Taking the offer opens the plan, so it never runs while that would drop
-// what you typed: PLAN's draft, or a done, send-off or pin overlay in
-// either place. Row 1 and the footer stop saying ⏎ switch, and ⏎ does
-// what it did before.
+// what you typed in the plan list: a find, or a Name prompt. Row 1 and the
+// footer stop saying ⏎ switch, and ⏎ does what it did before.
 func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
-	var c *clock
 	offered := func(t *testing.T) (*app, string, string) {
-		a, clk, path := openDemo(t, demoPlan, 120, 32)
-		c = clk
+		a, _, path := openDemo(t, demoPlan, 120, 32)
 		return a, path, writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan)
 	}
 	noSwitch := func(t *testing.T, a *app) {
@@ -344,20 +341,18 @@ func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 		}
 	}
 
-	// A half-written Completion in PLAN, ⏎ on the tape.
+	// A find half typed in the plan list, ⏎ on the tape.
 	a, path, next := offered(t)
-	typeText(a, "d")
-	press(a, "\r")
-	typeText(a, "half written")
+	press(a, "esc")
+	typeText(a, "half")
 	press(a, "\t")
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
 	noSwitch(t, a)
 	press(a, "\r")
-	if a.plans.Current != path || a.overlay[PanePlans] != overlayDone || a.form[PanePlans] == nil || a.parked != "half written" {
-		t.Fatalf("the form was dropped: current=%q overlay=%d parked=%q", a.plans.Current, a.overlay[PanePlans], a.parked)
+	if a.plans.Current != path || a.draft != "half" {
+		t.Fatalf("the find was dropped: current=%q draft=%q", a.plans.Current, a.draft)
 	}
-	press(a, "\t", "\x15", "esc", "\t") // clear it, close it, back to the tape
-	c.t = c.t.Add(toastFor)             // "not marked done" outranks the offer until it expires
+	press(a, "\t", "\x15", "\t") // clear it, back to the tape
 	if a.statusLine().Text != "new plan cuj/next · ⏎ switch" {
 		t.Fatalf("with nothing to lose the offer is back: %q", a.statusLine().Text)
 	}
@@ -365,29 +360,17 @@ func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 		t.Fatalf("current=%q pane=%d", a.plans.Current, a.pane)
 	}
 
-	// A verb half typed on the outline, ⏎ on the tape.
+	// A Name prompt in the plan list, ⏎ on the tape.
 	a, path, next = offered(t)
-	typeText(a, "pin load")
-	press(a, "\t")
-	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
-	noSwitch(t, a)
-	press(a, "\r")
-	if a.plans.Current != path || a.parked != "pin load" {
-		t.Fatalf("PLAN's draft was dropped: current=%q parked=%q", a.plans.Current, a.parked)
+	press(a, "esc", "home", "down", "\r")
+	if !a.plans.Prompting() {
+		t.Fatal("setup: the Name prompt")
 	}
-
-	// A Completion on the tape, ⏎ on the outline opens the task as before.
-	a, path, next = offered(t)
-	press(a, "\t")
-	typeText(a, "d")
-	press(a, "\r")
-	typeText(a, "half")
 	press(a, "\t")
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
 	noSwitch(t, a)
-	press(a, "\r")
-	if a.plans.Current != path || a.overlay[PaneChat] != overlayDone || a.form[PaneChat] == nil || a.parked != "half" || a.at != atTaskDetail {
-		t.Fatalf("the tape's form was dropped: current=%q overlay=%d parked=%q at=%d", a.plans.Current, a.overlay[PaneChat], a.parked, a.at)
+	if press(a, "\r"); a.plans.Current != path || !a.plans.Prompting() {
+		t.Fatalf("the Name prompt was dropped: current=%q", a.plans.Current)
 	}
 }
 
@@ -415,12 +398,12 @@ func TestTakingTheOfferFromTheTape(t *testing.T) {
 	}
 }
 
-// Typing in PLAN, or a done, send-off or pin overlay in either place,
-// holds the attach until it clears; Help and the tape's draft don't.
-func TestAttachWaitsForTheDraftAndOverlays(t *testing.T) {
+// Text in the plan list's composer holds the attach until it clears. The
+// outline, the tape and Help have no composer, so they hold nothing:
+// letters typed there build no hidden draft (docs/ux.md §2, §11).
+func TestAttachWaitsForTheDraft(t *testing.T) {
 	repo := attachRepo(t)
 	a := startIn(repo)
-	a.copy = fakeCopy(new([]string), copyResult{status: "copied (fake)"})
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(repo, one)})
 	if a.plans.Current != one {
@@ -430,79 +413,44 @@ func TestAttachWaitsForTheDraftAndOverlays(t *testing.T) {
 	two := writePlan(t, repo, "two.rex.json", demoPlan)
 	typeText(a, "pi")
 	a.ingest([]watch.Event{wrote(repo, two)})
-	if a.plans.Current != one || a.pending != two || a.draft != "pi" {
-		t.Fatalf("a PLAN draft holds it: current=%q pending=%q", a.plans.Current, a.pending)
+	if a.plans.Current != two || a.pending != "" || a.draft != "" || a.at != atOutline {
+		t.Fatalf("letters on the outline hold nothing: current=%q pending=%q draft=%q", a.plans.Current, a.pending, a.draft)
 	}
+
+	press(a, "\t", "?") // Help on the tape
+	typeText(a, "d")
 	three := writePlan(t, repo, "three.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(repo, three)})
-	if a.pending != three {
-		t.Fatal("a newer write replaces the held one")
-	}
-	press(a, "esc")
-	if a.plans.Current != three || a.pending != "" || a.at != atOutline {
-		t.Fatalf("an empty draft lets it through: current=%q", a.plans.Current)
-	}
-
-	typeText(a, "s")
-	press(a, "\r") // the send-off overlay
-	a.ingest([]watch.Event{wrote(repo, two)})
-	if a.plans.Current != three || a.overlay[PanePlans] != overlaySendoff {
-		t.Fatal("an open send-off holds it")
-	}
-	press(a, "esc")
-	if a.plans.Current != two {
-		t.Fatalf("closing it lets it through: %q", a.plans.Current)
-	}
-
-	press(a, "end") // load-outline waits on card-highlight
-	typeText(a, "p")
-	press(a, "\r") // Pin confirm
-	if a.overlay[PanePlans] != overlayPin {
-		t.Fatal("setup: Pin confirm")
-	}
-	a.ingest([]watch.Event{wrote(repo, one)})
-	if a.plans.Current != two || a.pending != one || a.overlay[PanePlans] != overlayPin {
-		t.Fatalf("an open Pin confirm holds it: current=%q pending=%q", a.plans.Current, a.pending)
-	}
-	press(a, "esc")
-	if a.plans.Current != one || a.pending != "" {
-		t.Fatalf("cancelling it lets it through: %q", a.plans.Current)
-	}
-
-	press(a, "\t")
-	typeText(a, "d")
-	press(a, "\r") // the done form, on the tape
-	a.ingest([]watch.Event{wrote(repo, two)})
-	if a.plans.Current != one || a.form[PaneChat] == nil {
-		t.Fatal("a done form in the other place holds it")
-	}
-	press(a, "esc")
-	if a.plans.Current != two || a.pane != PaneChat {
-		t.Fatalf("closing it lets it through, and you stay on the tape: current=%q pane=%d", a.plans.Current, a.pane)
-	}
-
-	typeText(a, "?")
-	press(a, "\r") // Help on the tape, and a draft on the tape
-	a.ingest([]watch.Event{wrote(repo, three)})
-	if a.plans.Current != three || a.overlay[PaneChat] != overlayHelp {
-		t.Fatal("Help holds nothing")
+	if a.plans.Current != three || a.overlay[PaneChat] != overlayHelp || a.pane != PaneChat {
+		t.Fatal("Help and the tape hold nothing, and you stay on the tape")
 	}
 
 	press(a, "esc", "\t") // close Help, back to PLAN
 	press(a, "esc")       // the plan list, still following
 	typeText(a, "q")      // a find
 	a.ingest([]watch.Event{wrote(repo, two)})
-	if a.plans.Current != three || a.at != atLibrary {
+	if a.plans.Current != three || a.at != atLibrary || a.pending != two {
 		t.Fatalf("a find in the list holds it: current=%q at=%d", a.plans.Current, a.at)
 	}
-	press(a, "\x15") // Ctrl+U
+	four := writePlan(t, repo, "four.rex.json", demoPlan)
+	a.ingest([]watch.Event{wrote(repo, four)})
+	if a.pending != four {
+		t.Fatal("a newer write replaces the held one")
+	}
+	press(a, "\t")
+	a.ingest([]watch.Event{wrote(repo, two)})
+	if a.plans.Current != three || a.pending != two {
+		t.Fatal("the list's find holds it from the tape too")
+	}
+	press(a, "\t", "\x15") // Ctrl+U
 	if a.plans.Current != two || a.at != atOutline {
 		t.Fatalf("the held write applies once the find is cleared: %q", a.plans.Current)
 	}
 }
 
 // A Name prompt in the plan list is you making a plan: a write waits until
-// you cancel it, and is dropped if you create one (docs/ux.md §11).
+// you cancel it, and is offered on row 1 if you create one (docs/ux.md
+// §11). Row 1 says the prompt holds it, even an empty one.
 func TestANamePromptHoldsTheAttach(t *testing.T) {
 	repo := attachRepo(t)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
@@ -520,7 +468,19 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	if a.plans.Current != one || a.at != atLibrary || !a.plans.Prompting() || a.pending != two {
 		t.Fatalf("an empty Name prompt holds it: current=%q at=%d pending=%q", a.plans.Current, a.at, a.pending)
 	}
-	press(a, "esc")
+	if got := a.statusLine().Text; got != "new plan two · opens when the prompt closes" {
+		t.Fatalf("the line is clear, the prompt isn't closed: %q", got)
+	}
+	typeText(a, "x")
+	if got := a.statusLine().Text; got != "new plan two · opens when the prompt closes" {
+		t.Fatalf("a named prompt: %q", got)
+	}
+	a.settle(66, 24)
+	if got := strings.TrimRight(statusRow(a.statusLine(), a.layout().textW, false), " "); got != "new plan two · waiting" {
+		t.Fatalf("narrow: %q", got)
+	}
+	a.settle(120, 32)
+	press(a, "\x15", "esc")
 	if a.plans.Current != two || a.at != atOutline || a.plans.Prompting() {
 		t.Fatalf("cancelling lets it through: current=%q at=%d prompting=%v", a.plans.Current, a.at, a.plans.Prompting())
 	}
@@ -530,8 +490,11 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	a.ingest([]watch.Event{wrote(repo, three)})
 	typeText(a, "mine")
 	press(a, "\r")
-	if a.plans.Current != filepath.Join(PlansDir(repo), "mine.rex.json") || a.follow || a.pending != "" {
-		t.Fatalf("creating latches and drops it: current=%q follow=%v pending=%q", a.plans.Current, a.follow, a.pending)
+	if a.plans.Current != filepath.Join(PlansDir(repo), "mine.rex.json") || a.follow || a.pending != "" || a.offer != three {
+		t.Fatalf("creating latches and offers it: current=%q follow=%v pending=%q offer=%q", a.plans.Current, a.follow, a.pending, a.offer)
+	}
+	if got := a.statusLine().Text; got != "new plan three · ⏎ switch" {
+		t.Fatalf("row 1 %q", got)
 	}
 }
 
@@ -565,29 +528,69 @@ func TestALinkedFolderOutOfRexPlansNeverAttaches(t *testing.T) {
 	}
 }
 
-// Picking a plan while a write is held drops it; picking another plan
-// latches, and picking the open one again keeps following.
-func TestLatchingDropsAHeldAttach(t *testing.T) {
+// Picking a plan while a write is held makes it the row-1 offer, neither
+// opened nor lost (docs/ux.md §11); picking another plan latches, and
+// picking the open one again keeps following.
+func TestLatchingOffersAHeldAttach(t *testing.T) {
 	repo := attachRepo(t)
 	alt := writePlan(t, repo, "alt.rex.json", demoPlan)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
+	two := filepath.Join(PlansDir(repo), "two.rex.json")
 	a := startIn(repo)
 	for _, pick := range []struct{ find, want string }{{"on", one}, {"al", alt}} {
 		press(a, "esc")
 		typeText(a, pick.find)
-		two := writePlan(t, repo, "two.rex.json", demoPlan)
+		writePlan(t, repo, "two.rex.json", demoPlan)
 		a.ingest([]watch.Event{wrote(repo, two)})
 		if a.pending != two {
 			t.Fatal("setup: held")
 		}
 		press(a, "\r") // the first match
-		if a.plans.Current != pick.want || a.follow != (pick.want == one) || a.pending != "" {
-			t.Fatalf("%s: current=%q follow=%v pending=%q", pick.find, a.plans.Current, a.follow, a.pending)
+		if a.plans.Current != pick.want || a.follow != (pick.want == one) || a.pending != "" || a.offer != two {
+			t.Fatalf("%s: current=%q follow=%v pending=%q offer=%q", pick.find, a.plans.Current, a.follow, a.pending, a.offer)
 		}
 		a.settle(a.columns, a.lines)
-		if a.plans.Current != pick.want {
-			t.Fatal("a dropped write never comes back")
+		if a.plans.Current != pick.want || a.statusLine().Text != "new plan two · ⏎ switch" {
+			t.Fatalf("offered, not opened: current=%q row 1 %q", a.plans.Current, a.statusLine().Text)
 		}
+	}
+	if press(a, "\r"); a.plans.Current != two || !a.follow {
+		t.Fatalf("⏎ takes it and follows again: current=%q follow=%v", a.plans.Current, a.follow)
+	}
+
+	// The held write is the plan you pick: nothing left to offer.
+	press(a, "esc")
+	typeText(a, "on")
+	writePlan(t, repo, "one.rex.json", demoPlan)
+	a.ingest([]watch.Event{wrote(repo, one)})
+	if a.pending != one {
+		t.Fatal("setup: held")
+	}
+	if press(a, "\r"); a.plans.Current != one || a.offer != "" || a.pending != "" {
+		t.Fatalf("current=%q offer=%q pending=%q", a.plans.Current, a.offer, a.pending)
+	}
+}
+
+// The QA scenario: find a plan, the agent writes another meanwhile, ⏎
+// opens the one you found. Yours is latched and the agent's is offered.
+func TestPickingWhileHeldKeepsTheAgentsPlan(t *testing.T) {
+	a, c, _ := cujApp(t)
+	scratch := filepath.Join(a.plans.Root, "scratch.rex.json")
+	os.WriteFile(scratch, plan.Stub("scratch"), 0o644)
+	press(a, "esc")
+	typeText(a, "scratch")
+	other := filepath.Join(a.plans.Root, "agent-new.rex.json")
+	os.WriteFile(other, plan.Stub("agent-new"), 0o644)
+	a.ingest([]watch.Event{at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + other, Meta: map[string]any{"tool": "Write", "path": other, "ok": true, "cwd": a.plans.Repo}})})
+	if a.pending != other {
+		t.Fatal("setup: held")
+	}
+	press(a, "\r")
+	if a.plans.Current != scratch || a.follow || a.offer != other {
+		t.Fatalf("picked: current=%q follow=%v offer=%q", a.plans.Current, a.follow, a.offer)
+	}
+	if got := a.statusLine().Text; got != "new plan agent-new · ⏎ switch" {
+		t.Fatalf("row 1 %q", got)
 	}
 }
 
@@ -694,23 +697,25 @@ func TestHeaderSaysFollowingOrLatched(t *testing.T) {
 	}
 }
 
-// A verb that needs a plan, on the Wait screen or the tape, says the agent
-// makes one; at 80 columns row 1 keeps the short form.
-func TestVerbsWithNoPlanPointAtTheAgent(t *testing.T) {
-	for _, verb := range []string{"d", "s", "p", "b", "done", "sendoff", "pin load", "brief"} {
-		for _, tab := range []bool{false, true} {
-			a := testApp(t)
-			if tab {
-				press(a, "\t")
-			}
-			typeText(a, verb)
-			press(a, "\r")
-			if got := a.statusLine(); got.Text != noPlanText || got.Short != "no plan yet" {
-				t.Fatalf("%s (tape %v): %+v", verb, tab, got)
-			}
-			if row := statusRow(a.statusLine(), layoutFor(80, 24).textW, false); !strings.HasPrefix(row, "no plan yet ") || strings.Contains(row, "tab to plan") {
-				t.Fatalf("%s at 80 columns: %q", verb, row)
-			}
+// The old verbs are gone: on the Wait screen and the tape, p, d, s, b and
+// ⏎ change nothing and write nothing.
+func TestOldVerbsDoNothingWithoutAPlan(t *testing.T) {
+	for _, tab := range []bool{false, true} {
+		repo := attachRepo(t)
+		a := startIn(repo)
+		if tab {
+			press(a, "\t")
+		}
+		before := a.frame()
+		for _, word := range []string{"d", "s", "p", "b", "done", "sendoff", "pin load", "brief", "x"} {
+			typeText(a, word)
+			press(a, "\r", PastePrefix+word)
+		}
+		if a.frame() != before || a.draft != "" || a.statusLine().Text != "" || len(a.log) != 0 {
+			t.Fatalf("tape %v: something changed\n%s", tab, a.frame())
+		}
+		if _, err := os.Stat(a.statePath); !os.IsNotExist(err) {
+			t.Fatalf("tape %v: state.json was written", tab)
 		}
 	}
 }
@@ -746,11 +751,11 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 		press(a, "esc")
 	}
 
-	// A verb's error toast, then the offer once it expires.
+	// A plan reload's toast, then the offer once it expires.
 	a, c, path, next := offered(t)
-	typeText(a, "pin nosuch")
-	press(a, "\r")
-	hidden(t, a, path, "no task nosuch in this plan")
+	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"status": "pending"`, `"status": "skipped"`, 1)), 0o644)
+	later(a, c)
+	hidden(t, a, path, "plan updated · load-outline → skipped")
 	c.t = c.t.Add(toastFor)
 	if got := a.statusLine().Text; got != "new plan cuj/next · ⏎ switch" {
 		t.Fatalf("the offer is back once the toast is gone: %q", got)
@@ -781,52 +786,33 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 	hidden(t, a, path, "plan JSON error")
 }
 
-// docs/ux.md §11: p⏎ or d⏎ writing to the followed plan latches it, so a
-// pin stint isn't yanked by another plan's write; a write held meanwhile
-// becomes an offer.
-func TestYourOwnWritesLatch(t *testing.T) {
+// docs/ux.md §11: Rex has no actions on a plan, so nothing on the outline
+// or the tape latches it; only picking a plan in the list does. A followed
+// plan keeps following whatever you type there, and its file is untouched.
+func TestOnlyThePlanListLatches(t *testing.T) {
 	repo := attachRepo(t)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
 	a := startIn(repo)
-	press(a, "end") // load-outline, after card-highlight
-	typeText(a, "p")
-	press(a, "\r")
-	if !a.follow || a.overlay[PanePlans] != overlayPin {
-		t.Fatal("setup: Pin confirm, nothing written yet, still following")
+	before, _ := os.ReadFile(one)
+	press(a, "end")
+	for _, k := range []string{"p", "\r", "esc", "d", "\r", "esc", "s", "\r", "esc", "b", "\r", "esc", "\t", "p", "d", "\r", "\t"} {
+		press(a, k)
+		if k == "esc" && a.at == atLibrary {
+			press(a, "\r") // back on Continue: it picks nothing new
+		}
 	}
-	typeText(a, "p")
-	press(a, "\r")
-	if p, _ := plan.Load(one); a.follow || p.Task("load-outline").Status != plan.Active || !strings.Contains(a.frame(), "latched · rex/plans/one.rex.json") {
-		t.Fatalf("a pin you wrote latches: follow=%v\n%s", a.follow, a.frame())
+	if after, _ := os.ReadFile(one); !a.follow || string(after) != string(before) {
+		t.Fatalf("follow=%v; the plan file changed:\n%s", a.follow, after)
 	}
 	two := writePlan(t, repo, "two.rex.json", demoPlan)
-	a.ingest([]watch.Event{wrote(repo, two)})
-	if a.plans.Current != one || a.offer != two {
-		t.Fatalf("offered, not attached: current=%q offer=%q", a.plans.Current, a.offer)
+	if a.ingest([]watch.Event{wrote(repo, two)}); a.plans.Current != two {
+		t.Fatalf("still following: current=%q", a.plans.Current)
 	}
-
-	// d⏎ with a write held: the write turns into an offer, and the
-	// form's own result keeps row 1 until it expires.
-	repo = attachRepo(t)
-	one = writePlan(t, repo, "one.rex.json", demoPlan)
-	b := startIn(repo)
-	c := &clock{t: time.Now()}
-	b.now = c.now
-	typeText(b, "d")
-	press(b, "\r")
-	typeText(b, "made the card one block")
-	two = writePlan(t, repo, "two.rex.json", demoPlan)
-	b.ingest([]watch.Event{wrote(repo, two)})
-	if b.pending != two {
-		t.Fatal("setup: held by the form")
-	}
-	press(b, "\r")
-	if b.plans.Current != one || b.follow || b.pending != "" || b.offer != two || !strings.HasPrefix(b.statusLine().Text, "✓ card-highlight done") {
-		t.Fatalf("current=%q follow=%v pending=%q offer=%q row 1 %q", b.plans.Current, b.follow, b.pending, b.offer, b.statusLine().Text)
-	}
-	c.t = c.t.Add(toastFor)
-	if got := b.statusLine().Text; got != "new plan two · ⏎ switch" {
-		t.Fatalf("row 1 %q", got)
+	press(a, "esc")
+	typeText(a, "one")
+	press(a, "\r")
+	if a.follow || a.plans.Current != one {
+		t.Fatalf("picking one in the list latches: follow=%v current=%q", a.follow, a.plans.Current)
 	}
 }
 
@@ -857,11 +843,15 @@ func TestKeysActBeforeTheEventsReadWithThem(t *testing.T) {
 	repo := attachRepo(t)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
 	a := startIn(repo)
+	press(a, "esc") // the plan list
 	two := writePlan(t, repo, "two.rex.json", demoPlan)
 	if a.step([]string{"p", "i"}, []watch.Event{wrote(repo, two)}); a.plans.Current != one || a.pending != two || a.draft != "pi" {
-		t.Fatalf("the draft holds it: current=%q pending=%q draft=%q", a.plans.Current, a.pending, a.draft)
+		t.Fatalf("the find holds it: current=%q pending=%q draft=%q", a.plans.Current, a.pending, a.draft)
 	}
 	press(a, "esc")
+	if a.plans.Current != two || a.at != atOutline {
+		t.Fatalf("clearing the find lets it through: current=%q at=%d", a.plans.Current, a.at)
+	}
 	if a.step([]string{"\r"}, []watch.Event{wrote(repo, one)}); a.plans.Current != one || a.at != atOutline {
 		t.Fatalf("⏎ opened two's task detail, then one opened: current=%q at=%d", a.plans.Current, a.at)
 	}
@@ -881,12 +871,13 @@ func TestKeysActBeforeTheEventsReadWithThem(t *testing.T) {
 }
 
 // A held attach says so on row 1, and on an 80-column terminal keeps a
-// clipped name. A Wait screen draft holds nothing: the plan opens and the
-// draft, a verb there as on the outline, carries over.
+// clipped name. Letters on the Wait screen or the tape hold nothing: there
+// is no composer there (docs/ux.md §2).
 func TestAHeldAttachShowsOnRowOne(t *testing.T) {
 	repo := attachRepo(t)
 	writePlan(t, repo, "one.rex.json", demoPlan)
 	a := startIn(repo)
+	press(a, "esc")
 	typeText(a, "pi")
 	two := writePlan(t, repo, "team/a-much-longer-plan-name.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(repo, two)})
@@ -908,15 +899,12 @@ func TestAHeldAttachShowsOnRowOne(t *testing.T) {
 		typeText(w, "pin load-outline")
 		if tape {
 			press(w, "\t")
+			typeText(w, "pin")
 		}
 		p := writePlan(t, repo, "p.rex.json", demoPlan)
 		w.ingest([]watch.Event{wrote(repo, p)})
-		draft := w.draft
-		if tape {
-			draft = w.parked
-		}
-		if w.plans.Current != p || w.pending != "" || w.at != atOutline || draft != "pin load-outline" {
-			t.Fatalf("tape %v: current=%q pending=%q draft=%q", tape, w.plans.Current, w.pending, draft)
+		if w.plans.Current != p || w.pending != "" || w.at != atOutline || w.draft != "" {
+			t.Fatalf("tape %v: current=%q pending=%q draft=%q", tape, w.plans.Current, w.pending, w.draft)
 		}
 	}
 }
@@ -988,7 +976,8 @@ func TestAMixedBatchStillOffersTheNewPlan(t *testing.T) {
 	if a.ingest([]watch.Event{patch(repo, two, one)}); a.plans.Current != two {
 		t.Fatalf("following: %q", a.plans.Current)
 	}
-	typeText(a, "pi")
+	press(a, "esc")
+	typeText(a, "pi") // a find in the list holds the next write
 	a.ingest([]watch.Event{wrote(repo, one)})
 	if a.pending != one {
 		t.Fatal("setup: held")
@@ -1059,6 +1048,7 @@ func TestAnotherSpellingIsTheSamePlan(t *testing.T) {
 		repo := attachRepo(t)
 		one := writePlan(t, repo, "one.rex.json", demoPlan)
 		d := startIn(repo)
+		press(d, "esc")
 		typeText(d, "pi")
 		two := writePlan(t, repo, "two.rex.json", demoPlan)
 		d.ingest([]watch.Event{wrote(repo, two)})
@@ -1114,6 +1104,147 @@ func TestWaitCopyFollowsWherePlansGo(t *testing.T) {
 	}
 }
 
+// docs/ux.md §11 Landing: the Wait screen says how to install the
+// rex-plan skill only while Rex's copy is nowhere an agent reads it, and
+// an install from another terminal shows within a few seconds.
+func TestWaitHintGoesOnceTheSkillIsInstalled(t *testing.T) {
+	repo := attachRepo(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := os.Getenv("HOME")
+	a := startIn(repo)
+	c := &clock{t: time.Unix(1_800_000_000, 0)}
+	a.now = c.now
+	const hint = "agents learn plans from the rex-plan skill · rex ingest --install-skill"
+	shows := func() bool {
+		c.t = c.t.Add(3*time.Second + time.Millisecond) // past the lookup's cache
+		return strings.Contains(a.frame(), hint)
+	}
+	if a.at != atWait || !shows() {
+		t.Fatalf("with the skill nowhere, the hint shows: at=%d\n%s", a.at, a.frame())
+	}
+	for _, dir := range append(skill.Dirs(home, a.plans.Repo, false), skill.Dirs(home, a.plans.Repo, true)...) {
+		if err := skill.Install(dir, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if shows() {
+			t.Fatalf("installed at %s, the hint is gone\n%s", dir, a.frame())
+		}
+		if err := skill.Uninstall(dir, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if !shows() {
+			t.Fatalf("uninstalled from %s, the hint is back", dir)
+		}
+	}
+	own := filepath.Join(skill.Dirs(home, a.plans.Repo, false)[0], "SKILL.md")
+	os.MkdirAll(filepath.Dir(own), 0o755)
+	os.WriteFile(own, []byte("my own skill"), 0o644)
+	if !shows() {
+		t.Fatal("a SKILL.md Rex didn't write teaches no plans: the hint stays")
+	}
+	os.Remove(own)
+
+	// An older Rex's copy still teaches its own workflow: the hint says to
+	// replace it, with --project when the old copy is the repo's.
+	old := []byte("<!-- generated by rex -->\nThe person marks tasks done in Rex.\n")
+	says := func(want string) {
+		t.Helper()
+		c.t = c.t.Add(3*time.Second + time.Millisecond)
+		f := a.frame()
+		if !strings.Contains(f, want) || strings.Contains(f, hint) {
+			t.Fatalf("want %q\n%s", want, f)
+		}
+	}
+	project := filepath.Join(skill.Dirs(home, a.plans.Repo, true)[1], "SKILL.md")
+	for _, path := range []string{own, project} {
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, old, 0o644)
+	}
+	says("rex-plan skill is out of date · rex ingest --install-skill")
+	for _, dir := range skill.Dirs(home, a.plans.Repo, false) {
+		skill.Install(dir, io.Discard)
+	}
+	says("rex-plan skill is out of date · rex ingest --install-skill --project")
+	skill.Install(filepath.Dir(project), io.Discard)
+	if c.t = c.t.Add(3*time.Second + time.Millisecond); strings.Contains(a.frame(), "rex-plan skill") {
+		t.Fatalf("every copy is this Rex's: no hint\n%s", a.frame())
+	}
+}
+
+// docs/ux.md §11: start lands on a plan, so an upgrader with an older
+// Rex's skill never sees the Wait screen's hint. Row 1 says so once, over
+// the Library's notice, and Help keeps a skill row; a current skill, or
+// none, puts nothing on row 1.
+func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
+	repo := attachRepo(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := os.Getenv("HOME")
+	writePlan(t, repo, "cuj/demo.rex.json", demoPlan)
+	start := func() *app {
+		a := startIn(repo)
+		if a.at != atOutline {
+			t.Fatalf("start lands on the plan: at=%d", a.at)
+		}
+		return a
+	}
+	if got := start().statusLine().Text; strings.Contains(got, "skill") {
+		t.Fatalf("no skill at all is no news on row 1: %q", got)
+	}
+	old := []byte("<!-- generated by rex -->\nThe person marks tasks done in Rex (d⏎).\n")
+	for _, dir := range skill.Dirs(home, repo, false) {
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, "SKILL.md"), old, 0o644)
+	}
+	a := start()
+	if got := a.statusLine().Text; got != "rex-plan skill is out of date · rex ingest --install-skill" {
+		t.Fatalf("row 1 on the first frame: %q", got)
+	}
+	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "rex-plan skill is out of date · rex ingest --install-skill" {
+		t.Fatalf("drawn: %q", row)
+	}
+	a.settle(80, 24)
+	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "rex-plan skill out of date · ? help" {
+		t.Fatalf("38 cells: %q", row)
+	}
+	press(a, "?")
+	if help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " "); !strings.Contains(help, "skill out of date · rex ingest --install-skill") {
+		t.Fatalf("Help keeps the skill row\n%s", help)
+	}
+
+	// An old rex-plans/ folder's notice too: the skill toast wins row 1, and
+	// the Library still says the notice.
+	os.MkdirAll(filepath.Join(repo, "rex-plans"), 0o755)
+	os.WriteFile(filepath.Join(repo, "rex-plans", "old.rex.json"), []byte(demoPlan), 0o644)
+	a = start()
+	if got := a.statusLine().Text; got != "rex-plan skill is out of date · rex ingest --install-skill" {
+		t.Fatalf("row 1 with a notice too: %q", got)
+	}
+	press(a, "esc")
+	if a.at != atLibrary || !strings.Contains(viewText(BuildPlanView(a.plans, 78)), "rex-plans/ has 1 old plan(s)") {
+		t.Fatalf("the Library keeps the notice: at=%d\n%s", a.at, viewText(BuildPlanView(a.plans, 78)))
+	}
+	os.RemoveAll(filepath.Join(repo, "rex-plans"))
+
+	// The repo's copy is the old one: --project.
+	for _, dir := range skill.Dirs(home, repo, false) {
+		skill.Install(dir, io.Discard)
+	}
+	project := skill.Dirs(home, repo, true)[1]
+	os.MkdirAll(project, 0o755)
+	os.WriteFile(filepath.Join(project, "SKILL.md"), old, 0o644)
+	if got := start().statusLine().Text; got != "rex-plan skill is out of date · rex ingest --install-skill --project" {
+		t.Fatalf("row 1: %q", got)
+	}
+	skill.Install(project, io.Discard)
+	a = start()
+	if got := a.statusLine().Text; strings.Contains(got, "skill") {
+		t.Fatalf("every copy current: %q", got)
+	}
+	if help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " "); !strings.Contains(help, "skill rex-plan current") {
+		t.Fatalf("Help says it is current\n%s", help)
+	}
+}
+
 // docs/ux.md §11: every line of the Wait screen can be reached on a short
 // terminal: ↑↓, pages, Home and End scroll it.
 func TestTheWaitScreenScrolls(t *testing.T) {
@@ -1122,7 +1253,7 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 	body := a.waitBody(60)
 	seen := map[string]bool{}
 	look := func() {
-		for _, row := range a.frameRows().Rows[2:5] {
+		for _, row := range a.frameRows().Rows[2:6] { // no composer: the body has row 5 too
 			seen[strings.TrimSpace(row)] = true
 		}
 	}
@@ -1145,7 +1276,7 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 	}
 	press(a, "end")
 	a.frameRows()
-	if a.outline.scroll != len(body)-layoutFor(60, 7).bodyH {
+	if a.outline.scroll != len(body)-layoutFor(60, 7).bare().bodyH {
 		t.Fatalf("End is the bottom: %d", a.outline.scroll)
 	}
 	for range body {
@@ -1163,23 +1294,21 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 	}
 }
 
-// The Wait screen's composer takes verbs: Esc clears a draft first, ←
-// leaves it be, and a word that isn't a verb says so.
+// The Wait screen has no composer: letters and pastes do nothing, ? opens
+// Help at once, ⏎ does nothing, and ← or Esc go to the plan list.
 func TestWaitKeys(t *testing.T) {
 	a := testApp(t)
+	before := a.frame()
 	typeText(a, "zzz")
-	if press(a, "left", "right"); a.draft != "zzz" || a.at != atWait {
-		t.Fatalf("draft=%q at=%d", a.draft, a.at)
+	press(a, PastePrefix+"pasted", "right", "\r", "\x7f", "\x15")
+	if a.draft != "" || a.at != atWait || a.frame() != before {
+		t.Fatalf("draft=%q at=%d\n%s", a.draft, a.at, a.frame())
 	}
-	press(a, "\r")
-	if got := a.statusLine().Text; got != "'zzz' is not a verb · ?⏎ help" || a.draft != "zzz" {
-		t.Fatalf("row 1 %q draft=%q", got, a.draft)
+	if press(a, "?"); a.overlay[PanePlans] != overlayHelp {
+		t.Fatal("? opens Help at once")
 	}
-	if press(a, "esc"); a.draft != "" || a.at != atWait {
-		t.Fatalf("Esc clears the draft and stays: draft=%q at=%d", a.draft, a.at)
-	}
-	if a.waitKey("\r") {
-		t.Fatal("⏎ on an empty draft does nothing")
+	if press(a, "esc", "left"); a.at != atLibrary {
+		t.Fatalf("← goes to the plan list: at=%d", a.at)
 	}
 }
 

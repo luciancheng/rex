@@ -116,7 +116,7 @@ func TestHostilePlanFileNamesAreCleaned(t *testing.T) {
 		t.Skipf("filesystem refuses the name: %v", err)
 	}
 	b := NewPlanBrowser(repo)
-	frame := ComposeFrame("idle", "yellow", ComposeOptions{Enabled: false, Columns: 120, Lines: 30, Pane: PanePlans, Plans: b})
+	frame := ComposeFrame("idle", "yellow", ComposeOptions{Enabled: false, Columns: 120, Lines: 30, Pane: PanePlans, Plans: b, Composer: true})
 	assertNoForeignControl(t, frame)
 	if !strings.Contains(frame, "evilname.rex.json") {
 		t.Fatal("cleaned name should still show")

@@ -38,7 +38,7 @@ body:
     id: feed
     attributes:
       label: Feed health
-      description: Type ?⏎ in Rex and paste the feed block (it shows the feed path, the last event and which agents are wired).
+      description: Press ? in Rex and copy the feed block (it shows the feed path, the last event and which agents are wired).
       render: text
   - type: textarea
     id: steps

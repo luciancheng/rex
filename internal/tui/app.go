@@ -24,10 +24,9 @@ type app struct {
 
 	columns, lines int
 
-	pane   PaneKind
-	plans  *PlanBrowser
-	draft  string // the current place's draft
-	parked string // the other place's draft, kept across Tab
+	pane  PaneKind
+	plans *PlanBrowser
+	draft string // the plan list's draft: the only composer (docs/ux.md §2)
 
 	overlay       [2]overlayKind // per place
 	overlayScroll [2]int
@@ -43,7 +42,6 @@ type app struct {
 	quitTicks   int
 	quit        bool
 	repaint     bool // Ctrl+L asked for a full repaint
-	feed        string
 
 	scope  watch.Scope
 	hidden int // events from other repos' agents, not shown
@@ -56,31 +54,16 @@ type app struct {
 	toastUntil time.Time
 	now        func() time.Time
 	statePath  string
-	pinAsk     [2]pinAsk            // per place, while Pin confirm is open
-	pinSeen    map[string]time.Time // when this session first saw each pin
-	pinMoved   map[string]time.Time // when the pin last moved to each task this session
-	lastPin    map[string]string    // per plan file, the pin notePin last saw there
-	started    time.Time
-	form       [2]*doneForm                   // per place, while the completion form is open
-	seen       []watch.Event                  // raw events from this repo, for completion evidence
-	briefs     [2]*briefView                  // per place, while the Send-off overlay is open
-	drift      driftState                     // drift from the current pin, shown only
-	driftGen   int                            // numbers each pin stint's drift block
-	driftQueue []watch.Event                  // live events to judge once their batch is on the tape
-	copy       func(string) <-chan copyResult // copies a brief off the UI goroutine; nil = no clipboard
-	oscOut     string                         // an OSC 52 copy for the loop to write between frames
-	copying    []pendingCopy                  // copies still running
-	copySeq    int                            // the newest copy asked for
-	plainOut   string                         // a brief to print on the normal screen (o⏎)
-	plainText  string                         // the brief on the normal screen, to print again after a stop
-	plainShown bool                           // the brief is on the normal screen; ⏎ returns
-	plainBack  bool                           // come back to the live screen
+	drift      driftState    // drift from the current pin, shown only
+	driftGen   int           // numbers each pin stint's drift block
+	driftQueue []watch.Event // live events to judge once their batch is on the tape
+	skill      skillSeen     // whether an agent can learn plans, for the wait screen
 
 	// Attach (docs/ux.md §11): follow opens the plan the agent writes;
-	// picking one in the list, or p⏎ or d⏎ writing to it, latches (follow
-	// false), and another plan's write is then only offered on row 1.
+	// picking one in the list latches (follow false), and another plan's
+	// write is then only offered on row 1.
 	follow    bool
-	pending   string    // a write to open once PLAN's draft and overlays clear
+	pending   string    // a write to open once the plan list's draft or Name prompt clears
 	offer     string    // latched: the plan the agent wrote, ⏎ switches to it
 	wrote     string    // the last other plan file written in the batch being ingested
 	wroteOpen bool      // the batch wrote the open plan too
@@ -97,8 +80,7 @@ type logViewCache struct {
 
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
 	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
-		now: time.Now, statePath: plan.StatePath(), pinSeen: map[string]time.Time{}, pinMoved: map[string]time.Time{}, lastPin: map[string]string{}, follow: true}
-	a.started = a.now()
+		now: time.Now, statePath: plan.StatePath(), follow: true}
 	if plans.Current == "" {
 		a.land()
 	}
@@ -140,12 +122,9 @@ func (a *app) frameRows() Frame {
 
 func (a *app) composeOptions() ComposeOptions {
 	opt := ComposeOptions{
-		Placeholder: a.placeholder(),
-		Preview:     a.preview(),
 		Enabled:     a.enabled,
 		Columns:     a.columns,
 		Lines:       a.lines,
-		Draft:       a.draft,
 		Log:         a.log,
 		QuitPending: a.quitPending,
 		Status:      statusForTurn(a.turn, a.lastKind),
@@ -156,48 +135,28 @@ func (a *app) composeOptions() ComposeOptions {
 		Follow:      a.followWord(),
 		Line:        a.statusLine(),
 	}
-	textW := PaneTextWidth(a.columns)
+	if a.composing() {
+		opt.Composer = true
+		opt.Draft, opt.Placeholder, opt.Preview = a.draft, a.placeholder(), a.preview()
+	}
+	l := a.layout()
+	textW := l.textW
 	if textW > 0 {
 		opt.LogView = a.logView(textW)
 		if len(a.log) == 0 {
 			a.health.refresh(time.Now())
-			opt.LogView = a.health.lines(textW, a.hidden, time.Now(), true)
+			opt.LogView = a.health.lines(textW, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), true)
 		}
 	}
 	if a.pane == PanePlans && a.at != atLibrary && a.doc != nil {
-		l := layoutFor(a.columns, a.lines)
 		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
 		opt.PlanFooter = a.planFooter()
 	}
 	if a.pane == PanePlans && a.at == atWait {
-		l := layoutFor(a.columns, a.lines)
 		body := a.waitBody(l.textW)
 		a.outline.scroll = max(0, min(a.outline.scroll, len(body)-l.bodyH))
 		opt.PlanView, opt.PlanScroll = body, a.outline.scroll
 		opt.PlanFooter = a.waitFooter(len(body) > l.bodyH)
-	}
-	if a.overlay[a.pane] == overlayPin {
-		lines := pinConfirmLines(a.pinAsk[a.pane], textW)
-		scroll := min(a.overlayScroll[a.pane], max(0, len(lines)-layoutFor(a.columns, a.lines).bodyH))
-		opt.Overlay = &Overlay{Lines: lines, Scroll: scroll, Footer: []string{"pin", "p⏎ move pin", "esc cancel", "↑↓ scroll"}}
-	}
-	if a.overlay[a.pane] == overlaySendoff && a.briefs[a.pane] != nil {
-		opt.Overlay = &Overlay{Lines: a.briefLines(textW), Footer: []string{"sendoff", "esc close", "c⏎ copy", "o⏎ print plain"}, Scroll: a.overlayScroll[a.pane]}
-		if a.briefs[a.pane].planning {
-			opt.Overlay.Footer[0] = "brief"
-		}
-	}
-	if f := a.form[a.pane]; a.overlay[a.pane] == overlayDone && f != nil {
-		lines := a.doneLines(textW)
-		// Keep the focused field (and the line under it) on screen.
-		scroll := 0
-		for i, line := range lines {
-			if line.Selected {
-				scroll = max(0, min(i+3-layoutFor(a.columns, a.lines).bodyH, len(lines)-layoutFor(a.columns, a.lines).bodyH))
-			}
-		}
-		opt.Overlay = &Overlay{Lines: lines, Scroll: scroll, Footer: []string{"done", "⏎ save", "esc cancel", "↑↓ field"}}
-		opt.Prefix = " " + fieldLabels[f.focus] + " "
 	}
 	if a.overlay[a.pane] == overlayHelp {
 		other := "tab tape"
@@ -206,12 +165,29 @@ func (a *app) composeOptions() ComposeOptions {
 		}
 		body := a.helpBody(textW)
 		footer := []string{"help", "esc close", other}
-		if len(body) > PaneBodyHeight(a.lines) {
+		if len(body) > l.bodyH {
 			footer = []string{"help", "esc close", other, "↑↓ scroll"}
 		}
 		opt.Overlay = &Overlay{Lines: body, Footer: footer, Scroll: a.overlayScroll[a.pane]}
 	}
 	return opt
+}
+
+// composing reports that the plan list's composer is on screen and takes
+// typing: the only place with one (docs/ux.md §2). Everywhere else keys
+// act at once and printable keys do nothing.
+func (a *app) composing() bool {
+	return a.pane == PanePlans && a.at == atLibrary && a.overlay[PanePlans] == overlayNone
+}
+
+// layout is the current screen's layout: without the composer's rows
+// where there is none.
+func (a *app) layout() layout {
+	l := layoutFor(a.columns, a.lines)
+	if !a.composing() {
+		l = l.bare()
+	}
+	return l
 }
 
 // planView lays out the open plan's screen and picks its first visible
@@ -244,56 +220,18 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 // planFooter is the footer for the open plan's screens (docs/ux.md §4).
 func (a *app) planFooter() []string {
 	if a.at == atPlanDetail || a.at == atTaskDetail {
-		return []string{"detail", "esc outline", "↑↓ scroll", "tab tape"}
-	}
-	if pv := a.preview(); pv != "" {
-		return []string{"outline", pv}
-	}
-	if p := a.doc.plan; p != nil && p.ReadOnly != "" {
-		return []string{"outline", "read-only", "esc plans", "tab tape"}
-	}
-	if p := a.doc.plan; p == nil || len(p.Tasks) == 0 {
-		return []string{"outline", "b⏎ brief", "tab tape", "esc plans"}
+		return []string{"detail", "esc outline", "↑↓ scroll", "tab tape", "? help"}
 	}
 	enter := "⏎ detail"
 	if a.offerTakes() {
 		enter = "⏎ switch" // row 1's offer takes ⏎ (docs/ux.md §11)
 	}
-	return []string{"outline", "tab tape", "esc plans", enter, "?⏎ help"}
+	return []string{"outline", "tab tape", "esc plans", enter, "? help"}
 }
 
-// verbHints are the verbs worth typing on the open plan, as the outline's
-// placeholder.
-func (a *app) verbHints() string {
-	if a.doc != nil && a.doc.plan != nil && len(a.doc.plan.Tasks) == 0 {
-		return "b⏎ brief · ?⏎ help"
-	}
-	return "s⏎ sendoff · d⏎ done · p⏎ pin · ?⏎ help"
-}
-
-// placeholder is the dim hint in an empty composer: what you can type here.
+// placeholder is the dim hint in the plan list's empty composer: what you
+// can type there.
 func (a *app) placeholder() string {
-	if a.overlay[a.pane] == overlayPin {
-		return "p⏎ to move the pin"
-	}
-	if f := a.form[a.pane]; a.overlay[a.pane] == overlayDone && f != nil {
-		return f.hints[f.focus]
-	}
-	if a.overlay[a.pane] == overlaySendoff {
-		return "c⏎ copy · o⏎ print plain · esc close"
-	}
-	if a.overlay[a.pane] != overlayNone {
-		return "esc to close"
-	}
-	if a.pane == PaneChat {
-		return "note (not sent) · ?⏎ help"
-	}
-	if a.at == atWait {
-		return "?⏎ help"
-	}
-	if a.at != atLibrary {
-		return a.verbHints()
-	}
 	switch a.plans.Screen {
 	case ScreenBrowse:
 		return "type to filter"
@@ -305,44 +243,17 @@ func (a *app) placeholder() string {
 	return "find or create a plan"
 }
 
-// preview says what ⏎ will do with the current draft, for the footer.
+// preview says what ⏎ will do with a /word in the plan list, for the
+// footer; other text there is a find, filter or name.
 func (a *app) preview() string {
 	text := strings.TrimSpace(a.draft)
-	if text == "" {
+	if !forcedVerb(text) {
 		return ""
 	}
-	if a.pane == PanePlans && a.at == atLibrary && a.overlay[a.pane] == overlayNone && !forcedVerb(text) {
-		return ""
-	}
-	if verb, arg, ok := parseVerb(text); ok {
-		if verb == "sendoff" && arg == "" && a.overlay[a.pane] == overlayNone && a.doc != nil && a.doc.plan != nil && a.briefBlocked() == "" {
-			if pin := a.doc.plan.Graph().Pin(); pin != nil {
-				arg = pin.ID // which task the brief is for, before ⏎
-			}
-		}
-		if verb == "pin" && arg == "" && a.overlay[a.pane] == overlayNone {
-			if t := a.pinCandidate(); t != nil {
-				arg = t.ID
-				if target, err := a.doc.plan.Graph().PinTarget(t); err == nil {
-					arg = target.ID // a parent pins its first ready leaf: name that
-				}
-			}
-		}
-		if arg != "" {
-			return "⏎ " + verb + " " + arg
-		}
+	if verb, ok := parseVerb(text); ok {
 		return "⏎ " + verb
 	}
-	if forcedVerb(text) {
-		return "⏎ not a verb"
-	}
-	if a.pane == PaneChat {
-		return "⏎ note (local, not sent)"
-	}
-	if a.pane == PanePlans && a.at != atLibrary && a.overlay[a.pane] == overlayNone {
-		return "⏎ not a verb" // the outline and detail take verbs only
-	}
-	return ""
+	return "⏎ not a verb"
 }
 
 // statusLine picks row 1, the first of these that applies (docs/ux.md
@@ -361,7 +272,7 @@ func (a *app) statusLine() StatusLine {
 	if a.doc == nil {
 		return StatusLine{}
 	}
-	return pinStatus(a.doc.plan, a.doc.writable() == "")
+	return pinStatus(a.doc.plan)
 }
 
 // overOffer is what row 1 shows over a new plan: the plan file can't be
@@ -382,15 +293,9 @@ func (a *app) flash(text, kind string) {
 	a.toastUntil = a.now().Add(toastFor)
 }
 
-// noPlanText is row 1 when a verb needs a plan and none is open: the agent
-// writes one and Rex opens it (docs/ux.md §11), so it doesn't send you to
-// the plan list.
+// noPlanText heads the wait screen: the agent writes the plan and Rex
+// opens it (docs/ux.md §11).
 const noPlanText = "no plan yet · tell your agent to make one"
-
-func (a *app) noPlanYet() {
-	a.flash(noPlanText, "error")
-	a.toast.Short = "no plan yet"
-}
 
 const toastFor = 3 * time.Second
 
@@ -512,8 +417,9 @@ var feedKinds = map[string]bool{
 	"question": true, "result": true, "idle": true, "error": true,
 }
 
-// fromFeed drops feed lines that claim to be Rex's own blocks (a note,
-// the "before rex started" rule): those are made in this process only.
+// fromFeed drops feed lines that claim to be Rex's own blocks (the
+// "before rex started" rule, a plan or drift line): those are made in this
+// process only.
 func fromFeed(events []watch.Event) []watch.Event {
 	kept := events[:0:0]
 	for _, ev := range events {
@@ -533,7 +439,6 @@ func (a *app) own(events []watch.Event, live bool) []watch.Event {
 			a.hidden++
 			continue
 		}
-		a.remember(ev)
 		if live {
 			a.checkDrift(ev) // history from before Rex started never counts
 			a.sawWrite(ev)   // nor opens a plan; raw, since quiet results never reach the tape
@@ -591,28 +496,23 @@ func (a *app) handleKey(key string) bool {
 	return a.applyKey(key) || cleared
 }
 
+// helpKey reports that key is ? opening Help at once (docs/ux.md §2): on
+// every screen without a composer, and in the plan list while its
+// composer is empty. Inside Help it does nothing; after other text it is
+// text.
+func (a *app) helpKey(key string) bool {
+	return key == "?" && a.overlay[a.pane] == overlayNone && (!a.composing() || a.draft == "")
+}
+
 func (a *app) applyKey(key string) bool {
-	if a.plainShown {
-		// The brief is on the normal screen: ⏎ comes back; Ctrl+C comes
-		// back too, with quit armed where the footer can say so.
-		switch key {
-		case "\r", "\n":
-			a.plainShown, a.plainBack, a.quitPending = false, true, false
-			return true
-		case CtrlC:
-			a.plainShown, a.plainBack = false, true
-			a.quitPending, a.quitTicks = true, QuitWindowTicks
-			return true
-		}
-		return false
-	}
 	if l := layoutFor(a.columns, a.lines); !l.typing && key != CtrlC && key != "\x0c" {
 		_, paste := IsPaste(key)
-		edits := paste || isPrintableKey(key) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
-		submits := (key == "\r" || key == "\n") && a.draft != ""
+		// ? opening Help types nothing, so it still works on a short screen.
+		edits := paste || (isPrintableKey(key) && !a.helpKey(key)) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
+		submits := (key == "\r" || key == "\n") && a.draft != "" && a.composing()
 		if l.locked || edits || submits {
-			// The UI isn't visible (locked), or the draft isn't: nothing
-			// may act on it blind. A swallowed key still disarms quit.
+			// The UI isn't visible (locked), or the composer isn't: nothing
+			// may type or act on it blind. A swallowed key still disarms quit.
 			armed := a.quitPending
 			a.quitPending = false
 			return armed
@@ -628,18 +528,17 @@ func (a *app) applyKey(key string) bool {
 			a.quit = true
 			return false
 		}
-		// The first Ctrl+C clears the draft or closes the overlay, and arms quit.
-		// Closing an overlay drops what was typed in it too, so it can't
-		// land on the screen underneath (in the done form it was a field).
-		a.form[a.pane] = nil
+		// The first Ctrl+C closes Help, clears the plan list's draft when
+		// you are in PLAN, and arms quit.
 		a.overlay[a.pane] = overlayNone
-		a.draft = ""
+		if a.pane == PanePlans {
+			a.draft = ""
+		}
 		a.quitPending = true
 		a.quitTicks = QuitWindowTicks
 		return true
 	case "\t":
 		a.quitPending = false
-		a.draft, a.parked = a.parked, a.draft
 		if a.pane == PanePlans {
 			a.pane = PaneChat
 		} else {
@@ -658,34 +557,46 @@ func (a *app) applyKey(key string) bool {
 	return a.handleKeyArmed(key)
 }
 
-// handleKeyArmed applies a key once quit is not armed.
+// handleKeyArmed applies a key once quit is not armed. Only the plan list
+// has a composer; elsewhere a printable key or a paste does nothing, and
+// no hidden draft is built.
 func (a *app) handleKeyArmed(key string) bool {
-	if text, ok := IsPaste(key); ok {
+	if a.helpKey(key) {
+		a.openHelp()
+		return true
+	}
+	text, paste := IsPaste(key)
+	if !a.composing() {
+		if paste || isPrintableKey(key) {
+			return false
+		}
+	} else if paste {
 		// A paste is typed into the draft as one line; it never submits.
 		next := capDraft(a.draft + text)
 		changed := next != a.draft
 		a.draft = next
 		return changed
-	}
-	switch key {
-	case "\x15":
-		a.draft = ""
-		return true
-	case "\x17":
-		a.draft = deleteWord(a.draft)
-		return true
-	case "\x7f", "\x08":
-		next := backspace(a.draft)
-		changed := next != a.draft
-		a.draft = next
-		return changed
-	}
-	if isPrintableKey(key) {
-		if runeLen(a.draft) >= draftCap {
-			return false
+	} else {
+		switch key {
+		case "\x15":
+			a.draft = ""
+			return true
+		case "\x17":
+			a.draft = deleteWord(a.draft)
+			return true
+		case "\x7f", "\x08":
+			next := backspace(a.draft)
+			changed := next != a.draft
+			a.draft = next
+			return changed
 		}
-		a.draft += key
-		return true
+		if isPrintableKey(key) {
+			if runeLen(a.draft) >= draftCap {
+				return false
+			}
+			a.draft += key
+			return true
+		}
 	}
 	if a.overlay[a.pane] != overlayNone {
 		return a.overlayKey(key)
@@ -696,33 +607,26 @@ func (a *app) handleKeyArmed(key string) bool {
 	return a.tapeKey(key)
 }
 
-// submit runs the draft if it is a verb.
+func (a *app) openHelp() {
+	a.overlay[a.pane] = overlayHelp
+	a.overlayScroll[a.pane] = 0
+}
+
+// submit runs the plan list's draft if it is a /word: /help or
+// /breakdance (docs/ux.md §2).
 func (a *app) submit(text string) bool {
-	verb, arg, ok := parseVerb(text)
+	verb, ok := parseVerb(text)
 	if !ok {
 		return false
 	}
 	a.draft = ""
-	a.runVerb(verb, arg)
-	return true
-}
-
-func (a *app) runVerb(verb, arg string) {
 	switch verb {
-	case "pin":
-		a.pinVerb(arg)
-	case "done":
-		a.doneVerb()
-	case "sendoff":
-		a.sendoffVerb()
-	case "brief":
-		a.briefVerb()
 	case "help":
-		a.overlay[a.pane] = overlayHelp
-		a.overlayScroll[a.pane] = 0
+		a.openHelp()
 	case "breakdance":
 		a.play("breakdance")
 	}
+	return true
 }
 
 func (a *app) tapeKey(key string) bool {
@@ -748,27 +652,8 @@ func (a *app) tapeKey(key string) bool {
 	case "end":
 		a.scroll = 0
 		return true
-	case "esc":
-		if a.draft == "" {
-			return false
-		}
-		a.draft = ""
-		return true
 	case "\r", "\n":
-		text := strings.TrimSpace(a.draft)
-		if text == "" {
-			return a.takeOffer() // PLAN switches; you stay on the tape
-		}
-		if a.submit(text) {
-			return true
-		}
-		// Anything else is a local note: drawn muted on the tape, kept in
-		// memory only, never written to the feed or sent to the agent.
-		a.log = append(a.log, watch.NewEvent("rex", "note", text, nil))
-		a.logRev++
-		a.draft = ""
-		a.scroll = 0
-		return true
+		return a.takeOffer() // PLAN switches; you stay on the tape
 	}
 	return false
 }
@@ -781,7 +666,7 @@ func (a *app) planKey(key string) bool {
 		return a.docKey(key)
 	}
 	b := a.plans
-	bodyH := PaneBodyHeight(a.lines)
+	bodyH := a.layout().bodyH
 	dir := b.Dir
 	defer func() {
 		if b.Dir != dir {
@@ -832,7 +717,7 @@ func (a *app) planKey(key string) bool {
 		if forcedVerb(a.draft) {
 			// A /word is only ever a verb: it never names or opens anything.
 			if !a.submit(a.draft) {
-				b.Err = "'" + strings.TrimSpace(a.draft) + "' is not a verb · ?⏎ for help"
+				b.Err = "'" + strings.TrimSpace(a.draft) + "' is not a verb · try /help"
 			}
 			return true
 		}
@@ -866,10 +751,12 @@ func (a *app) planEnter() bool {
 	b := a.plans
 	switch b.Screen {
 	case ScreenCreate:
+		held := a.pending
 		if b.CommitCreate(a.draft) == PlanOpenChat {
 			a.draft = ""
 			a.openedPlan()
 			a.latch() // you made it: latched (docs/ux.md §11)
+			a.offerHeld(held)
 		}
 		return true
 	case ScreenFolder:
@@ -877,7 +764,7 @@ func (a *app) planEnter() bool {
 		a.draft = ""
 		return true
 	}
-	filter, was := b.Filter, b.Current
+	filter, was, held := b.Filter, b.Current, a.pending
 	switch b.Activate() {
 	case PlanStartCreate:
 		// From a Browse filter, what was typed becomes the name to edit.
@@ -897,6 +784,7 @@ func (a *app) planEnter() bool {
 		if !samePlan(b.Current, was) {
 			a.latch() // you picked it: latched (docs/ux.md §11); Continue picks nothing new
 		}
+		a.offerHeld(held)
 	}
 	return true
 }
@@ -911,36 +799,25 @@ func (a *app) openedPlan() {
 		a.doc = openDoc(path, now)
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
-		for place := range a.overlay {
-			if a.overlay[place] == overlayPin || a.overlay[place] == overlayDone || a.overlay[place] == overlaySendoff {
-				a.overlay[place] = overlayNone // it was about the old plan
-				a.form[place] = nil
-				if PaneKind(place) != a.pane {
-					a.parked = "" // what was typed in it can't land on the screen underneath
-				}
-			}
-		}
 	}
 	// Continue on the plan already open keeps its last good copy, its
-	// debounce and its selection. The Library's find text is done with;
-	// a Wait screen draft is a verb, as on the outline, so it carries over
-	// (docs/ux.md §11). The tape's draft is never PLAN's to clear.
-	if a.pane == PanePlans && a.at != atWait {
-		a.draft = ""
-	}
+	// debounce and its selection. The plan list's find text is done with
+	// (an attach never comes while it holds any, docs/ux.md §11).
+	a.draft = ""
 	a.at = atOutline
 	a.offer, a.pending = "", "" // any open settles which plan is shown
-	a.notePin()
+	a.syncDrift()
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
 		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
 	})
 }
 
-// docKey handles keys on the open plan's outline and detail screens.
+// docKey handles keys on the open plan's outline and detail screens. They
+// have no composer: every key acts at once (docs/ux.md §3).
 func (a *app) docKey(key string) bool {
 	v := &a.outline
 	p := a.doc.plan
-	step := max(1, layoutFor(a.columns, a.lines).bodyH-2)
+	step := max(1, a.layout().bodyH-2)
 	if a.at == atOutline {
 		switch key {
 		case "up", "down", "pageup", "pagedown":
@@ -957,9 +834,6 @@ func (a *app) docKey(key string) bool {
 			v.edge(p, key == "end")
 			return true
 		case "right":
-			if a.draft != "" {
-				return false
-			}
 			return a.openDetail()
 		}
 	} else {
@@ -986,13 +860,6 @@ func (a *app) docKey(key string) bool {
 	}
 	switch key {
 	case "esc", "left":
-		if a.draft != "" {
-			if key == "left" {
-				return false
-			}
-			a.draft = ""
-			return true
-		}
 		if a.at == atOutline {
 			return a.toLibrary()
 		}
@@ -1000,20 +867,13 @@ func (a *app) docKey(key string) bool {
 		a.outline.keepSel(a.doc.plan) // the task read in detail may be gone
 		return true
 	case "\r", "\n":
-		text := strings.TrimSpace(a.draft)
-		if text == "" {
-			if a.takeOffer() {
-				return true
-			}
-			if a.at == atOutline {
-				return a.openDetail()
-			}
-			return false
+		if a.takeOffer() {
+			return true
 		}
-		if !a.submit(text) {
-			a.flash("'"+text+"' is not a verb · ?⏎ help", "error")
+		if a.at == atOutline {
+			return a.openDetail()
 		}
-		return true
+		return false
 	}
 	return false
 }
@@ -1042,14 +902,20 @@ func (a *app) toLibrary() bool {
 	return true
 }
 
-// pollDoc re-reads the open plan. An outside edit keeps the selection,
-// shows a toast, and leaves one "plan" line on the tape.
+// pollDoc re-reads the open plan. An edit keeps the selection, shows a
+// toast, and leaves one "plan" line on the tape. The agent pins
+// and finishes tasks this way: when the file marks the pin done, the
+// toast says so and names what is next up (docs/ux.md §7, §8).
 func (a *app) pollDoc() bool {
 	if a.doc == nil {
 		return false
 	}
 	hadTasks := a.doc.plan != nil && len(a.doc.plan.Tasks) > 0
-	changed, summary := a.doc.poll(a.now())
+	var was *plan.Task
+	if a.doc.plan != nil {
+		was = a.doc.plan.Graph().Pin()
+	}
+	changed, news := a.doc.poll(a.now())
 	if !changed {
 		return false
 	}
@@ -1060,214 +926,101 @@ func (a *app) pollDoc() bool {
 		// An agent just filled an empty plan: land on its pin, as an open does.
 		a.outline.sel = defaultSel(p)
 	}
-	a.notePin()
 	a.rejudgeDrift()
-	a.refreshBriefs()
-	if summary != "" {
-		a.flash("plan updated · "+summary, "accent")
-		a.tapeLine("plan", summary)
+	if news.text == "" {
+		return true
 	}
+	a.tapeLine("plan", news.text)
+	if done := doneToast(was, a.doc.plan); done.Text != "" {
+		a.toast, a.toastUntil = done, a.now().Add(toastFor)
+		return true
+	}
+	if !news.tasks && strings.HasPrefix(a.toast.Text, "✓ ") && a.now().Before(a.toastUntil) {
+		// The agent finishes a task in several saves (its retrospective,
+		// the plan's own status): the done news stays (docs/ux.md §8).
+		return true
+	}
+	a.flash("plan updated · "+news.text, "accent")
 	return true
 }
 
-// overlayKey handles keys while an overlay covers the current place.
-func (a *app) overlayKey(key string) bool {
-	if a.overlay[a.pane] == overlayDone {
-		return a.doneKey(key)
+// reloadDoc re-reads the open plan now, without waiting for the next poll.
+func (a *app) reloadDoc() bool {
+	if a.doc == nil {
+		return false
 	}
+	a.doc.polled = time.Time{}
+	return a.pollDoc()
+}
+
+// doneToast is row 1's news when the file marks the old pin done: what is
+// next up (or now, when the same save started it), or that the plan is
+// done; zero when the pin wasn't finished.
+// The plan is done when every leaf is, as the pin line judges it: an
+// agent may save the leaf and the plan's own status in two writes.
+func doneToast(was *plan.Task, p *plan.Plan) StatusLine {
+	if was == nil || was.ID == "" || p == nil {
+		return StatusLine{}
+	}
+	g := p.Graph()
+	if t := g.Task(was.ID); t == nil || t.Status != plan.Done {
+		return StatusLine{}
+	}
+	tail, short := " · nothing else is unblocked", " · nothing unblocked"
+	if next := g.Pin(); next != nil && next.Status == plan.Active {
+		tail, short = " · now "+next.ID, " · now "+next.ID // the same save started it
+	} else if next != nil {
+		tail, short = " · next up "+next.ID, " · next "+next.ID
+	} else if done, total := g.Progress(); done == total {
+		tail, short = " · the plan is done", " · plan done"
+	}
+	id := was.ID
+	return StatusLine{Text: "✓ " + id + " done" + tail, Kind: "accent", Fit: func(w int) string { return fitDone(id, tail, short, w) }}
+}
+
+// fitDone fits the done toast to width cells. What is next matters more
+// than what just finished, so the done id clips from the left first
+// ("✓ …ghlight done · next up load-outline"), down to headPathMin cells,
+// then the tail shortens.
+func fitDone(id, tail, short string, width int) string {
+	for _, t := range []string{tail, short} {
+		room := width - cellLen("✓  done"+t)
+		if cellLen(id) <= room {
+			return "✓ " + id + " done" + t
+		}
+		if room >= headPathMin {
+			return "✓ …" + tailCells(id, room-1) + " done" + t
+		}
+	}
+	return "✓ done" + short
+}
+
+// overlayKey handles keys while Help covers the current place: Esc closes
+// it, the arrows and pages scroll it, and nothing else does anything.
+func (a *app) overlayKey(key string) bool {
 	switch key {
 	case "esc":
-		if a.draft != "" {
-			a.draft = ""
-			return true
-		}
 		a.overlay[a.pane] = overlayNone
 		return true
 	case "up", "down", "pageup", "pagedown":
-		page := PaneBodyHeight(a.lines)
+		page := a.layout().bodyH
 		// A page keeps two rows of overlap: the ↑/↓ more markers cover them.
 		step := max(1, page-2)
 		delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
-		limit := max(0, len(a.overlayBody(PaneTextWidth(a.columns)))-page)
+		limit := max(0, len(a.helpBody(a.layout().textW))-page)
 		next := max(0, min(limit, a.overlayScroll[a.pane]+delta))
 		changed := next != a.overlayScroll[a.pane]
 		a.overlayScroll[a.pane] = next
 		return changed
-	case "\r", "\n":
-		if a.overlay[a.pane] == overlayPin {
-			return a.confirmPin()
-		}
-		if a.overlay[a.pane] == overlaySendoff {
-			return a.briefKey()
-		}
-		// Only the overlay's own inputs work in it; Help has none, so a
-		// typed word is dropped, never run underneath.
-		if strings.TrimSpace(a.draft) != "" {
-			a.draft = ""
-			return true
-		}
 	}
 	return false
-}
-
-// overlayBody is the open overlay's lines at width.
-func (a *app) overlayBody(width int) []LogLine {
-	switch a.overlay[a.pane] {
-	case overlaySendoff:
-		return a.briefLines(width)
-	case overlayPin:
-		return pinConfirmLines(a.pinAsk[a.pane], width)
-	}
-	return a.helpBody(width)
 }
 
 // helpBody is the Help overlay's lines at width.
 func (a *app) helpBody(width int) []LogLine {
 	help := append(helpLines(width), LogLine{Kind: "gap"})
 	a.health.refresh(time.Now())
-	return append(help, a.health.lines(width, a.hidden, time.Now(), false)...)
-}
-
-// pinCandidate is the task a bare p⏎ would pin here: the selected task on
-// the outline or its detail, else the next-up task.
-func (a *app) pinCandidate() *plan.Task {
-	if a.doc == nil || a.doc.plan == nil {
-		return nil
-	}
-	p := a.doc.plan
-	if a.pane == PanePlans && (a.at == atOutline || a.at == atTaskDetail) && a.outline.sel != "" {
-		if t := findTask(p, a.outline.sel); t != nil {
-			return t
-		}
-	}
-	return p.Graph().Pin()
-}
-
-// pinVerb is p⏎ / pin <id>⏎ (docs/ux.md §7). A pin that is blocked,
-// waits on unfinished work, or moves the pin off another task asks first.
-func (a *app) pinVerb(arg string) {
-	if a.doc == nil {
-		a.noPlanYet()
-		return
-	}
-	if why := a.doc.writable(); why != "" {
-		a.flash("can't pin: "+why, "error")
-		return
-	}
-	g := a.doc.plan.Graph()
-	var t *plan.Task
-	if arg != "" {
-		if t = g.Task(arg); t == nil {
-			for i := range a.doc.plan.Tasks {
-				if strings.EqualFold(a.doc.plan.Tasks[i].ID, arg) {
-					t = &a.doc.plan.Tasks[i]
-					break
-				}
-			}
-		}
-		if t == nil {
-			a.flash("no task "+arg+" in this plan", "error")
-			return
-		}
-	} else if t = a.pinCandidate(); t == nil {
-		why := strings.TrimPrefix(pinStatus(a.doc.plan, true).Text, "no pin · ")
-		if why == "" {
-			why = "no tasks yet"
-		}
-		a.flash("nothing to pin · "+why, "muted")
-		return
-	}
-	target, err := g.PinTarget(t)
-	if err != nil {
-		a.flash("can't pin: "+err.Error(), "error")
-		return
-	}
-	warnings := g.PinWarnings(target)
-	if target.Status == plan.Active && len(warnings) == 0 {
-		a.flash("▸ "+target.ID+" is already pinned", "muted")
-		return
-	}
-	moving := g.Moving(target)
-	if len(warnings) > 0 {
-		a.pinAsk[a.pane] = pinAsk{path: a.doc.path, id: target.ID, title: target.Title, seen: target.Status, moving: moving, warnings: warnings}
-		a.overlay[a.pane] = overlayPin
-		a.overlayScroll[a.pane] = 0
-		return
-	}
-	a.writePin(target.ID, target.Status, moving)
-}
-
-// confirmPin is ⏎ in Pin confirm: p⏎ writes, a bare ⏎ does nothing, and
-// any other submitted text cancels.
-func (a *app) confirmPin() bool {
-	text := strings.TrimSpace(a.draft)
-	if text == "" {
-		return false
-	}
-	ask := a.pinAsk[a.pane]
-	a.overlay[a.pane] = overlayNone
-	a.draft = ""
-	if verb, arg, ok := parseVerb(text); ok && verb == "pin" && (arg == "" || strings.EqualFold(arg, ask.id)) {
-		if a.doc == nil || a.doc.path != ask.path {
-			// It was asked about a plan that isn't open any more.
-			a.flash("that pin was for another plan · nothing written", "error")
-			return true
-		}
-		a.writePin(ask.id, ask.seen, ask.moving)
-		return true
-	}
-	a.flash("pin cancelled · nothing written", "muted")
-	return true
-}
-
-// writePin writes the pin to the plan file and remembers when it started.
-func (a *app) writePin(id string, seen plan.Status, moving []string) {
-	saved, err := plan.Edit(a.doc.path, plan.PinOp(id, seen, moving))
-	if err != nil {
-		a.flash("can't pin: "+err.Error(), "error")
-		return
-	}
-	a.doc.took(saved)
-	a.latch() // you acted on this plan: it stays (docs/ux.md §11)
-	now := a.now()
-	key := plan.PinKey(a.doc.path, id)
-	a.pinSeen[key], a.pinMoved[key], a.lastPin[a.doc.path] = now, now, key
-	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) { s.Pins[key] = float64(now.Unix()) })
-	word := "pinned"
-	if seen == plan.Done {
-		word = "reopened and pinned"
-	}
-	a.flash("▸ "+id+" "+word, "accent")
-	a.tapeLine("plan", word+" "+id)
-	if a.pane == PanePlans && (a.at == atOutline || a.at == atTaskDetail) {
-		a.outline.sel = id // a pin from the tape leaves PLAN where it was
-	}
-}
-
-// notePin remembers when this session first saw the current pin, for
-// completion evidence when Rex didn't see the pin start.
-func (a *app) notePin() {
-	if a.doc == nil || a.doc.plan == nil {
-		return
-	}
-	key := "\x00none"
-	if pin := a.doc.plan.Graph().Pin(); pin != nil {
-		key = plan.PinKey(a.doc.path, pin.ID)
-		if _, ok := a.pinSeen[key]; !ok {
-			a.pinSeen[key] = a.now()
-		}
-	}
-	a.syncDrift()
-	// Per plan file: opening another plan, or coming back to this one,
-	// is not the pin moving.
-	if last, looked := a.lastPin[a.doc.path]; key != last {
-		if looked {
-			// The pin moved here while Rex watched: evidence starts now, so
-			// another task's trailer and files can't land on this one.
-			a.pinMoved[key] = a.now()
-		}
-		a.lastPin[a.doc.path] = key
-	}
+	return append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), false)...)
 }
 
 // tapeLine adds one local line to the tape. It is never written to the
@@ -1331,9 +1084,6 @@ func (a *app) tick() bool {
 	if a.scanPlans() {
 		changed = true
 	}
-	if a.pollCopies() {
-		changed = true
-	}
 	if a.toast.Text != "" && !a.now().Before(a.toastUntil) {
 		a.toast = StatusLine{}
 		changed = true
@@ -1365,9 +1115,7 @@ func (a *app) tick() bool {
 // a held attach, picks up a resize, and keeps the tape scroll in range.
 func (a *app) settle(columns, lines int) bool {
 	changed := false
-	// An open overlay owns the composer: nothing typed in it filters the
-	// list underneath.
-	if a.pane == PanePlans && a.overlay[PanePlans] == overlayNone && a.syncPlanInput() {
+	if a.composing() && a.syncPlanInput() {
 		changed = true
 	}
 	if a.applyPending() {

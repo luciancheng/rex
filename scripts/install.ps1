@@ -96,15 +96,21 @@ $opencode = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode
 if (Test-Path -PathType Container $claude) { $hints += "rex ingest --install claude        # Claude Code (add --project for one repo)" }
 if (Test-Path -PathType Container $codex) { $hints += "rex ingest --install codex         # Codex, then trust the hooks in /hooks" }
 if (Test-Path -PathType Container $opencode) { $hints += "rex ingest --install opencode      # OpenCode" }
-# The skill lives in ~/.claude/skills: offered only where that folder is.
-$skillFor = if ($env:CLAUDE_CONFIG_DIR) { 'Claude Code (it goes in $env:CLAUDE_CONFIG_DIR)' } else { "Claude Code, Cursor and OpenCode" }
-if (Test-Path -PathType Container $claude) { $hints += "rex ingest --install-skill         # teach $skillFor the plan format" }
 if ($hints.Count -gt 0) {
     Write-Host ""
     Write-Host "Other agents (opt-in):"
     foreach ($h in $hints) { Write-Host "  $h" }
 }
+# The skill goes in ~/.claude/skills and ~/.agents/skills, which every
+# agent reads: offered once any agent is here, under its own heading,
+# since it is no agent of its own.
+$anyAgent = (Test-Path -PathType Container (Join-Path $HOME ".cursor")) -or (Test-Path -PathType Container $claude) -or (Test-Path -PathType Container $codex) -or (Test-Path -PathType Container $opencode)
+if ($anyAgent) {
+    Write-Host ""
+    Write-Host "Teach your agents Rex plans (opt-in):"
+    Write-Host "  rex ingest --install-skill         # the plan format and how to work a plan"
+}
 
 Write-Host ""
-Write-Host "REX is installed. Open a new terminal, then, in the repo you want to send off:"
+Write-Host "REX is installed. Open a new terminal, then, in the repo you work in:"
 Write-Host "  cd <your-repo>; rex start"

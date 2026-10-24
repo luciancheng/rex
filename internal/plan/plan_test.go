@@ -292,6 +292,32 @@ func TestFormatDocMatchesCode(t *testing.T) {
 	if len(p.Problems) != 0 || len(p.Tasks) == 0 {
 		t.Fatalf("example:\n%s", problems(p))
 	}
+	// It shows a parent and a depends_on, and follows its own rules: nobody
+	// writes a parent's status or completion fields.
+	var raw struct {
+		Tasks []map[string]json.RawMessage `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(blocks[0]), &raw); err != nil {
+		t.Fatal(err)
+	}
+	g, parents, deps := p.Graph(), 0, 0
+	for i, tk := range raw.Tasks {
+		if len(p.Tasks[i].DependsOn) > 0 {
+			deps++
+		}
+		if g.Leaf(&p.Tasks[i]) {
+			continue
+		}
+		parents++
+		for _, field := range []string{"status", "accomplished", "modified", "verified_how", "completed_notes"} {
+			if _, ok := tk[field]; ok {
+				t.Errorf("the example writes parent %s's %s", p.Tasks[i].ID, field)
+			}
+		}
+	}
+	if parents == 0 || deps == 0 {
+		t.Fatalf("the example shows a parent (%d) and a depends_on (%d)", parents, deps)
+	}
 	if stub := blocks[len(blocks)-1]; stub != string(Stub("auth-flow")) {
 		t.Fatalf("doc stub\n%s\ncode stub\n%s", stub, Stub("auth-flow"))
 	}

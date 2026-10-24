@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -177,17 +178,26 @@ func TestCUJWholeLoop(t *testing.T) {
 	k.press("esc")
 	k.n = 0
 
-	// F. Tab to the tape and back.
+	// F. Tab to AGENT and back.
 	k.press("\t")
-	k.spent(t, 1, "watch the tape")
-	tape := viewText(BuildLogView(a.log, 78))
-	for _, want := range []string{"── thinking", "── run", "── reply", "Done: one block now.", "card-highlight → active", "card-highlight → done", "── drift · card-highlight"} {
-		if !strings.Contains(tape, want) {
-			t.Errorf("F. tape missing %q\n%s", want, tape)
+	k.spent(t, 1, "watch the agent")
+	// AGENT names each block by its first characters (docs/ux.md §10).
+	tape := viewText(BuildLogView(a.log, 78, a.viewOpt()))
+	for _, want := range []string{
+		"thinking  The card rows are painted separately.",
+		"$ Edit internal/tui/plans.go",
+		"reply ───",
+		"  Done: one block now.",
+		"rex › plan · card-highlight → active",
+		"rex › plan · card-highlight → done",
+		"rex › drift · card-highlight\n  hard README.md · outside card-highlight files",
+	} {
+		if !strings.Contains(tape, want) || !strings.Contains(a.frame(), strings.SplitN(want, "\n", 2)[0]) {
+			t.Errorf("F. AGENT missing %q\n%s", want, a.frame())
 		}
 	}
-	if strings.Contains(tape, "wrote ") || strings.Contains(tape, "── done") || strings.Contains(tape, "── note") {
-		t.Errorf("F. no wrote/done spam, no notes\n%s", tape)
+	if strings.Contains(tape, "wrote ") || strings.Contains(tape, "── ") || strings.Contains(tape, "note") {
+		t.Errorf("F. no wrote/done spam, no notes, and no rule but the reply's\n%s", tape)
 	}
 	logged := len(a.log)
 	k.press("p", "d", "s", "b", "x", "\r")
@@ -332,6 +342,50 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "a reply with 中文 and ⚠️ in it \x1b[2J"}})
 		}, func(a *app) bool { return a.pane == PaneChat && a.overlay[a.pane] == overlayNone }},
 		{"agent, empty", true, func(a *app) { press(a, "\t") }, func(a *app) bool { return a.pane == PaneChat && len(a.log) == 0 }},
+		// A first run: every harness found, none wired, the skill missing,
+		// so the feed's health is taller than most bodies (docs/ux.md §10).
+		{"agent, empty, first run", true, func(a *app) {
+			a.health, a.hidden = notWired(), 4
+			press(a, "\t")
+		}, func(a *app) bool { return a.pane == PaneChat && len(a.log) == 0 && len(a.health.statuses) == 4 }},
+		{"agent, thinking live", false, func(a *app) {
+			press(a, "\t")
+			a.ingest(agentTurn(a)[:7])
+		}, func(a *app) bool { return a.pane == PaneChat && a.viewOpt().live && a.lastKind == "thought" }},
+		{"agent, a whole turn", false, func(a *app) {
+			press(a, "\t")
+			a.ingest(agentTurn(a))
+		}, func(a *app) bool { return a.pane == PaneChat && a.turn == TurnIdle && len(a.drift.items) > 0 }},
+		{"agent, asks", false, func(a *app) {
+			press(a, "\t")
+			a.ingest(agentTurn(a)[:len(agentTurn(a))-1])
+		}, func(a *app) bool { return a.pane == PaneChat && a.lastKind == "question" }},
+		{"agent, scrolled", false, func(a *app) {
+			press(a, "\t")
+			var earlier []watch.Event
+			for i := 0; i < 20; i++ {
+				earlier = append(earlier, watch.NewEvent("claude", "text", fmt.Sprintf("reply %d", i), nil))
+			}
+			a.ingest(append(earlier, agentTurn(a)...))
+			press(a, "up", "up", "up")
+		}, func(a *app) bool { return a.pane == PaneChat && a.scroll > 0 }},
+		{"agent, warm start", false, func(a *app) {
+			// Short enough that the rule is on screen at every size, so
+			// the frame checks cover it.
+			evs := agentTurn(a)
+			a.warmStart([]watch.Event{evs[5], evs[6], evs[13], evs[14]}, time.Now())
+			press(a, "\t")
+		}, func(a *app) bool {
+			if a.pane != PaneChat || len(a.log) == 0 || a.log[0].Kind != "before" {
+				return false
+			}
+			for _, r := range a.frameRows().Rows {
+				if strings.Contains(textOf(r, a.columns), "── before rex started") {
+					return true
+				}
+			}
+			return false
+		}},
 		{"empty outline", false, func(a *app) { list(a); typeText(a, "scratch"); press(a, "\r") }, func(a *app) bool {
 			return at(atOutline)(a) && len(a.doc.plan.Tasks) == 0
 		}},
@@ -339,6 +393,32 @@ func matrixScreens(t *testing.T) []matrixScreen {
 		{"help over the list", false, func(a *app) { list(a); press(a, "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atLibrary }},
 		{"help over a task", false, func(a *app) { press(a, "\r", "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atTaskDetail }},
 	}
+}
+
+// agentTurn is a realistic turn on the CUJ plan (docs/ux.md §10): a
+// prompt, a run of thoughts, more commands than a run shows, a failed step,
+// an edit off the pin, the turn's error, an ask and a reply.
+func agentTurn(a *app) []watch.Event {
+	repo := a.plans.Repo
+	evs := []watch.Event{{Source: "claude", Kind: "user", Text: "make the selected card one block, with the bar and the fill on all three rows of it"}}
+	for _, s := range []string{"Looking at the plans view first.", "The border is drawn apart from the fill.", "So two painters.", "One painter, then.", "Check live.go too.", "The bar is drawn per row, so the fill has to start at column 0 to cover the gutter and the border cell."} {
+		evs = append(evs, watch.Event{Source: "claude", Kind: "thought", Text: s})
+	}
+	for _, s := range []string{"Edit internal/tui/plans.go", "Edit internal/tui/live.go", "go vet ./...", "Edit internal/tui/plans_test.go", "Edit internal/tui/outline.go", "gofmt -l .", "go test ./internal/tui -run PlanCardSelection"} {
+		evs = append(evs, watch.Event{Source: "claude", Kind: "command", Text: s, Meta: map[string]any{"tool": "Bash", "command": s}})
+	}
+	evs = append(evs,
+		watch.Event{Source: "claude", Kind: "error", Text: "Bash failed · go test ./internal/tui -run PlanCardSelection: exit status 1", Meta: map[string]any{"tool": "Bash", "command": "go test ./internal/tui -run PlanCardSelection"}},
+		watch.Event{Source: "claude", Kind: "result", Text: "wrote README.md", Meta: map[string]any{"tool": "Write", "path": filepath.Join(repo, "README.md"), "ok": true}},
+		watch.Event{Source: "claude", Kind: "error", Text: "turn failed: the model hit its context limit; the turn ended"},
+		watch.Event{Source: "claude", Kind: "question", Text: "Allow Bash(go test ./...)? It runs every package."},
+		watch.Event{Source: "claude", Kind: "text", Text: "## Done\n\nThe selected card is one block now.\n\n- plans.go draws the card through one painter\n- live.go starts the fill at column 0\n\n```go\nfill(0)\n```"},
+	)
+	now := time.Now()
+	for i := range evs {
+		evs[i].TS = float64(now.Add(time.Duration(i-len(evs))*time.Second).UnixNano()) / 1e9
+	}
+	return evs
 }
 
 // matrixApp is a fresh app on screen s at cols×lines.

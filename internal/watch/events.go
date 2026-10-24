@@ -60,20 +60,6 @@ func EventFromJSON(line string) (Event, error) {
 	}, nil
 }
 
-func (e Event) DisplayText() string {
-	if e.Kind == "thought" || e.Kind == "text" || e.Kind == "user" {
-		return e.Text
-	}
-	text := strings.Join(strings.Fields(e.Text), " ")
-	if e.Kind == "command" {
-		return "$ " + text
-	}
-	if e.Kind == "question" {
-		return "? " + text
-	}
-	return text
-}
-
 func or(v any, fallback string) any {
 	if v == nil {
 		return fallback

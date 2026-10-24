@@ -107,6 +107,35 @@ func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, w
 	return lines
 }
 
+// feedLead heads the empty AGENT tab, above FEED (docs/ux.md §10).
+const feedLead = "Rex shows your agent's work here as its hooks report it."
+
+// emptyAgent is AGENT before any event: from agentTitleRows rows the lead
+// (a blank row under it from 16, as above any H2), then the feed's health,
+// whose header says it waits where there is no page title to. The lead
+// comes only whole and only with the whole block under it: the blank row
+// goes first, then the lead, so the page never starts mid-sentence.
+func (a *app) emptyAgent(width int) []LogLine {
+	now := time.Now()
+	a.health.refresh(now)
+	health := a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), now, a.lines < agentTitleRows)
+	if a.lines < agentTitleRows {
+		return health
+	}
+	var lines []LogLine
+	for _, w := range wrap(feedLead, max(8, width-2)) {
+		lines = append(lines, LogLine{Kind: "text", Text: "  " + w})
+	}
+	room := PaneBodyHeight(a.lines) - len(health)
+	switch {
+	case a.lines >= 16 && room > len(lines):
+		lines = append(lines, LogLine{Kind: "gap"})
+	case room < len(lines):
+		lines = nil
+	}
+	return append(lines, health...)
+}
+
 func ago(d time.Duration) string {
 	switch {
 	case d < time.Minute:

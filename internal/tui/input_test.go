@@ -156,10 +156,29 @@ func TestHelpOverlay(t *testing.T) {
 		if m := regexp.MustCompile(`(?m)^  [a-z]( |$)`).FindString(body); m != "" {
 			t.Fatalf("help at %d has a one-letter key %q\n%s", width, m, body)
 		}
-		for _, want := range []string{"THIS PAGE", "MARKS", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
+		for _, want := range []string{"THIS PAGE", "MARKS", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("help at %d lacks %q\n%s", width, want, body)
 			}
+		}
+		// The fold is display only, and Help over AGENT says so (docs/ux.md
+		// §10, §13): as a note under the keys, with nothing in the key column
+		// that reads as a key to press.
+		if flat := strings.Join(strings.Fields(body), " "); !strings.Contains(flat, "folding is display only: the feed keeps every thought") {
+			t.Fatalf("help at %d doesn't say the feed keeps every thought\n%s", width, body)
+		}
+		for _, line := range a.helpBody(width) {
+			if strings.Contains(line.Text, "folding is display only") && (!strings.HasPrefix(line.Text, "  folding") || len(line.Spans) > 0) {
+				t.Fatalf("help at %d: the fold note is a key row: %+v", width, line)
+			}
+			if strings.Contains(line.Text, "×N") && !strings.Contains(line.Text, "(×N)") {
+				t.Fatalf("help at %d: ×N is in the key column: %q", width, line.Text)
+			}
+		}
+		// From 34 cells AGENT TAB's first key sits in the key column like
+		// its siblings, not over its own row.
+		if width >= 34 && !strings.Contains(body, "  thinking   a run of N thoughts (×N)") {
+			t.Fatalf("help at %d: thinking stacks\n%s", width, body)
 		}
 		for _, line := range a.helpBody(width) {
 			if cellLen(line.Text) > width {

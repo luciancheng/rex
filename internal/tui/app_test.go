@@ -116,13 +116,13 @@ func TestAppScrollClampsToTheLog(t *testing.T) {
 	press(a, "\t")
 	var events []watch.Event
 	for i := 0; i < 60; i++ {
-		events = append(events, watch.NewEvent("cursor", "command", fmt.Sprintf("ls %d", i), map[string]any{"tool": "shell"}))
+		events = append(events, watch.NewEvent("cursor", "text", fmt.Sprintf("reply %d", i), nil))
 	}
 	a.ingest(events)
 	for i := 0; i < 500; i++ {
 		press(a, "up")
 	}
-	total := len(BuildLogView(a.log, PaneTextWidth(a.columns)))
+	total := len(BuildLogView(a.log, PaneTextWidth(a.columns), a.viewOpt()))
 	if want := ClampScroll(total, PaneBodyHeight(a.lines), total); a.scroll != want || want == 0 {
 		t.Fatalf("scroll=%d want=%d", a.scroll, want)
 	}
@@ -247,7 +247,7 @@ func TestAppScrolledViewStaysPut(t *testing.T) {
 		t.Fatalf("scroll %d", a.scroll)
 	}
 	top := func() string {
-		view := BuildLogView(a.log, PaneTextWidth(a.columns))
+		view := BuildLogView(a.log, PaneTextWidth(a.columns), a.viewOpt())
 		end := len(view) - a.scroll
 		return view[max(0, end-PaneBodyHeight(a.lines))].Text
 	}

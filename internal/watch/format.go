@@ -60,7 +60,7 @@ func IsDuplicate(event Event, recent []Event, window float64) bool {
 	}
 	for i := len(recent) - 1; i >= 0; i-- {
 		prev := recent[i]
-		if prev.Kind != event.Kind || !sameOrigin(prev, event) {
+		if prev.Kind != event.Kind || !sameOrigin(prev, event) || !sameCall(prev, event) {
 			continue
 		}
 		if NormalizeText(prev.Text) != key {
@@ -187,4 +187,13 @@ func sameOrigin(a, b Event) bool {
 	ca, _ := a.Meta["cwd"].(string)
 	cb, _ := b.Meta["cwd"].(string)
 	return ca == "" || cb == "" || ca == cb
+}
+
+// sameCall is false when both events name their tool call and the calls
+// differ: two writes of one file are two events. Cursor's afterFileEdit
+// names none, so it still matches the postToolUse it repeats.
+func sameCall(a, b Event) bool {
+	ia, _ := a.Meta["tool_use_id"].(string)
+	ib, _ := b.Meta["tool_use_id"].(string)
+	return ia == "" || ib == "" || ia == ib
 }

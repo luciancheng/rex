@@ -59,9 +59,11 @@ func (a *app) applyDrift() bool {
 }
 
 // judge is the drift of one event: one note per file a completed edit
-// touched (an apply_patch can touch several), or one for a prompt.
+// touched (an apply_patch can touch several), or one for a prompt. While
+// a latched plan offers another, nothing is judged: the agent wrote that
+// plan, so its work belongs to it, not to the latched pin (docs/ux.md §9a).
 func (a *app) judge(ev watch.Event) []driftNote {
-	if a.doc == nil || a.doc.plan == nil {
+	if a.doc == nil || a.doc.plan == nil || (!a.follow && a.offer != "") {
 		return nil
 	}
 	p := a.doc.plan

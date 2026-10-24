@@ -425,7 +425,8 @@ Drift means the session is wandering off the pin. Rex only shows it. It never se
   - reads;
   - edits under `rex/plans/**`;
   - events from other repos;
-  - everything, when there is no pin or the plan is empty.
+  - everything, when there is no pin or the plan is empty;
+  - everything, while a latched plan offers another (§11): the agent wrote that plan, so its edits and the prompts it gets are that plan's work, not drift from the latched pin.
 
 | Level | Meaning | Examples |
 |---|---|---|
@@ -495,7 +496,7 @@ Either plan lands on its outline and is **following**. The Library's notice, whi
 
 **Following and latched.** The header says which (§4).
 - *Following* (unlatched): Rex opens the plan file the agent writes. Every start is following.
-- *Latched*: you picked another plan in the Library (a recent, a match, a Browse row, Open latest, or one you created there), or you acted on the open plan: a pin you wrote (`p⏎`, §7) or a completion you saved (`d⏎`, §8). ⏎ on Continue, or on any row that names the open plan, picks nothing new and keeps a followed plan followed. Rex keeps showing a latched plan; the agent's write of another plan only puts `new plan <name> · ⏎ switch` on row 1, and ⏎ on an empty draft on the outline, a detail screen or the tape switches to it and follows again. ⏎ takes it only while row 1 shows it (the plan file's error, a toast or hard drift cover it, §4). Taking it opens a plan, so it also waits for what holds an attach (below): while PLAN's draft has text, or a Completion, Send-off or Pin confirm is open in either place, ⏎ keeps its usual meaning and row 1 doesn't offer it. Opening a plan clears the offer. A write held for you when you latch becomes the offer.
+- *Latched*: you picked another plan in the Library (a recent, a match, a Browse row, Open latest, or one you created there), or you acted on the open plan: a pin you wrote (`p⏎`, §7) or a completion you saved (`d⏎`, §8). ⏎ on Continue, or on any row that names the open plan, picks nothing new and keeps a followed plan followed. Rex keeps showing a latched plan; the agent's write of another plan only puts `new plan <name> · ⏎ switch` on row 1, and ⏎ on an empty draft on the outline, a detail screen or the tape switches to it and follows again. ⏎ takes it only while row 1 shows it (the plan file's error, a toast or hard drift cover it, §4). Only drift from before the offer can cover it: while it stands, nothing is judged against the latched pin (§9a). Taking it opens a plan, so it also waits for what holds an attach (below): while PLAN's draft has text, or a Completion, Send-off or Pin confirm is open in either place, ⏎ keeps its usual meaning and row 1 doesn't offer it. Opening a plan clears the offer. A write held for you when you latch becomes the offer.
 
 **Attach.** Rex follows a hook event, never a guess. In a batch of events, after they are judged for drift, the last one that passes all of these is opened:
 - a completed file edit (a Write, Edit or afterFileEdit result, a Codex or OpenCode `apply_patch`), not a denied or failed write, never a read or a shell command;

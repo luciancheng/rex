@@ -719,16 +719,20 @@ func TestVerbsWithNoPlanPointAtTheAgent(t *testing.T) {
 // new-plan offer on row 1, soft drift sits under it, and ⏎ switches only
 // while row 1 shows the offer; under anything else it does what it did.
 func TestRowOneOutranksTheOffer(t *testing.T) {
-	offered := func(t *testing.T) (*app, *clock, string, string) {
+	// Any drift comes in the batch that brings the offer, which is judged
+	// before the offer is up (§11); after it, the agent's edits are the
+	// offered plan's and are not judged (§9a).
+	offered := func(t *testing.T, drift ...string) (*app, *clock, string, string) {
 		a, c, path := openDemo(t, demoPlan, 120, 32)
 		next := writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan)
-		a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
+		batch := []watch.Event{wrote(a.plans.Repo, next)}
+		for _, rel := range drift {
+			p := filepath.Join(a.plans.Repo, filepath.FromSlash(rel))
+			batch = append(batch, at(c, time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + p, Meta: map[string]any{"tool": "Write", "path": p, "ok": true, "cwd": a.plans.Repo}}))
+		}
+		a.ingest(batch)
 		c.t = c.t.Add(toastFor)
 		return a, c, path, next
-	}
-	edit := func(a *app, c *clock, rel string) {
-		p := filepath.Join(a.plans.Repo, filepath.FromSlash(rel))
-		a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + p, Meta: map[string]any{"tool": "Write", "path": p, "ok": true, "cwd": a.plans.Repo}})})
 	}
 	hidden := func(t *testing.T, a *app, path, want string) {
 		t.Helper()
@@ -756,13 +760,11 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 	}
 
 	// Hard drift: it stays until resolved, and so does ⏎'s usual meaning.
-	a, c, path, _ = offered(t)
-	edit(a, c, "README.md")
+	a, _, path, _ = offered(t, "README.md")
 	hidden(t, a, path, "drift · hard: README.md")
 
 	// Soft drift sits under the offer, and shows once it is settled.
-	a, c, _, _ = offered(t)
-	edit(a, c, "internal/tui/live.go")
+	a, _, _, _ = offered(t, "internal/tui/live.go")
 	if s, ok := a.driftStatus(plan.Soft); !ok || a.statusLine().Text != "new plan cuj/next · ⏎ switch" {
 		t.Fatalf("soft drift %q (%v) is under the offer: %q", s.Text, ok, a.statusLine().Text)
 	}

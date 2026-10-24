@@ -512,6 +512,32 @@ func TestInstallSkillUpdatesRexsCopyBesideClaudeConfigDir(t *testing.T) {
 	}
 }
 
+// A newer Rex's copy (a teammate's, committed with --project) is kept:
+// the command says so and succeeds, since the agent still learns plans.
+func TestInstallSkillKeepsANewerRexsCopy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	newer := []byte(strings.Replace(string(skill.RexPlan), "· skill v", "· skill v9", 1))
+	if bytes.Equal(newer, skill.RexPlan) {
+		t.Fatal("the skill's marker has a version")
+	}
+	for _, dir := range skill.Dirs(home, "", false) {
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, "SKILL.md"), newer, 0o644)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"ingest", "--install-skill"}, strings.NewReader(""), &stdout, &stderr); code != 0 || stderr.Len() != 0 || strings.Count(stdout.String(), "a newer Rex wrote it") != 2 {
+		t.Fatalf("%d %q %q", code, stdout.String(), stderr.String())
+	}
+	for _, dir := range skill.Dirs(home, "", false) {
+		if got, _ := os.ReadFile(filepath.Join(dir, "SKILL.md")); !bytes.Equal(got, newer) {
+			t.Fatalf("%s: a newer Rex's copy is never replaced", dir)
+		}
+	}
+}
+
 // docs/plan-format.md, Teaching an agent: the skill goes where every agent
 // reads it, Claude Code's folder and the shared .agents one, for this user
 // or this repo; uninstall takes both copies back out.

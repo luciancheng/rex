@@ -23,7 +23,8 @@ type driftState struct {
 	// Row 1 shows the last unresolved hard notice, else the last soft one.
 	hard, soft *driftNote
 	// Prompts that name another task, held until the turn ends: asking the
-	// agent to switch tasks is how the pin moves (docs/ux.md §9a).
+	// agent to switch tasks is how the pin moves (docs/ux.md §9a). Edits of
+	// a file listed for a task one of them names wait with them.
 	held []driftNote
 }
 
@@ -66,7 +67,7 @@ func (a *app) applyDrift() bool {
 		// (a patch's on-pin file can't hide its off-pin one).
 		sort.SliceStable(notes, func(i, j int) bool { return notes[i].d.Level < notes[j].d.Level })
 		for _, n := range notes {
-			if n.d.Names != "" {
+			if n.d.Names != "" || a.asked(n.d.Listed) {
 				a.syncDrift()
 				a.drift.held = append(a.drift.held, n)
 				continue
@@ -91,6 +92,22 @@ func lesser(was, now []driftNote) []driftNote {
 		}
 	}
 	return was
+}
+
+// asked reports whether a held prompt names task id. An edit of a file
+// listed for it waits with that prompt: the agent asked to start id may
+// edit its files before it saves the plan that makes id the pin.
+func (a *app) asked(id string) bool {
+	if id == "" {
+		return false
+	}
+	a.syncDrift()
+	for _, n := range a.drift.held {
+		if n.rel == "" && n.d.Names == id {
+			return true
+		}
+	}
+	return false
 }
 
 // turnEdge reports that ev ends a turn, or starts the next one (a missed
@@ -150,7 +167,8 @@ func (a *app) judge(ev watch.Event) []driftNote {
 // syncDrift starts over when the effective pin (of this plan) is not the
 // one the state is about: row 1 clears, and the next drift starts a new
 // block. A held prompt that named the new pin asked for this move and
-// goes; one that names another task still waits for its turn to end.
+// goes, with the edits held for it; one that names another task still
+// waits for its turn to end, and so do the edits of that task's files.
 func (a *app) syncDrift() {
 	key, id := "", ""
 	var p *plan.Plan
@@ -170,8 +188,19 @@ func (a *app) syncDrift() {
 	if pin == nil {
 		return
 	}
+	asked := map[string]bool{}
+	for i := range held {
+		if n := &held[i]; n.rel == "" {
+			if n.d = plan.CheckPrompt(p, pin, n.prompt); n.d.Names != "" {
+				asked[n.d.Names] = true
+			}
+		}
+	}
 	for _, n := range held {
-		if n.d = plan.CheckPrompt(p, pin, n.prompt); n.d.Names != "" {
+		if n.rel != "" {
+			n.d = plan.CheckEdit(p, pin, n.rel, foldPaths)
+		}
+		if n.d.Names != "" || asked[n.d.Listed] {
 			a.drift.held = append(a.drift.held, n)
 		}
 	}

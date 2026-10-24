@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/luciancheng/rex/internal/skill"
@@ -52,12 +53,35 @@ func (h *feedHealth) saw(ev watch.Event) {
 // titles it for the empty tape; Help just says "feed".
 func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, waiting bool) []LogLine {
 	var lines []LogLine
+	// A row's words wrap in the value column. One wider than the column (a
+	// flag, a path) gets a row of its own, hung at column 4, whole: a
+	// command split mid-word can't be copied.
 	row := func(kind, name, what string) {
-		for i, w := range wrap(what, max(8, width-11)) {
-			if i > 0 {
-				name = ""
+		col, line := max(8, width-11), ""
+		flush := func() {
+			lines = append(lines, LogLine{Kind: kind, Text: strings.TrimRight("  "+padRight(name, 9)+line, " ")})
+			name, line = "", ""
+		}
+		for _, w := range strings.Fields(what) {
+			switch {
+			case cellLen(w) > col:
+				if line != "" || name != "" {
+					flush()
+				}
+				for _, part := range hardWrap(w, max(1, width-4)) { // split only when wider than the row
+					lines = append(lines, LogLine{Kind: kind, Text: "    " + part})
+				}
+			case line == "":
+				line = w
+			case cellLen(line)+1+cellLen(w) <= col:
+				line += " " + w
+			default:
+				flush()
+				line = w
 			}
-			lines = append(lines, LogLine{Kind: kind, Text: "  " + padRight(name, 9) + w})
+		}
+		if line != "" || name != "" {
+			flush()
 		}
 	}
 	title := "feed"

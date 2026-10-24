@@ -113,3 +113,44 @@ func TestFeedHealthSaysHowTheSkillStands(t *testing.T) {
 		}
 	}
 }
+
+// A word wider than the value column, such as --install-skill at 24-25
+// text cells (66-67 columns), gets a row of its own, whole: a command
+// split mid-word can't be copied (docs/ux.md §10).
+func TestFeedHealthNeverSplitsAWord(t *testing.T) {
+	h := feedHealth{path: "/x/session.jsonl", statuses: []watch.HarnessStatus{{Name: "codex", Present: true}}, read: time.Now()}
+	for _, width := range []int{24, 25, 38} {
+		for _, c := range []skill.Copy{skill.Missing, skill.StaleProject} {
+			lines := strings.Split(viewText(h.lines(width, 0, c, time.Now(), false)), "\n")
+			words := map[string]bool{}
+			for _, line := range lines {
+				if cellLen(line) > width {
+					t.Fatalf("%d cells: row wider than the pane: %q", width, line)
+				}
+				for _, w := range strings.Fields(line) {
+					words[w] = true
+				}
+			}
+			for _, w := range []string{"--install-skill", "--install", "codex", "/x/session.jsonl"} {
+				if !words[w] {
+					t.Errorf("%d cells, %v: %q is split\n%s", width, c, w, strings.Join(lines, "\n"))
+				}
+			}
+			if c == skill.StaleProject && !words["--project"] {
+				t.Errorf("%d cells: --project is split\n%s", width, strings.Join(lines, "\n"))
+			}
+		}
+	}
+	text := viewText(h.lines(24, 0, skill.Missing, time.Now(), false))
+	if want := "  skill    missing · rex\n           ingest\n    --install-skill"; !strings.Contains(text, want) {
+		t.Fatalf("want\n%s\n%s", want, text)
+	}
+	for _, cols := range []int{66, 67} {
+		a := testApp(t)
+		a.settle(cols, 44)
+		press(a, "\t")
+		if f := a.frame(); !strings.Contains(f, "--install-skill") {
+			t.Fatalf("%d columns: the empty tape keeps the command whole\n%s", cols, f)
+		}
+	}
+}

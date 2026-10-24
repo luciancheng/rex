@@ -2,6 +2,7 @@ package skill
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -64,7 +65,8 @@ func TestTheSkillHasTheAgentWorkThePlan(t *testing.T) {
 	for _, want := range []string{
 		"## Working a plan", "re-read it at the start of every turn", "whose top-level `status` is `active`", "else ask",
 		"**The current task** is the leaf task with `\"status\": \"active\"`", "first `pending` leaf, in file order",
-		"**Starting a task.**", "set any other `active` leaf to `pending`", "Never write a parent's status",
+		"**Starting a task.**", "set any other `active` leaf to `pending`", "Never write a parent's status", "Save this first, before any other edit",
+		"a `depends_on` that names a parent is met once every leaf under it is `done` or `skipped` (a task under that parent never waits on itself)",
 		"**Finishing a task.**", "set the plan's own top-level `status` to `done`", "Then stop and report",
 		"fill its completion fields", "Then set its `status` to `done`, in the same save if you can",
 		"inside the task objects you change (plus the plan's own `status`)", "keep every other byte", "never mark a task done that you did not finish",
@@ -251,6 +253,66 @@ func TestLookFindsAnOlderRexsCopy(t *testing.T) {
 	}
 	if got := Look(home, repo); got != Current {
 		t.Fatalf("every copy replaced: %v", got)
+	}
+}
+
+// A copy is judged by the skill version in its marker, not its bytes: a
+// CRLF checkout of a committed --project copy is current, and so is a
+// newer Rex's, which --install-skill never replaces (teammates on two Rex
+// versions share it); an older one, or one with no version, is out of
+// date until --install-skill replaces it.
+func TestLookAndInstallGoByTheSkillsVersion(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	tag := fmt.Sprintf("skill v%d ·", version)
+	if version < 2 || !bytes.Contains(RexPlan, []byte(marker+" · "+tag)) {
+		t.Fatalf("the marker carries the skill version: v%d", version)
+	}
+	for in, want := range map[string]int{marker + " · skill v12 · x -->": 12, marker + " -->\nskill v9": 0, "my own skill v3": 0, marker + " · skill v -->": 0} {
+		if got := versionOf([]byte(in)); got != want {
+			t.Errorf("versionOf(%q) = %d, want %d", in, got, want)
+		}
+	}
+	at := func(v int) []byte {
+		return bytes.Replace(RexPlan, []byte(tag), []byte(fmt.Sprintf("skill v%d ·", v)), 1)
+	}
+	for _, c := range []struct {
+		name    string
+		body    []byte
+		look    Copy
+		replace bool
+		says    string
+	}{
+		{"a CRLF checkout", bytes.ReplaceAll(RexPlan, []byte("\n"), []byte("\r\n")), Current, false, "already installed"},
+		{"a newer Rex's", append(at(version+1), "\nA newer Rex adds a rule here.\n"...), Current, false, "kept the rex-plan skill"},
+		{"a newer Rex's, CRLF", bytes.ReplaceAll(at(version+1), []byte("\n"), []byte("\r\n")), Current, false, "a newer Rex wrote it"},
+		{"this version, edited", append(append([]byte(nil), RexPlan...), "\nedited\n"...), Current, true, "installed the rex-plan skill"},
+		{"an older Rex's", at(version - 1), StaleProject, true, "installed the rex-plan skill"},
+		{"one with no version", bytes.Replace(RexPlan, []byte(tag+" "), nil, 1), StaleProject, true, "installed the rex-plan skill"},
+	} {
+		home, repo := t.TempDir(), t.TempDir()
+		for _, dir := range Dirs(home, repo, true) {
+			os.MkdirAll(dir, 0o755)
+			os.WriteFile(filepath.Join(dir, "SKILL.md"), c.body, 0o644)
+		}
+		if got := Look(home, repo); got != c.look {
+			t.Errorf("%s: Look = %v, want %v", c.name, got, c.look)
+		}
+		for _, dir := range Dirs(home, repo, true) {
+			var out bytes.Buffer
+			if err := Install(dir, &out); err != nil || !strings.Contains(out.String(), c.says) {
+				t.Errorf("%s: Install = %v, %q", c.name, err, out.String())
+			}
+			want := c.body
+			if c.replace {
+				want = RexPlan
+			}
+			if got, _ := os.ReadFile(filepath.Join(dir, "SKILL.md")); !bytes.Equal(got, want) {
+				t.Errorf("%s: want the copy replaced=%v", c.name, c.replace)
+			}
+		}
+		if got := Look(home, repo); got != Current {
+			t.Errorf("%s: after --install-skill, Look = %v", c.name, got)
+		}
 	}
 }
 

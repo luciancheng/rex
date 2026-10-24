@@ -22,12 +22,14 @@ func (l DriftLevel) String() string {
 // Drift is one judgement: the level, what it was about (a path or a
 // prompt excerpt), and why, in words for row 1 and the tape. Names is the
 // task a prompt names instead of the pin: asking the agent to switch to
-// it may be what moves the pin next (docs/ux.md §9a).
+// it may be what moves the pin next (docs/ux.md §9a). Listed is the task
+// an edited file is listed for instead of the pin.
 type Drift struct {
 	Level   DriftLevel
 	Subject string
 	Reason  string
 	Names   string
+	Listed  string
 }
 
 // CheckEdit judges a completed edit of rel, a repo-relative path with "/"
@@ -66,7 +68,7 @@ func CheckEdit(p *Plan, pin *Task, rel string, fold bool) Drift {
 		}
 		for _, f := range t.Files {
 			if matchPath(norm(f), target) {
-				d.Level, d.Reason = Soft, "listed for "+t.ID
+				d.Level, d.Reason, d.Listed = Soft, "listed for "+t.ID, t.ID
 				return d
 			}
 		}

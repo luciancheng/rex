@@ -43,6 +43,15 @@ func TestCheckEdit(t *testing.T) {
 		if d.Level != c.level || d.Reason != c.reason || d.Subject != c.rel {
 			t.Errorf("%s: %v %q", c.rel, d.Level, d.Reason)
 		}
+		// The task a file is listed for, so a prompt asking for that task
+		// can hold the edit with it (docs/ux.md §9a).
+		want := ""
+		if strings.HasPrefix(c.reason, "listed for ") {
+			want = strings.TrimPrefix(c.reason, "listed for ")
+		}
+		if d.Listed != want {
+			t.Errorf("%s: listed for %q, want %q", c.rel, d.Listed, want)
+		}
 	}
 	if d := CheckEdit(p, pin, "Internal/TUI/Plans.go", true); d.Level != OnPin {
 		t.Fatal("case-folded where the filesystem is")

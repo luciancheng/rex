@@ -233,12 +233,12 @@ func TestABatchThatMovesThePinIsJudgedAgainstTheNewPin(t *testing.T) {
 	a, c, path := cujApp(t)
 	repo := a.plans.Repo
 	data, _ := os.ReadFile(path)
-	moved := strings.Replace(string(data), `"status": "active",
+	moved := mustReplace(t, string(data), `"status": "active",
       "depends_on": ["plans-ui"],`, `"status": "done",
-      "depends_on": ["plans-ui"],`, 1)
-	moved = strings.Replace(moved, `"status": "pending",
+      "depends_on": ["plans-ui"],`)
+	moved = mustReplace(t, moved, `"status": "pending",
       "depends_on": ["card-highlight"],`, `"status": "active",
-      "depends_on": ["card-highlight"],`, 1)
+      "depends_on": ["card-highlight"],`)
 	os.WriteFile(path, []byte(moved), 0o644)
 	code := filepath.Join(repo, "internal", "tui", "outline.go") // listed for load-outline
 	a.ingest([]watch.Event{
@@ -266,9 +266,9 @@ func TestTheFinishedTasksLastEditIsNotDrift(t *testing.T) {
 		a, c, path := cujApp(t)
 		repo := a.plans.Repo
 		data, _ := os.ReadFile(path)
-		done := strings.Replace(string(data), `"status": "active",
+		done := mustReplace(t, string(data), `"status": "active",
       "depends_on": ["plans-ui"],`, `"status": "done",
-      "depends_on": ["plans-ui"],`, 1)
+      "depends_on": ["plans-ui"],`)
 		os.WriteFile(path, []byte(done), 0o644)
 		code := filepath.Join(repo, "internal", "tui", "live.go") // listed for card-highlight only
 		evs := []watch.Event{
@@ -361,5 +361,57 @@ func TestNamingAnotherTaskDriftsWhenThePinStays(t *testing.T) {
 	a.ingest([]watch.Event{at(c, 5*time.Second, watch.Event{Source: "claude", Kind: "idle"})})
 	if tape := viewText(BuildLogView(a.log, 100)); !strings.Contains(tape, "── drift · audit-log") || !strings.Contains(tape, "soft now do recovery (names recovery, not the pin)") {
 		t.Fatalf("the new pin's block\n%s", tape)
+	}
+}
+
+// The agent asked to start another task may edit that task's files before
+// it saves the plan, in its own batch or in the save's. Those edits wait
+// with the prompt and go when the save makes that task the pin; if the
+// turn ends with the pin where it was, both are drift (docs/ux.md §9a).
+func TestAnEditBeforeTheSwitchIsNotDrift(t *testing.T) {
+	demo := mustReplace(t, switchDemo, `"title":"Recovery codes","status":"pending"`, `"title":"Recovery codes","status":"pending","files":["internal/recovery/"]`)
+	for _, how := range []string{"apart", "one batch", "no switch"} {
+		a, c, path := openDemo(t, demo, 120, 32)
+		a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "start recovery"})})
+		code := edit(a, c, 2*time.Second, "internal/recovery/codes.go")
+		switch how {
+		case "apart":
+			a.ingest([]watch.Event{code})
+			if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
+				t.Fatalf("%s: the edit waits with the prompt: %q", how, got)
+			}
+			switchTo(t, a, c, path, "passkey-ui", "recovery", 3*time.Second)
+		case "one batch":
+			data, _ := os.ReadFile(path)
+			os.WriteFile(path, []byte(setStatus(setStatus(string(data), "passkey-ui", "pending"), "recovery", "active")), 0o644)
+			a.ingest([]watch.Event{code, at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Edit", "path": path, "ok": true}})})
+		default:
+			a.ingest([]watch.Event{code})
+		}
+		a.ingest([]watch.Event{at(c, 4*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Done."})})
+		later(a, c)
+		c.t = c.t.Add(toastFor)
+		tape := viewText(BuildLogView(a.log, 100))
+		if how == "no switch" {
+			if !strings.Contains(tape, "── drift · passkey-ui") || !strings.Contains(tape, "soft start recovery (names recovery, not the pin)") || !strings.Contains(tape, "soft internal/recovery/codes.go (listed for recovery)") {
+				t.Fatalf("%s: the turn ended on the old pin: both are drift\n%s", how, tape)
+			}
+			continue
+		}
+		if got := a.statusLine().Text; got != "▸ recovery  Recovery codes (active)" {
+			t.Fatalf("%s: row 1 %q", how, got)
+		}
+		if strings.Contains(tape, "── drift") {
+			t.Fatalf("%s: the switch left a drift block\n%s", how, tape)
+		}
+	}
+
+	// An edit of another task's file that no prompt asked for is drift at
+	// once, as before.
+	a, c, _ := openDemo(t, demo, 120, 32)
+	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "start audit-log"})})
+	a.ingest([]watch.Event{edit(a, c, 2*time.Second, "internal/recovery/codes.go")})
+	if got := a.statusLine().Text; got != "drift · soft: internal/recovery/codes.go · listed for recovery" {
+		t.Fatalf("row 1 %q", got)
 	}
 }

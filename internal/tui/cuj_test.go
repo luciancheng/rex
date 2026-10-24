@@ -23,6 +23,17 @@ func cujFixture(t *testing.T) []byte {
 	return data
 }
 
+// mustReplace is s with old replaced once. A fixture edit that doesn't
+// apply fails the test, so a fixture that changed (or a CRLF checkout of
+// it) never runs a test on the wrong bytes.
+func mustReplace(t *testing.T, s, old, new string) string {
+	t.Helper()
+	if !strings.Contains(s, old) {
+		t.Fatalf("fixture edit didn't apply: %q", old)
+	}
+	return strings.Replace(s, old, new, 1)
+}
+
 // cujApp is Rex started in a repo that holds the CUJ plan: start attaches
 // it, so it opens on the outline (docs/ux.md §11).
 func cujApp(t *testing.T) (*app, *clock, string) {
@@ -91,11 +102,11 @@ func TestCUJWholeLoop(t *testing.T) {
 		t.Fatalf("B. the agent's write opens the plan, followed\n%s", a.frame())
 	}
 	active := cujFixture(t)
-	planned := []byte(strings.Replace(strings.Replace(string(active), `"status": "active",
+	planned := []byte(mustReplace(t, mustReplace(t, string(active), `"status": "active",
       "depends_on": ["plans-ui"],`, `"status": "pending",
-      "depends_on": ["plans-ui"],`, 1), `"status": "active",
+      "depends_on": ["plans-ui"],`), `"status": "active",
   "scope"`, `"status": "pending",
-  "scope"`, 1))
+  "scope"`))
 	agent(planned)
 	k.spent(t, 0, "see the plan (Rex follows the write)")
 	if a.outline.sel != "card-highlight" || !strings.Contains(a.frame(), "▌ ▸ card-highlight") || !strings.Contains(a.frame(), "plan updated · +3 tasks") {
@@ -146,13 +157,13 @@ func TestCUJWholeLoop(t *testing.T) {
 	}
 
 	// E. The agent marks the task done, with its retrospective.
-	done := []byte(strings.Replace(string(active), `"status": "active",
+	done := []byte(mustReplace(t, string(active), `"status": "active",
       "depends_on": ["plans-ui"],`, `"status": "done",
       "depends_on": ["plans-ui"],
       "accomplished": ["the selection bar, border and fill cover all three card rows"],
       "modified": ["internal/tui/plans.go"],
       "verified_how": ["go test ./internal/tui -run PlanCardSelection (passed)"],
-      "completed_notes": "the pick colors were already in mascot.UI",`, 1))
+      "completed_notes": "the pick colors were already in mascot.UI",`))
 	agent(done)
 	a.ingest([]watch.Event{at(c, 6*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Done: one block now. card-highlight is marked done in the plan."})})
 	k.spent(t, 0, "mark done (the agent does)")

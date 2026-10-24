@@ -29,9 +29,15 @@ The format is frozen at `"version": 1`. Rex ignores fields it does not know, so 
   "tasks": [
     {
       "id": "plans-ui",
-      "title": "Plans navigator",
+      "title": "Plans navigator"
+    },
+    {
+      "id": "plans-browse",
+      "title": "Create, open and browse plans",
+      "parent": "plans-ui",
       "status": "done",
       "does": ["Create, open, browse rex/plans in the TUI"],
+      "branch": "feature/plans_browse",
       "accomplished": ["Home cards, browse, duplicate warn"],
       "modified": ["internal/tui/plans.go"],
       "verified_how": ["go test ./internal/tui/ and a tmux walk of Create → Open"]
@@ -41,7 +47,7 @@ The format is frozen at `"version": 1`. Rex ignores fields it does not know, so 
       "title": "Selected plan card is one block",
       "parent": "plans-ui",
       "status": "active",
-      "depends_on": ["plans-ui"],
+      "depends_on": ["plans-browse"],
       "needs": ["pick / pickbg colors exist"],
       "does": ["Bar, border, and fill cover the whole selected card"],
       "verify": ["Open latest: ▌ on all three card rows"],
@@ -124,7 +130,7 @@ A plan can be one stack of pull requests: each PR's base branch is the head bran
 ## Who writes what
 
 - **Agents and humans** write the plan: every planning field, and statuses as work moves.
-- **The agent working a task** writes its progress: it sets the task's `status` to `active` when it starts (and any other `active` leaf to `pending`, and the plan's own `status` to `active` if it was `pending` or `done`), and when it finishes fills `accomplished`, `modified`, `verified_how` and `completed_notes`, then sets it `done` (in one save if it can); the plan's own `status` becomes `done` after that, once every leaf task is `done` or `skipped`. It edits only the members it changes, inside the task objects it changes (plus the plan's own `status`), and never a parent's status. It re-reads the file at the start of every turn while it works the plan, since someone else may have changed it.
+- **The agent working a task** writes its progress: it sets the task's `status` to `active` when it starts (and any other `active` leaf to `pending`, and the plan's own `status` to `active` if it was `pending` or `done`), in a save before any other edit, and when it finishes fills `accomplished`, `modified`, `verified_how` and `completed_notes`, then sets it `done` (in one save if it can); the plan's own `status` becomes `done` after that, once every leaf task is `done` or `skipped`. It edits only the members it changes, inside the task objects it changes (plus the plan's own `status`), and never a parent's status. It re-reads the file at the start of every turn while it works the plan, since someone else may have changed it.
 - **`base` and `branch`** are planning fields: the planner writes them, and the agent working a task may write its own task's `branch`. Rex reads them and never writes them.
 - **Rex writes nothing** to a plan but a new empty stub you create in its plan list ([A new plan](#a-new-plan)), never over an existing file. It reads the file, shows it live, and judges drift against the pin; you ask your agent to pin, finish or continue a task, and Rex shows the change when the file does.
 
@@ -173,4 +179,4 @@ An old `{}` plan is still valid: it is a plan with no tasks.
 
 ## Teaching an agent
 
-`rex ingest --install-skill` installs the `rex-plan` skill where every agent reads it: `~/.claude/skills/rex-plan/SKILL.md` (or `$CLAUDE_CONFIG_DIR/skills/`) for Claude Code and `~/.agents/skills/rex-plan/SKILL.md` for Codex; Cursor and OpenCode read both folders (and may list the skill twice: the copies are identical). With `$CLAUDE_CONFIG_DIR` set, a copy Rex wrote in `~/.claude/skills/rex-plan/` (Cursor and OpenCode still read it) is updated and uninstalled with the others; a `SKILL.md` there that Rex didn't write is left alone. With `--project` both copies go in the repo's `.claude/skills/` and `.agents/skills/`; `--uninstall-skill [--project]` takes Rex's copies back out. The skill teaches this format and its rules, how to work a plan (which plan and task, starting and finishing a task in the file, re-reading it every turn), where a stacked task's PR goes, and a read-only review pass before each task's PR (one reviewer per job: design, the UI if it changed, breaking it, lint; each finding fixed or explained; then a final readiness check).
+`rex ingest --install-skill` installs the `rex-plan` skill where every agent reads it: `~/.claude/skills/rex-plan/SKILL.md` (or `$CLAUDE_CONFIG_DIR/skills/`) for Claude Code and `~/.agents/skills/rex-plan/SKILL.md` for Codex; Cursor and OpenCode read both folders (and may list the skill twice: the copies are identical). With `$CLAUDE_CONFIG_DIR` set, a copy Rex wrote in `~/.claude/skills/rex-plan/` (Cursor and OpenCode still read it) is updated and uninstalled with the others; a `SKILL.md` there that Rex didn't write is left alone. With `--project` both copies go in the repo's `.claude/skills/` and `.agents/skills/`; `--uninstall-skill [--project]` takes Rex's copies back out. Each copy's generated marker carries the skill's version (`skill v2`): Rex calls a copy with an older version, or none, out of date, and `--install-skill` replaces it but never a newer Rex's copy. The skill teaches this format and its rules, how to work a plan (which plan and task, starting and finishing a task in the file, re-reading it every turn), where a stacked task's PR goes, and a read-only review pass before each task's PR (one reviewer per job: design, the UI if it changed, breaking it, lint; each finding fixed or explained; then a final readiness check).

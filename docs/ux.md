@@ -164,7 +164,7 @@ PLAN•[AGENT] running   latched scratch
 
 Row 1 is a one-line status shared by both places. It shows the **first** of these that applies:
 
-1. `plan JSON error 14:3 · showing last good`; a file Rex can't open says why, `plan error: can't read the file: permission denied · showing last good` (the cause, never the file's path, §6)
+1. `plan JSON error 14:3 · showing last good`; a file Rex can't open says why, `plan error: permission denied · showing last good` (the cause, never the file's path, §6)
 2. A toast, which expires after about 3 s:
    - `plan updated · plans-ui → done · +1 task`, when the file changed (the agent pinned a task, or a teammate's pull); the plan's own status reads `plan → active` / `plan → done`
    - `✓ card-highlight done · next up load-outline`, when the file marks the pin done (the agent finished it; `· now load-outline` when the same save started that task; `· the plan is done` or `· nothing else is unblocked` when there is no next up). The agent's follow-up saves that move no task (its retrospective, the plan's own status) leave it up until it expires (§8).
@@ -375,7 +375,7 @@ Rex never writes the plan, in any state.
 |---|---|
 | No tasks (a new stub) | `No tasks yet · your agent fills this file` |
 | Invalid JSON | row 1: `plan JSON error 14:3 · showing last good` |
-| Unreadable (no permission, a folder, too big) | row 1: `plan error: can't read the file: permission denied · showing last good`, the cause and never the file's absolute path; with no good copy yet the outline says `can't read this plan` and why |
+| Unreadable (no permission, a folder, too big) | row 1: `plan error: permission denied · showing last good`, the cause and never the file's absolute path; with no good copy yet the outline says `can't read this plan` and why |
 | File missing (branch switch) | `plan file missing · showing last good` |
 | Conflict markers / `version` newer than Rex | `read-only: <reason>` above the tasks (a warning for whoever edits it) |
 | Two `active` tasks | first one pinned; row 1 warns |

@@ -501,7 +501,7 @@ func TestUnreadablePlansSayWhy(t *testing.T) {
 	}
 	c.t = c.t.Add(docPollEvery)
 	a.tick()
-	if got, want := a.statusLine().Text, "plan error: can't read the file: permission denied · showing last good"; got != want {
+	if got, want := a.statusLine().Text, "plan error: permission denied · showing last good"; got != want {
 		t.Fatalf("row 1: %q, want %q", got, want)
 	}
 	a.plans.walk = planWalk{}

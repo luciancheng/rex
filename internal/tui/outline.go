@@ -49,7 +49,7 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, news planNews) 
 	if err != nil {
 		// There, but not readable as a plan (a folder, a FIFO, too big, no
 		// permission): say so, keep the last good copy.
-		why := "can't read the file: " + cause(err)
+		why := unreadable + cause(err)
 		changed = d.err != why || d.gone
 		d.err, d.gone, d.hash = why, false, ""
 		return changed, planNews{}
@@ -618,7 +618,7 @@ func docStatus(d *planDoc) (StatusLine, bool) {
 		if m := errPos.FindStringSubmatch(d.err); m != nil {
 			return StatusLine{Text: "plan JSON error " + m[1] + last, Kind: "error"}, true
 		}
-		return StatusLine{Text: "plan error: " + d.err + last, Kind: "error"}, true
+		return StatusLine{Text: "plan error: " + strings.TrimPrefix(d.err, unreadable) + last, Kind: "error"}, true
 	case d.gone:
 		return StatusLine{Text: "plan file missing" + last, Kind: "error"}, true
 	}

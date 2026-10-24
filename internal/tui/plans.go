@@ -775,7 +775,7 @@ func (b *PlanBrowser) showDoc(d *planDoc) {
 	switch {
 	case d == nil:
 	case d.err != "":
-		b.doc = &planSummary{err: strings.TrimPrefix(d.err, "can't read the file: ")}
+		b.doc = &planSummary{err: strings.TrimPrefix(d.err, unreadable)}
 	case d.plan != nil:
 		s := summarize(d.plan)
 		b.doc = &s
@@ -851,6 +851,10 @@ func readSum(path string) planSummary {
 	}
 	return summarize(p)
 }
+
+// unreadable leads the outline's error for a plan Rex can't open; row 1
+// and the plan list show only the cause after it.
+const unreadable = "can't read the file: "
 
 // cause is err as a row shows it. An *fs.PathError leads with the
 // absolute path ("open /…/rex/plans/x.rex.json: permission denied"),

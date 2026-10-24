@@ -3,3 +3,5 @@
 internal/skill/rex-plan/SKILL.md text eol=lf
 # Plans too: the tests edit the CUJ fixture across lines, byte for byte.
 *.rex.json text eol=lf
+# Shell scripts run under bash, which reads a CRLF line as a syntax error.
+*.sh text eol=lf

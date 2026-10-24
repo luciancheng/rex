@@ -21,18 +21,13 @@ const (
 	MinTextCols     = 24
 	InputRows       = 3
 	FooterRows      = 1
-	InputPrefix     = " > "
 	MaxLog          = 400
 	maxPromptRows   = 6 // a pasted wall of text must not push the tape away
 )
 
 var kindColor = map[string]string{
 	"before":   "muted",
-	"note":     "muted",
 	"plan":     "muted",
-	"done":     "muted", // a verb's record line, like the rest
-	"sendoff":  "muted",
-	"brief":    "muted",
 	"drift":    "accent", // each row says hard or soft; row 1 is red for hard
 	"thought":  "muted",
 	"command":  "accent",
@@ -57,11 +52,7 @@ var kindStatus = map[string]string{
 
 var kindLabel = map[string]string{
 	"before":   "before rex started",
-	"note":     "note · local",
 	"plan":     "plan",
-	"done":     "done",
-	"sendoff":  "sendoff",
-	"brief":    "brief",
 	"thought":  "thinking",
 	"command":  "run",
 	"question": "ask",
@@ -264,19 +255,6 @@ func BuildLogView(log []watch.Event, width int) []LogLine {
 			continue
 		}
 		kind, text := asLogEntry(entry)
-		if m := fingerprintLine.FindStringSubmatch(entry.Text); kind == "user" && m != nil {
-			// A send-off pasted back as a prompt: the new chat started
-			// from the pin. One line, not the whole brief again, plus any
-			// words of the user's own before it.
-			kind = "sendoff"
-			n := strings.Count(strings.TrimRight(entry.Text, "\n"), "\n") + 1
-			text = fmt.Sprintf("%s pasted (%d %s)", m[2], n, map[bool]string{true: "line", false: "lines"}[n == 1])
-			if i := strings.Index(entry.Text, "Send-off: "); i > 0 {
-				if own := strings.TrimSpace(entry.Text[:i]); own != "" {
-					text += " · " + strings.SplitN(own, "\n", 2)[0]
-				}
-			}
-		}
 		if kind == "drift" {
 			// Its own block per pin, never merged: "drift · <pin>".
 			pin, _ := entry.Meta["pin"].(string)
@@ -404,8 +382,9 @@ func statusForTurn(turn Turn, lastKind string) string {
 	}
 }
 
+// PaneBodyHeight is the tape's body height: it has no composer.
 func PaneBodyHeight(termLines int) int {
-	return layoutFor(TextOnlyBelow, termLines).bodyH
+	return layoutFor(TextOnlyBelow, termLines).bare().bodyH
 }
 
 func PaneTextWidth(columns int) int {
@@ -444,9 +423,6 @@ func visibleDraft(draft string, room int) string {
 }
 
 func inputBox(draft string, width int, enabled bool, prefix, placeholder string) []string {
-	if prefix == "" {
-		prefix = InputPrefix
-	}
 	inner := max(0, width-2)
 	top := "╭" + strings.Repeat("─", inner) + "╮"
 	bot := "╰" + strings.Repeat("─", inner) + "╯"
@@ -571,8 +547,8 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		if opt.Overlay != nil && !opt.QuitPending {
 			segs, kind = opt.Overlay.Footer, "muted"
 		}
-		if !l.typing {
-			segs = withoutEnter(segs)
+		if !l.typing && opt.Composer {
+			segs = shortList(segs, opt.Draft)
 		}
 		rows[len(rows)-1] = mascot.Paint(clip(fitFooter(segs, width), width), mascot.UI[kind], enabled)
 	}
@@ -630,6 +606,7 @@ type ComposeOptions struct {
 	Enabled     bool
 	Columns     int
 	Lines       int
+	Composer    bool // the plan list's composer is drawn and takes typing (app.composing, docs/ux.md §2)
 	Draft       string
 	Log         []watch.Event
 	QuitPending bool
@@ -644,7 +621,6 @@ type ComposeOptions struct {
 	Overlay     *Overlay
 	Placeholder string    // dim hint in an empty composer
 	Preview     string    // what ⏎ will do with the draft, shown in the footer
-	Prefix      string    // composer prefix, when an overlay names its field
 	PlanView    []LogLine // the open plan's screen, when PLAN shows it
 	PlanScroll  int       // its first visible line
 	PlanFooter  []string
@@ -672,6 +648,9 @@ func composeRows(spriteName, color string, opt ComposeOptions) Frame {
 	columns := max(1, opt.Columns)
 	lines := max(1, opt.Lines)
 	l := layoutFor(columns, lines)
+	if !opt.Composer {
+		l = l.bare()
+	}
 	if l.locked {
 		rows := make([]string, lines)
 		rows[0] = mascot.Paint(clip(fitFooter([]string{fmt.Sprintf("widen to %d cols", MinTextCols)}, columns), columns), mascot.UI["title"], opt.Enabled)
@@ -800,12 +779,10 @@ func isPrintableKey(key string) bool {
 func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.File, eventsPath string) (int, error) {
 	columns, lines := Size()
 	a := newApp(color, enabled, animation, NewPlanBrowser(""), columns, lines)
-	a.copy = newClipboard().copyAsync
 	path := eventsPath
 	if path == "" {
 		path = watch.DefaultEventPath()
 	}
-	a.feed = path
 	tail := watch.NewEventTail(path, true)
 	a.health = readHealth(path, a.plans.Repo, time.Now())
 	a.warmStart(watch.LastEvents(path, warmRead), time.Now())
@@ -813,25 +790,6 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 	paint := &renderer{full: true}
 	err := LiveScreen(stdout, stdin, func(sig screenSignals) error {
 		draw := func() {
-			if a.oscOut != "" {
-				// Between frames, never inside one; the normal screen (o⏎)
-				// takes OSC 52 too.
-				_, _ = io.WriteString(stdout, a.oscOut)
-				a.oscOut = ""
-			}
-			if a.plainShown {
-				return // the brief is on the normal screen
-			}
-			if a.plainOut != "" {
-				_, _ = io.WriteString(stdout, plainScreen(a.plainOut))
-				a.plainText, a.plainOut, a.plainShown = a.plainOut, "", true
-				return
-			}
-			if a.plainBack {
-				_, _ = io.WriteString(stdout, screenSetup)
-				a.plainBack = false
-				paint.invalidate()
-			}
 			if a.repaint {
 				paint.invalidate()
 				a.repaint = false
@@ -848,12 +806,6 @@ func RunLoop(color string, enabled bool, animation string, stdin, stdout *os.Fil
 				return nil
 			case <-sig.resume:
 				reenterRaw(int(stdin.Fd()))
-				if a.plainShown {
-					// Back from a stop while the brief is printed: print it again
-					// rather than a blank live screen.
-					_, _ = io.WriteString(stdout, plainScreen(a.plainText))
-					break
-				}
 				_, _ = io.WriteString(stdout, screenSetup) // bracketed paste etc. are off after a stop
 				paint.invalidate()
 				draw()

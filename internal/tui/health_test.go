@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -19,8 +20,8 @@ func TestFeedHealthOnTheEmptyTape(t *testing.T) {
 		},
 		read: time.Now(), // fresh: the test's statuses stand
 	}
-	text := viewText(h.lines(78, 4, now, true))
-	for _, want := range []string{"── feed · waiting for agent events", "last event 3h ago (cursor)", "cursor   wired", "claude   not wired · rex ingest --install claude", "4 events from other folders hidden"} {
+	text := viewText(h.lines(78, 4, skill.Missing, now, true))
+	for _, want := range []string{"── feed · waiting for agent events", "last event 3h ago (cursor)", "cursor   wired", "claude   not wired · rex ingest --install claude", "skill    missing · rex ingest --install-skill", "4 events from other folders hidden"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q\n%s", want, text)
 		}
@@ -48,7 +49,7 @@ func TestFeedHealthWrapsAndSaysWhatIsWiredHere(t *testing.T) {
 		},
 		read: now,
 	}
-	text := viewText(h.lines(38, 0, now, false))
+	text := viewText(h.lines(38, 0, skill.Current, now, false))
 	if !strings.Contains(text, "wired (this repo)") {
 		t.Fatalf("a --project install is wired here\n%s", text)
 	}
@@ -94,5 +95,21 @@ func TestAskClearsOnceTheToolRuns(t *testing.T) {
 	a.ingest([]watch.Event{{Source: "claude", Kind: "idle", Text: "turn completed", Meta: repo}})
 	if got := statusForTurn(a.turn, a.lastKind); got == "ask" {
 		t.Fatal("idle never says ask")
+	}
+}
+
+// The skill row says how the rex-plan skill stands, so an upgrader who
+// lands on a plan (never the Wait screen) can see it (docs/ux.md §10, §13).
+func TestFeedHealthSaysHowTheSkillStands(t *testing.T) {
+	h := feedHealth{path: "/x/session.jsonl", read: time.Now()}
+	for c, want := range map[skill.Copy]string{
+		skill.Current:      "skill    rex-plan current",
+		skill.Missing:      "skill    missing · rex ingest --install-skill",
+		skill.Stale:        "skill    out of date · rex ingest --install-skill",
+		skill.StaleProject: "skill    out of date · rex ingest --install-skill --project",
+	} {
+		if text := strings.Join(strings.Fields(viewText(h.lines(78, 0, c, time.Now(), false))), " "); !strings.Contains(text, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("%v: want %q\n%s", c, want, text)
+		}
 	}
 }

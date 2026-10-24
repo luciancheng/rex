@@ -77,30 +77,31 @@ func TestUserPromptBoxIsLeftAlignedInside(t *testing.T) {
 	}
 }
 
+// Rex has no plan actions: the only verbs are help and breakdance, as
+// /words in the plan list (docs/ux.md §2).
 func TestParseVerb(t *testing.T) {
-	cases := map[string][3]string{
-		"sendoff":        {"sendoff", "", "y"},
-		" /SendOff ":     {"sendoff", "", "y"},
-		"send off":       {"sendoff", "", "y"},
-		"handoff":        {"sendoff", "", "y"},
-		"s":              {"sendoff", "", "y"},
-		"b":              {"brief", "", "y"},
-		"done":           {"done", "", "y"},
-		"pin plans-ui":   {"pin", "plans-ui", "y"},
-		"p":              {"pin", "", "y"},
-		"?":              {"help", "", "y"},
-		"/help":          {"help", "", "y"},
-		"breakdance":     {"breakdance", "", "y"},
-		"done now":       {"", "", ""},
-		"idle":           {"", "", ""},
-		"sendoff please": {"", "", ""},
-		"what is s":      {"", "", ""},
-		"":               {"", "", ""},
+	cases := map[string]string{
+		"?":           "help",
+		"/help":       "help",
+		" /HELP ":     "help",
+		"breakdance":  "breakdance",
+		"/breakdance": "breakdance",
+		"sendoff":     "",
+		"s":           "",
+		"pin a":       "",
+		"p":           "",
+		"done":        "",
+		"d":           "",
+		"brief":       "",
+		"b":           "",
+		"help me":     "",
+		"idle":        "",
+		"":            "",
 	}
 	for in, want := range cases {
-		verb, arg, ok := parseVerb(in)
-		if verb != want[0] || arg != want[1] || ok != (want[2] == "y") {
-			t.Errorf("parseVerb(%q) = %q %q %v", in, verb, arg, ok)
+		verb, ok := parseVerb(in)
+		if verb != want || ok != (want != "") {
+			t.Errorf("parseVerb(%q) = %q %v", in, verb, ok)
 		}
 	}
 }
@@ -164,14 +165,14 @@ func TestApplyTurnStartsThinkingOnHookPrompt(t *testing.T) {
 	}
 }
 
-func TestApplyTurnIgnoresLocalComposer(t *testing.T) {
-	turn := ApplyTurn(TurnThinking, watch.Event{Source: "user", Kind: "text", Text: "a note"})
+func TestApplyTurnIgnoresRexsOwnLines(t *testing.T) {
+	turn := ApplyTurn(TurnThinking, watch.NewEvent("rex", "plan", "card-highlight → done", nil))
 	if turn != TurnThinking {
-		t.Fatal("composer must not end the turn")
+		t.Fatal("Rex's own lines never end the turn")
 	}
-	turn = ApplyTurn(TurnIdle, watch.Event{Source: "user", Kind: "text", Text: "hello"})
+	turn = ApplyTurn(TurnIdle, watch.NewEvent("rex", "drift", "soft README.md (next to plans.go)", nil))
 	if turn != TurnIdle {
-		t.Fatal("composer must not start thinking")
+		t.Fatal("Rex's own lines never start one")
 	}
 }
 

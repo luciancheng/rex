@@ -96,11 +96,15 @@ func TestOutlineAtAGlance(t *testing.T) {
 		"Selected plan card is one block · Bar, border, and fill",
 		"· load-outline",
 		"after card-highlight",
-		"outline · tab tape · esc plans · ⏎ detail · ?⏎ help",
-		"?⏎ help",
+		"outline · tab tape · esc plans · ⏎ detail · ? help",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("missing %q\n%s", want, frame)
+		}
+	}
+	for _, never := range []string{"╭", "p⏎", "d⏎", "s⏎", "b⏎", "?⏎"} {
+		if strings.Contains(frame, never) {
+			t.Errorf("the outline has no composer and no verbs: %q\n%s", never, frame)
 		}
 	}
 	if a.outline.sel != "card-highlight" {
@@ -131,7 +135,7 @@ func TestOutlineDetailAndBack(t *testing.T) {
 		t.Fatal("⏎ on a task opens its detail")
 	}
 	frame := a.frame()
-	for _, want := range []string{"── card-highlight · active · pinned", "after", "✓ plans-ui: Plans navigator", "then", "load-outline: Outline view", "needs", "pick / pickbg colors exist", "verify", "files", "detail · esc outline"} {
+	for _, want := range []string{"── card-highlight · active ──", "after", "✓ plans-ui: Plans navigator", "then", "load-outline: Outline view", "needs", "pick / pickbg colors exist", "verify", "files", "detail · esc outline"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("task detail missing %q\n%s", want, frame)
 		}
@@ -214,14 +218,195 @@ func TestOutlineReloadsOutsideEdits(t *testing.T) {
 	if a.statusLine().Text != "▸ card-highlight  Selected plan card is one block (active)" {
 		t.Fatalf("the toast expires: %q", a.statusLine().Text)
 	}
-	// Rex's own write is taken in quietly.
-	own := strings.Replace(edited, `"title": "Extra"`, `"title": "Extra", "status": "done"`, 1)
-	a.doc.own = plan.Hash([]byte(own))
-	os.WriteFile(path, []byte(own), 0o644)
-	logs := len(a.log)
+	if got, _ := os.ReadFile(path); string(got) != edited {
+		t.Fatal("reading the plan never writes it")
+	}
+}
+
+// The agent pins and finishes tasks in the file, and Rex follows: row 1,
+// the outline and a toast (docs/ux.md §7, §8).
+func TestTheAgentsPinAndDoneShow(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	done := strings.Replace(demoPlan, `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "depends_on": ["plans-ui"],
+      "accomplished": ["the bar spans all three card rows"],
+      "verified_how": ["go test ./internal/tui/"],
+      "completed_notes": "the pick colors were already there",`, 1)
+	os.WriteFile(path, []byte(done), 0o644)
 	later(a, c)
-	if len(a.log) != logs || strings.HasPrefix(a.statusLine().Text, "plan updated") {
-		t.Fatal("Rex's own write must not toast")
+	if got := a.statusLine().Text; got != "✓ card-highlight done · next up load-outline" {
+		t.Fatalf("the file finished the pin: %q", got)
+	}
+	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "card-highlight → done" {
+		t.Fatalf("tape line %+v", last)
+	}
+	a.settle(80, 24) // 38 text cells: the done id clips, the next one stays
+	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "✓ …ghlight done · next up load-outline" {
+		t.Fatalf("row 1 at 80×24: %q", row)
+	}
+	a.settle(120, 32)
+	c.t = c.t.Add(toastFor)
+	a.tick()
+	if got := a.statusLine().Text; got != "▸ load-outline  Outline view (next up)" {
+		t.Fatalf("then the next up task, with no verb to type: %q", got)
+	}
+	if !strings.Contains(a.frame(), "▸ load-outline") || !strings.Contains(a.frame(), "last ✓ card-highlight: the bar spans all three card rows") {
+		t.Fatalf("the outline follows the file\n%s", a.frame())
+	}
+	press(a, "home", "down", "down", "\r")
+	if a.at != atTaskDetail || a.outline.sel != "card-highlight" {
+		t.Fatalf("at=%d sel=%q", a.at, a.outline.sel)
+	}
+	detail := viewText(taskDetail(a.doc, a.outline.sel, 78)) // it scrolls; all of it
+	for _, want := range []string{"── retrospective", "the bar spans all three card rows", "go test ./internal/tui/", "the pick colors were already there"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("task detail shows %q\n%s", want, detail)
+		}
+	}
+	active := strings.Replace(done, `"status": "pending"`, `"status": "active"`, 1)
+	os.WriteFile(path, []byte(active), 0o644)
+	later(a, c)
+	if got := a.statusLine().Text; got != "plan updated · load-outline → active" {
+		t.Fatalf("the agent starts the next task: %q", got)
+	}
+	last := strings.Replace(active, `"status": "active",
+      "depends_on": ["card-highlight"],`, `"status": "done",
+      "depends_on": ["card-highlight"],`, 1)
+	last = strings.Replace(last, `"status": "active",
+  "scope"`, `"status": "done",
+  "scope"`, 1)
+	os.WriteFile(path, []byte(last), 0o644)
+	later(a, c)
+	if got := a.statusLine().Text; got != "✓ load-outline done · the plan is done" {
+		t.Fatalf("the last leaf: %q", got)
+	}
+	if got, _ := os.ReadFile(path); string(got) != last {
+		t.Fatal("Rex never writes the plan")
+	}
+}
+
+// docs/ux.md §8: when the file finishes the pin and what is left can't
+// start, row 1 says so instead of naming a next task.
+func TestTheAgentsDoneWithNothingUnblocked(t *testing.T) {
+	src := strings.Replace(demoPlan, `"status": "pending",
+      "depends_on": ["card-highlight"],`, `"status": "blocked",
+      "depends_on": ["card-highlight"],`, 1)
+	a, c, path := openDemo(t, src, 120, 32)
+	done := strings.Replace(src, `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "depends_on": ["plans-ui"],`, 1)
+	os.WriteFile(path, []byte(done), 0o644)
+	later(a, c)
+	if got := a.statusLine().Text; got != "✓ card-highlight done · nothing else is unblocked" {
+		t.Fatalf("the file finished the pin, the rest is blocked: %q", got)
+	}
+	if got, _ := os.ReadFile(path); string(got) != done {
+		t.Fatal("Rex never writes the plan")
+	}
+}
+
+// docs/ux.md §8: agents finish a task in several saves. One that only
+// adds the retrospective keeps the done news on row 1; one that moves a
+// task is news of its own.
+func TestTheDoneToastOutlastsTheRetrospective(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	done := strings.Replace(demoPlan, `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "depends_on": ["plans-ui"],`, 1)
+	os.WriteFile(path, []byte(done), 0o644)
+	later(a, c)
+	if got := a.statusLine().Text; got != "✓ card-highlight done · next up load-outline" {
+		t.Fatalf("save 1: %q", got)
+	}
+	c.t = c.t.Add(time.Second)
+	retro := strings.Replace(done, `"status": "done",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "accomplished": ["the bar spans all three card rows"],
+      "depends_on": ["plans-ui"],`, 1)
+	os.WriteFile(path, []byte(retro), 0o644)
+	later(a, c) // 1.5 s after save 1
+	if got := a.statusLine().Text; got != "✓ card-highlight done · next up load-outline" {
+		t.Fatalf("save 2, the retrospective only: %q", got)
+	}
+	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "edited" {
+		t.Fatalf("the tape still records it: %+v", last)
+	}
+	started := strings.Replace(retro, `"status": "pending"`, `"status": "active"`, 1)
+	os.WriteFile(path, []byte(started), 0o644)
+	later(a, c)
+	if got := a.statusLine().Text; got != "plan updated · load-outline → active" {
+		t.Fatalf("a task move is news: %q", got)
+	}
+}
+
+// When one save finishes the pin and starts the next task, the toast says
+// what is on now, not what is next up.
+func TestTheDoneToastSaysNowWhenTheNextIsStarted(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	both := strings.Replace(demoPlan, `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "depends_on": ["plans-ui"],`, 1)
+	both = strings.Replace(both, `"status": "pending"`, `"status": "active"`, 1)
+	os.WriteFile(path, []byte(both), 0o644)
+	later(a, c)
+	if got := a.statusLine().Text; got != "✓ card-highlight done · now load-outline" {
+		t.Fatalf("row 1 %q", got)
+	}
+	a.settle(80, 24) // 38 text cells: the done id clips, what is on now stays
+	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "✓ …d-highlight done · now load-outline" {
+		t.Fatalf("38 cells: %q", row)
+	}
+}
+
+// docs/ux.md §8: the plan is done when every leaf is done or skipped, as
+// row 1's pin line judges it, even before the agent's next save sets the
+// plan's own status; that save keeps the news and says so on the tape.
+func TestThePlanIsDoneBeforeItsStatusSays(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	leaves := strings.Replace(demoPlan, `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "depends_on": ["plans-ui"],`, 1)
+	leaves = strings.Replace(leaves, `"status": "pending"`, `"status": "skipped"`, 1)
+	os.WriteFile(path, []byte(leaves), 0o644)
+	later(a, c)
+	if got := a.statusLine().Text; got != "✓ card-highlight done · the plan is done" {
+		t.Fatalf("every leaf is done or skipped, the plan's status not yet: %q", got)
+	}
+	whole := strings.Replace(leaves, `"status": "active",
+  "scope"`, `"status": "done",
+  "scope"`, 1)
+	os.WriteFile(path, []byte(whole), 0o644)
+	later(a, c)
+	if got := a.statusLine().Text; got != "✓ card-highlight done · the plan is done" {
+		t.Fatalf("the plan's own status keeps the done news: %q", got)
+	}
+	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "plan → done" {
+		t.Fatalf("tape line %+v", last)
+	}
+	c.t = c.t.Add(toastFor)
+	a.tick()
+	if got := a.statusLine().Text; got != "no pin · all tasks done" {
+		t.Fatalf("then row 1 agrees: %q", got)
+	}
+}
+
+// The done toast keeps what is next when the row is narrow: the done id
+// clips from the left, then the tail shortens.
+func TestFitDone(t *testing.T) {
+	for _, c := range []struct {
+		width int
+		want  string
+	}{
+		{44, "✓ card-highlight done · next up load-outline"},
+		{38, "✓ …ghlight done · next up load-outline"},
+		{34, "✓ …hlight done · next load-outline"},
+		{20, "✓ done · next load-outline"}, // clip cuts the rest
+	} {
+		got := fitDone("card-highlight", " · next up load-outline", " · next load-outline", c.width)
+		if got != c.want || (c.width > 20 && cellLen(got) > c.width) {
+			t.Errorf("width %d: %q, want %q", c.width, got, c.want)
+		}
 	}
 }
 
@@ -236,8 +421,8 @@ func TestOutlineInvalidJSONIsDebounced(t *testing.T) {
 	if got := a.statusLine().Text; !regexp.MustCompile(`^plan JSON error \d+:\d+ · showing last good$`).MatchString(got) {
 		t.Fatalf("status %q", got)
 	}
-	if !strings.Contains(a.frame(), "▸ card-highlight") || a.doc.writable() == "" {
-		t.Fatal("the last good plan stays on screen, not writable")
+	if !strings.Contains(a.frame(), "▸ card-highlight") {
+		t.Fatal("the last good plan stays on screen")
 	}
 	os.WriteFile(path, []byte(demoPlan), 0o644)
 	later(a, c)
@@ -254,7 +439,7 @@ func TestOutlineInvalidJSONIsDebounced(t *testing.T) {
 func TestOutlineStates(t *testing.T) {
 	a, _, _ := openDemo(t, `{"version": 2, "tasks": [{"id": "a", "title": "A"}]}`, 120, 32)
 	frame := a.frame()
-	if !strings.Contains(frame, "read-only: version 2") || !strings.Contains(frame, "outline · read-only · esc plans") {
+	if !strings.Contains(frame, "read-only: version 2 · newer than this Rex reads") || strings.Contains(frame, "to edit") || !strings.Contains(frame, "outline · tab tape · esc plans") {
 		t.Fatalf("%s", frame)
 	}
 	b, _, _ := openDemo(t, `{"tasks": [{"id": "a", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]}]}`, 120, 32)
@@ -306,21 +491,26 @@ func TestOutlineScrollsAndKeepsTheSelection(t *testing.T) {
 	}
 }
 
-func TestOutlineTypingIsForVerbs(t *testing.T) {
-	a, _, _ := openDemo(t, demoPlan, 120, 32)
-	typeText(a, "zap")
-	press(a, "\r")
-	if a.statusLine().Text != "'zap' is not a verb · ?⏎ help" || a.draft != "zap" {
-		t.Fatalf("%q draft %q", a.statusLine().Text, a.draft)
+// The outline has no composer: letters, Backspace and a paste do nothing,
+// ? opens Help at once, and Esc goes straight to the plan list (docs/ux.md
+// §2, §3).
+func TestOutlineKeysActAtOnce(t *testing.T) {
+	a, _, path := openDemo(t, demoPlan, 120, 32)
+	before, _ := os.ReadFile(path)
+	frame := a.frame()
+	typeText(a, "zap pdsb")
+	press(a, "\x7f", "\x15", "\x17", PastePrefix+"pin load-outline")
+	if a.frame() != frame || a.draft != "" {
+		t.Fatalf("draft %q\n%s", a.draft, a.frame())
 	}
-	press(a, "esc")
-	if a.draft != "" || a.at != atOutline {
-		t.Fatal("Esc clears the draft first")
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Fatal("nothing typed on the outline writes the plan")
 	}
-	typeText(a, "?")
-	press(a, "\r")
-	if a.overlay[PanePlans] != overlayHelp {
-		t.Fatal("verbs run on the outline")
+	if press(a, "?"); a.overlay[PanePlans] != overlayHelp {
+		t.Fatal("? opens Help at once")
+	}
+	if press(a, "esc", "esc"); a.at != atLibrary {
+		t.Fatalf("Esc closes Help, then goes up to the plan list: at=%d", a.at)
 	}
 }
 
@@ -451,14 +641,16 @@ func TestATornSaveOfTheSameBytesIsQuiet(t *testing.T) {
 	}
 }
 
-func TestOutlineComposerTakesVerbs(t *testing.T) {
-	a, _, _ := openDemo(t, demoPlan, 120, 32)
-	if frame := a.frame(); !strings.Contains(frame, "│ > ") {
-		t.Fatalf("the outline's composer is the verb prompt\n%s", frame)
-	}
-	typeText(a, "zap")
-	if frame := a.frame(); strings.Contains(frame, "⏎ detail") || !strings.Contains(frame, "⏎ not a verb") {
-		t.Fatalf("the footer previews what ⏎ does with the draft\n%s", frame)
+// The outline's body takes the rows a composer would have used.
+func TestOutlineHasNoComposer(t *testing.T) {
+	for _, rows := range []int{7, 12, 24} {
+		a, _, _ := openDemo(t, demoPlan, 120, rows)
+		if f := a.frame(); strings.Contains(f, "│ > ") || strings.Contains(f, " > ") {
+			t.Fatalf("%d rows: no composer\n%s", rows, f)
+		}
+		if got, want := a.layout().bodyH, rows-3; got != want {
+			t.Fatalf("%d rows: body %d, want %d", rows, got, want)
+		}
 	}
 }
 

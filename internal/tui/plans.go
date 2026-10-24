@@ -892,19 +892,13 @@ func (row PlanRow) Color() string {
 	}
 }
 
+// composerPrefix marks the plan list's composer, the only one (docs/ux.md
+// §2): + names a plan or folder, / finds on Home and filters in Browse.
 func composerPrefix(opt ComposeOptions) string {
-	if opt.Prefix != "" {
-		return opt.Prefix
-	}
-	if opt.Overlay != nil || opt.Pane != PanePlans || opt.Plans == nil || opt.PlanView != nil {
-		return InputPrefix // the open plan, like the tape, takes verbs
-	}
-	switch opt.Plans.Screen {
-	case ScreenCreate, ScreenFolder:
+	if b := opt.Plans; b != nil && (b.Screen == ScreenCreate || b.Screen == ScreenFolder) {
 		return " + "
-	default:
-		return " / " // Home finds, Browse filters
 	}
+	return " / "
 }
 
 func BuildPlanView(b *PlanBrowser, width int) []LogLine {

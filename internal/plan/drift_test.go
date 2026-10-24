@@ -66,18 +66,20 @@ func TestCheckPrompt(t *testing.T) {
 		prompt string
 		level  DriftLevel
 		reason string
+		names  string
 	}{
-		{"make the selected card highlight cover all three rows", OnPin, ""},
-		{"now add a few extra palettes for dark mode", Hard, "asks for extra palettes, which is out of scope"},
-		{"go do load-outline next", Soft, "names load-outline, not the pin"},
-		{"rewrite the billing service invoice exporter in rust today", Soft, "shares no words with card-highlight"},
-		{"fix it", OnPin, ""},
-		{"Send-off: x\nrex-sendoff: rex/plans/x.rex.json#other\nload-outline extra palettes", OnPin, ""},
+		{"make the selected card highlight cover all three rows", OnPin, "", ""},
+		{"now add a few extra palettes for dark mode", Hard, "asks for extra palettes, which is out of scope", ""},
+		{"go do load-outline next", Soft, "names load-outline, not the pin", "load-outline"},
+		{"rewrite the billing service invoice exporter in rust today", Soft, "shares no words with card-highlight", ""},
+		{"fix it", OnPin, "", ""},
+		// Rex makes no briefs any more: pasted text is a prompt like any other.
+		{"Send-off: x\nrex-sendoff: rex/plans/x.rex.json#other\nload-outline extra palettes", Hard, "asks for extra palettes, which is out of scope", ""},
 	}
 	for _, c := range cases {
 		d := CheckPrompt(p, pin, c.prompt)
-		if d.Level != c.level || d.Reason != c.reason {
-			t.Errorf("%q: %v %q", c.prompt, d.Level, d.Reason)
+		if d.Level != c.level || d.Reason != c.reason || d.Names != c.names {
+			t.Errorf("%q: %v %q names %q", c.prompt, d.Level, d.Reason, d.Names)
 		}
 	}
 }
@@ -115,7 +117,7 @@ func TestDriftMatchesWholeEntriesAndWords(t *testing.T) {
 		{"now build a web UI that shows the plans", Hard},
 		{"finish this before ui and base are touched again", OnPin}, // its parent and what it waits on
 		{"also do other after this", Soft},
-		{"Planning brief: rex/plans/x.rex.json\n\nTasks now: 4 (ui, card, base, other)", OnPin},
+		{"Planning brief: rex/plans/x.rex.json\n\nTasks now: 4 (ui, card, base, other)", Soft},
 	} {
 		if got := prompt(c.prompt); got.Level != c.level {
 			t.Errorf("%q: %v (%s), want %v", c.prompt, got.Level, got.Reason, c.level)

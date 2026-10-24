@@ -21,6 +21,12 @@ const driftDemo = `{
   ]
 }`
 
+// at stamps an event at the test clock plus d.
+func at(c *clock, d time.Duration, ev watch.Event) watch.Event {
+	ev.TS = float64(c.t.Add(d).UnixNano()) / 1e9
+	return ev
+}
+
 func edit(a *app, c *clock, d time.Duration, rel string) watch.Event {
 	p := filepath.Join(a.plans.Repo, rel)
 	return at(c, d, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + p, Meta: map[string]any{"tool": "Write", "path": p, "ok": true}})
@@ -28,7 +34,7 @@ func edit(a *app, c *clock, d time.Duration, rel string) watch.Event {
 
 func TestDriftIsShownNeverSent(t *testing.T) {
 	a, c, path := openDemo(t, driftDemo, 120, 32)
-	a.feed = filepath.Join(t.TempDir(), "session.jsonl")
+	feed := watch.DefaultEventPath() // under the test's HOME
 	planBefore, _ := os.ReadFile(path)
 	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
 	if got := a.statusLine().Text; got != "drift · hard: README.md · outside card-highlight files" {
@@ -63,14 +69,13 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 	if after, _ := os.ReadFile(path); string(after) != string(planBefore) {
 		t.Fatal("drift never writes the plan")
 	}
-	if _, err := os.Stat(a.feed); !os.IsNotExist(err) {
+	if _, err := os.Stat(feed); !os.IsNotExist(err) {
 		t.Fatal("drift never writes the feed")
 	}
-	// A new pin clears row 1 and starts a new block.
-	typeText(a, "pin load-outline")
-	press(a, "\r")
-	typeText(a, "p")
-	press(a, "\r")
+	// The agent pins another task: row 1 clears and a new block starts.
+	moved := strings.Replace(strings.Replace(driftDemo, `"status": "active"`, `"status": "done"`, 1), `"title": "Outline",`, `"title": "Outline", "status": "active",`, 1)
+	os.WriteFile(path, []byte(moved), 0o644)
+	later(a, c)
 	if strings.HasPrefix(a.statusLine().Text, "drift") {
 		t.Fatal(a.statusLine().Text)
 	}
@@ -182,8 +187,143 @@ func TestOnePatchManyFiles(t *testing.T) {
 	if view := viewText(BuildLogView(a.log, 78)); !strings.Contains(view, "hard README.md") || !strings.Contains(view, "soft internal/tui/live_view.go") {
 		t.Fatalf("every off-pin file of the patch is in the block:\n%s", view)
 	}
-	ev := gather(a.seen, a.scope, c.t, "", "card-highlight", nil)
-	if strings.Join(ev.files, ",") != "README.md,internal/tui/live_view.go,internal/tui/plans.go" {
-		t.Fatalf("every patched file is evidence: %q", ev.files)
+}
+
+// One batch both saves the plan (the pin moves on) and edits a file of
+// the new pin: a parallel tool call, or a Codex patch touching both. The
+// edit is judged against the plan it was written with, so it isn't drift
+// (docs/ux.md §9a).
+func TestABatchThatMovesThePinIsJudgedAgainstTheNewPin(t *testing.T) {
+	a, c, path := cujApp(t)
+	repo := a.plans.Repo
+	data, _ := os.ReadFile(path)
+	moved := strings.Replace(string(data), `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "depends_on": ["plans-ui"],`, 1)
+	moved = strings.Replace(moved, `"status": "pending",
+      "depends_on": ["card-highlight"],`, `"status": "active",
+      "depends_on": ["card-highlight"],`, 1)
+	os.WriteFile(path, []byte(moved), 0o644)
+	code := filepath.Join(repo, "internal", "tui", "outline.go") // listed for load-outline
+	a.ingest([]watch.Event{
+		at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Write", "path": path, "ok": true, "cwd": repo}}),
+		at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + code, Meta: map[string]any{"tool": "Edit", "path": code, "ok": true, "cwd": repo}}),
+	})
+	if got := a.statusLine().Text; got != "✓ card-highlight done · now load-outline" {
+		t.Fatalf("row 1 after the batch: %q", got)
+	}
+	later(a, c)
+	c.t = c.t.Add(toastFor)
+	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") || got != "▸ load-outline  Outline view (active)" {
+		t.Fatalf("row 1: %q", got)
+	}
+	if view := viewText(BuildLogView(a.log, 78)); strings.Contains(view, "── drift") {
+		t.Fatalf("no drift block\n%s", view)
+	}
+}
+
+// The converse: the finished task's last edit and the save that marks it
+// done share a batch, in that order or as one patch. The edit was made
+// under the old pin, so it isn't drift either (docs/ux.md §9a).
+func TestTheFinishedTasksLastEditIsNotDrift(t *testing.T) {
+	for _, patch := range []bool{false, true} {
+		a, c, path := cujApp(t)
+		repo := a.plans.Repo
+		data, _ := os.ReadFile(path)
+		done := strings.Replace(string(data), `"status": "active",
+      "depends_on": ["plans-ui"],`, `"status": "done",
+      "depends_on": ["plans-ui"],`, 1)
+		os.WriteFile(path, []byte(done), 0o644)
+		code := filepath.Join(repo, "internal", "tui", "live.go") // listed for card-highlight only
+		evs := []watch.Event{
+			at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + code, Meta: map[string]any{"tool": "Edit", "path": code, "ok": true, "cwd": repo}}),
+			at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Write", "path": path, "ok": true, "cwd": repo}}),
+		}
+		if patch {
+			evs = []watch.Event{at(c, 0, watch.Event{Source: "codex", Kind: "result", Text: "wrote " + code, Meta: map[string]any{"tool": "apply_patch", "path": code, "paths": []any{code, path}, "ok": true, "cwd": repo}})}
+		}
+		a.ingest(evs)
+		if got := a.statusLine().Text; !strings.HasPrefix(got, "✓ card-highlight done") {
+			t.Fatalf("patch=%v: row 1 after the batch: %q", patch, got)
+		}
+		later(a, c)
+		c.t = c.t.Add(toastFor)
+		if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
+			t.Fatalf("patch=%v: row 1: %q", patch, got)
+		}
+		if view := viewText(BuildLogView(a.log, 78)); strings.Contains(view, "── drift") {
+			t.Fatalf("patch=%v: no drift block\n%s", patch, view)
+		}
+	}
+}
+
+const switchDemo = `{"version":1,"id":"auth","title":"Login with passkeys","goal":"Users sign in with a passkey.","status":"active","tasks":[
+ {"id":"passkey-ui","title":"Passkey button","status":"active","files":["web/signin/"]},
+ {"id":"recovery","title":"Recovery codes","status":"pending"},
+ {"id":"audit-log","title":"Audit log","status":"pending"}]}`
+
+// switchTo is the agent starting id as the skill teaches: it active, the
+// old pin pending, saved with its file tool.
+func switchTo(t *testing.T, a *app, c *clock, path, from, id string, d time.Duration) {
+	t.Helper()
+	data, _ := os.ReadFile(path)
+	s := setStatus(setStatus(string(data), from, "pending"), id, "active")
+	os.WriteFile(path, []byte(s), 0o644)
+	a.ingest([]watch.Event{at(c, d, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Edit", "path": path, "ok": true}})})
+}
+
+// setStatus sets task id's status in a one-line task object of src.
+func setStatus(src, id, status string) string {
+	s := src
+	i := strings.Index(s, `"id":"`+id+`"`)
+	j := i + strings.Index(s[i:], `"status":"`) + len(`"status":"`)
+	k := j + strings.Index(s[j:], `"`)
+	return s[:j] + status + s[k:]
+}
+
+// Asking the agent to start another task is how the pin moves now: the
+// prompt names that task, and once the agent makes it the pin, it was a
+// switch, not drift (docs/ux.md §9a).
+func TestAskingTheAgentToSwitchTasksIsNotDrift(t *testing.T) {
+	a, c, path := openDemo(t, switchDemo, 120, 32)
+	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "start recovery"})})
+	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
+		t.Fatalf("held while the turn runs: %q", got)
+	}
+	switchTo(t, a, c, path, "passkey-ui", "recovery", 2*time.Second)
+	a.ingest([]watch.Event{at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Started recovery."})})
+	later(a, c)
+	c.t = c.t.Add(toastFor)
+	if got := a.statusLine().Text; got != "▸ recovery  Recovery codes (active)" {
+		t.Fatalf("row 1 %q", got)
+	}
+	if tape := viewText(BuildLogView(a.log, 100)); strings.Contains(tape, "── drift") {
+		t.Fatalf("the switch left a drift block\n%s", tape)
+	}
+}
+
+// A prompt that names another task is still drift when its turn ends with
+// the pin where it was, or moved somewhere else.
+func TestNamingAnotherTaskDriftsWhenThePinStays(t *testing.T) {
+	a, c, path := openDemo(t, switchDemo, 120, 32)
+	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "start recovery"})})
+	a.ingest([]watch.Event{at(c, 2*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Let's finish the passkey button first."})})
+	if got := a.statusLine().Text; got != "drift · soft: start recovery · names recovery, not the pin" {
+		t.Fatalf("the turn ended on the old pin: %q", got)
+	}
+	if tape := viewText(BuildLogView(a.log, 100)); !strings.Contains(tape, "── drift · passkey-ui") || !strings.Contains(tape, "soft start recovery (names recovery, not the pin)") {
+		t.Fatalf("recorded as before\n%s", tape)
+	}
+
+	// The agent starts a third task instead: judged against that pin at the
+	// turn's end.
+	a.ingest([]watch.Event{at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "user", Text: "now do recovery"})})
+	switchTo(t, a, c, path, "passkey-ui", "audit-log", 4*time.Second)
+	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
+		t.Fatalf("still held under the new pin: %q", got)
+	}
+	a.ingest([]watch.Event{at(c, 5*time.Second, watch.Event{Source: "claude", Kind: "idle"})})
+	if tape := viewText(BuildLogView(a.log, 100)); !strings.Contains(tape, "── drift · audit-log") || !strings.Contains(tape, "soft now do recovery (names recovery, not the pin)") {
+		t.Fatalf("the new pin's block\n%s", tape)
 	}
 }

@@ -8,6 +8,8 @@ package plan
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,7 +60,9 @@ type Plan struct {
 
 	// Problems are what Parse could not read or does not trust.
 	Problems []Problem `json:"-"`
-	// ReadOnly says why Rex must not write this file, or is "".
+	// ReadOnly says why a tool that reads only v1 should not edit this
+	// file (a newer version, tasks that aren't a list, conflict markers),
+	// or is "".
 	ReadOnly string `json:"-"`
 }
 
@@ -125,6 +129,12 @@ func ReadFile(path string) ([]byte, error) {
 		err = fmt.Errorf("%s is over %d MB; plans are small", filepath.Base(path), MaxFile>>20)
 	}
 	return data, err
+}
+
+// Hash identifies a version of a plan file's bytes.
+func Hash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // Load reads and parses the plan at path.
@@ -293,12 +303,12 @@ func (r *reader) plan(root *jsonedit.Node) {
 		}
 		switch {
 		case err != nil || v < 1:
-			// Rex can't tell which format this is, so it won't write it.
+			// Rex can't tell which format this is, so no v1 tool should edit it.
 			r.problem("plan", "version is not a whole number from 1")
-			r.readOnly("version unreadable · fix it to edit")
+			r.readOnly("version unreadable")
 		case v > Version:
 			r.problem("plan", "version %d is newer than this Rex reads (%d)", v, Version)
-			r.readOnly(fmt.Sprintf("version %d · update rex to edit", v))
+			r.readOnly(fmt.Sprintf("version %d · newer than this Rex reads", v))
 			p.Version = v
 		default:
 			p.Version = v

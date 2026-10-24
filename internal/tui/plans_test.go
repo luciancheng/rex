@@ -424,7 +424,7 @@ func TestComposeFramePlansPane(t *testing.T) {
 	b := NewPlanBrowser(repo)
 	frame := ComposeFrame("idle", "yellow", ComposeOptions{
 		Enabled: false, Columns: 80, Lines: 24,
-		Pane: PanePlans, Plans: b,
+		Pane: PanePlans, Plans: b, Composer: true,
 	})
 	if !strings.Contains(frame, "── plans") || !strings.Contains(frame, "Create a plan") {
 		t.Fatalf("%s", frame)

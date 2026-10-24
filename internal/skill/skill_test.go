@@ -49,9 +49,43 @@ func TestSkillNamesEveryField(t *testing.T) {
 			}
 		}
 	}
-	for _, rule := range []string{"accomplished:", "verified:", "rex-sendoff:", "One task, one PR", "Never in a plan"} {
+	for _, rule := range []string{"One task, one PR", "Never in a plan"} {
 		if !strings.Contains(s, rule) {
 			t.Errorf("missing %q", rule)
+		}
+	}
+}
+
+// The agent drives the plan and Rex only shows it (docs/ux.md §7, §8, §9):
+// the skill teaches which plan and task to work, how to start and finish a
+// task in the file, and never sends the person to Rex to act or to paste.
+func TestTheSkillHasTheAgentWorkThePlan(t *testing.T) {
+	s := string(RexPlan)
+	for _, want := range []string{
+		"## Working a plan", "re-read it at the start of every turn", "whose top-level `status` is `active`", "else ask",
+		"**The current task** is the leaf task with `\"status\": \"active\"`", "first `pending` leaf, in file order",
+		"**Starting a task.**", "set any other `active` leaf to `pending`", "Never write a parent's status",
+		"**Finishing a task.**", "set the plan's own top-level `status` to `done`", "Then stop and report",
+		"fill its completion fields", "Then set its `status` to `done`, in the same save if you can",
+		"inside the task objects you change (plus the plan's own `status`)", "keep every other byte", "never mark a task done that you did not finish",
+		"Rex has no actions of its own: never tell the person to create, open, pin or mark anything done in Rex",
+		"### Its PR, when the plan is a stack", "nearest earlier leaf task that is `done`", "later leaves that are `done`",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	// Starting a task demotes another task's active leaf, so edits are
+	// never confined to one task's object.
+	for _, never := range []string{"rex-sendoff", "send-off", "sendoff", "trailer", "d⏎", "p⏎", "s⏎", "b⏎", "paste", "inside that task's object"} {
+		if strings.Contains(strings.ToLower(s), never) {
+			t.Errorf("the skill still speaks of %q", never)
+		}
+	}
+	desc := s[:strings.Index(s, "\n---")]
+	for _, trigger := range []string{"plan work for Rex", ".rex.json", "work, continue or pick up a Rex plan or one of its tasks"} {
+		if !strings.Contains(desc, trigger) {
+			t.Errorf("the description doesn't trigger on %q", trigger)
 		}
 	}
 }
@@ -87,14 +121,170 @@ func TestInstallAndUninstall(t *testing.T) {
 	}
 }
 
-func TestDir(t *testing.T) {
+// Codex reads .agents/skills, Claude Code .claude/skills (or
+// $CLAUDE_CONFIG_DIR), Cursor and OpenCode both: every agent gets a copy.
+func TestDirs(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	if Dir("/h", "/r", false) != filepath.Join("/h", ".claude", "skills", "rex-plan") || Dir("/h", "/r", true) != filepath.Join("/r", ".claude", "skills", "rex-plan") {
-		t.Fatal(Dir("/h", "/r", false))
+	h, r := filepath.Join("h"), filepath.Join("r")
+	want := []string{filepath.Join(h, ".claude", "skills", "rex-plan"), filepath.Join(h, ".agents", "skills", "rex-plan")}
+	if got := Dirs(h, r, false); !reflect.DeepEqual(got, want) {
+		t.Fatalf("user %q", got)
 	}
-	t.Setenv("CLAUDE_CONFIG_DIR", "/c")
-	if Dir("/h", "/r", false) != filepath.Join("/c", "skills", "rex-plan") {
-		t.Fatal("CLAUDE_CONFIG_DIR")
+	want = []string{filepath.Join(r, ".claude", "skills", "rex-plan"), filepath.Join(r, ".agents", "skills", "rex-plan")}
+	if got := Dirs(h, r, true); !reflect.DeepEqual(got, want) {
+		t.Fatalf("project %q", got)
+	}
+	if got := Dirs("", r, false); got[0] != "" || got[1] != "" {
+		t.Fatalf("no home, no folder (never one relative to the cwd): %q", got)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join("c"))
+	if got := Dirs(h, r, false); got[0] != filepath.Join("c", "skills", "rex-plan") || got[1] != filepath.Join(h, ".agents", "skills", "rex-plan") {
+		t.Fatalf("CLAUDE_CONFIG_DIR moves Claude Code's copy only: %q", got)
+	}
+	if got := Dirs("", r, false); got[0] == "" || got[1] != "" {
+		t.Fatalf("CLAUDE_CONFIG_DIR without a home: %q", got)
+	}
+}
+
+// Look finds Rex's SKILL.md in any of the four folders, and never a
+// SKILL.md Rex didn't write.
+func TestLook(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home, repo := t.TempDir(), t.TempDir()
+	if Look(home, repo) != Missing || Look(home, "") != Missing {
+		t.Fatal("nothing installed yet")
+	}
+	for _, dir := range append(Dirs(home, repo, false), Dirs(home, repo, true)...) {
+		if err := Install(dir, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if Look(home, repo) != Current {
+			t.Fatalf("installed at %s", dir)
+		}
+		Uninstall(dir, io.Discard)
+		if Look(home, repo) != Missing {
+			t.Fatalf("uninstalled at %s", dir)
+		}
+	}
+	own := filepath.Join(Dirs(home, repo, true)[1], "SKILL.md")
+	os.MkdirAll(filepath.Dir(own), 0o755)
+	os.WriteFile(own, []byte("my own skill"), 0o644)
+	if Look(home, repo) != Missing {
+		t.Fatal("a SKILL.md Rex didn't write is not Rex's skill")
+	}
+
+	// Claude Code reads $CLAUDE_CONFIG_DIR, but Cursor and OpenCode still
+	// read ~/.claude/skills (Legacy): a copy in either one counts.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	for _, dir := range []string{Dirs(home, repo, false)[0], filepath.Join(home, ".claude", "skills", "rex-plan")} {
+		if err := Install(dir, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if Look(home, repo) != Current {
+			t.Fatalf("with CLAUDE_CONFIG_DIR, installed at %s", dir)
+		}
+		Uninstall(dir, io.Discard)
+		if Look(home, repo) != Missing {
+			t.Fatalf("with CLAUDE_CONFIG_DIR, uninstalled at %s", dir)
+		}
+	}
+}
+
+// A copy an older Rex wrote still teaches its workflow (Rex marking tasks
+// done, a send-off trailer) until --install-skill replaces it, so Look
+// calls it Stale, this user's before the repo's.
+func TestLookFindsAnOlderRexsCopy(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home, repo := t.TempDir(), t.TempDir()
+	old := []byte("---\nname: rex-plan\n---\n" + marker + " -->\nThe person marks tasks done in Rex (d⏎).\n")
+	plant := func(dir string) {
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, "SKILL.md"), old, 0o644)
+	}
+	mine, project := Dirs(home, repo, false), Dirs(home, repo, true)
+	plant(mine[0])
+	plant(project[1])
+	if got := Look(home, repo); got != Stale {
+		t.Fatalf("an old copy in ~/.claude/skills: %v", got)
+	}
+	for _, dir := range mine {
+		if err := Install(dir, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := Look(home, repo); got != StaleProject {
+		t.Fatalf("this user's copies are new, the repo's .agents/skills isn't: %v", got)
+	}
+	if got := Look(home, ""); got != Current {
+		t.Fatalf("outside a repo only this user's copies count: %v", got)
+	}
+	for _, dir := range project {
+		if err := Install(dir, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := Look(home, repo); got != Current {
+		t.Fatalf("every copy replaced: %v", got)
+	}
+
+	// With $CLAUDE_CONFIG_DIR set, Cursor and OpenCode still read
+	// ~/.claude/skills, and --install-skill updates Rex's copy there too:
+	// an old one is Stale like any of this user's.
+	for _, dir := range append(mine, project...) {
+		Uninstall(dir, io.Discard)
+	}
+	plant(mine[0])
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	if got := Look(home, repo); got != Stale {
+		t.Fatalf("an old copy in ~/.claude/skills beside CLAUDE_CONFIG_DIR: %v", got)
+	}
+	for _, dir := range Dirs(home, repo, false) {
+		if err := Install(dir, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := Look(home, repo); got != Stale {
+		t.Fatalf("the new copies don't hide the old one Cursor and OpenCode read: %v", got)
+	}
+	if err := Install(Legacy(home), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := Look(home, repo); got != Current {
+		t.Fatalf("every copy replaced: %v", got)
+	}
+}
+
+// Legacy is ~/.claude/skills/rex-plan only while $CLAUDE_CONFIG_DIR moves
+// Claude Code's copy somewhere else.
+func TestLegacy(t *testing.T) {
+	home := filepath.Join("h")
+	old := filepath.Join(home, ".claude", "skills", "rex-plan")
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if got := Legacy(home); got != "" {
+		t.Fatalf("no CLAUDE_CONFIG_DIR: %q", got)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	if got := Legacy(home); got != "" {
+		t.Fatalf("CLAUDE_CONFIG_DIR is ~/.claude: %q", got)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join("c"))
+	if got := Legacy(home); got != old {
+		t.Fatalf("%q", got)
+	}
+	if got := Legacy(""); got != "" {
+		t.Fatalf("no home: %q", got)
+	}
+	dir := t.TempDir()
+	if Ours(dir) {
+		t.Fatal("no SKILL.md")
+	}
+	os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("my own skill"), 0o644)
+	if Ours(dir) {
+		t.Fatal("not Rex's")
+	}
+	os.WriteFile(filepath.Join(dir, "SKILL.md"), RexPlan, 0o644)
+	if !Ours(dir) {
+		t.Fatal("Rex's")
 	}
 }
 

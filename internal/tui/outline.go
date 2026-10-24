@@ -180,6 +180,7 @@ const (
 	atOutline
 	atPlanDetail
 	atTaskDetail
+	atWait // no plan yet: Rex waits for the agent to write one (docs/ux.md §11)
 )
 
 // outlineView is where you are in the open plan: the selected row by

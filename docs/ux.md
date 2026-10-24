@@ -2,7 +2,7 @@
 
 This is the target design for the REX CLI loop:
 
-create → pin → watch → complete → send off → see drift → quit
+the agent writes a plan (Rex opens it) → pin → watch → complete → send off → see drift → quit
 
 It records each decision, the friction it removes, and which slice of work owns it. TUI changes cite the section they implement. `AGENTS.md` is still the contributor contract. Where this spec changes an `AGENTS.md` rule, the change that ships it updates `AGENTS.md` too.
 
@@ -21,16 +21,16 @@ Rex has exactly **two places**. **Tab** switches between them and does nothing e
 
 | Place | Screens |
 |---|---|
-| **PLAN** | Library (Home, Find, Browse, Name prompt) · Outline · Plan detail · Task detail |
+| **PLAN** | Wait (no plan yet) · Library (Home, Find, Browse, Name prompt) · Outline · Plan detail · Task detail |
 | **TAPE** | Live tape |
 
 **Overlays** open on top of whichever place you are in: Completion, Send-off (also used for the planning brief), Help, and Pin confirm. Esc closes them, and Tab leaves them open in their place.
 
-Each place remembers its screen, its selection, its scroll position, its draft, and any open overlay. Tab away and back, and everything is where you left it.
+Each place remembers its screen, its selection, its scroll position, its draft, and any open overlay. Tab away and back, and everything is where you left it, unless an attach opened another plan in PLAN meanwhile (below, §11).
 - Selection is kept by **identity**: plan path or task id. Row indexes are not used.
 - A reload, resize or rebuild keeps the same plan or task selected. If that item disappears, the selection falls back to the pin, then to the nearest row. One more exception: when a plan with no tasks (or one that didn't parse) gains its first tasks, the selection goes to the pin, as opening the plan does.
 
-**Events never move you.** Hook events, plan reloads and toasts change what is drawn. They never change the place, screen, selection or draft. Only keys do. The two selection fallbacks above are the only exceptions.
+**Events never move you, with one exception.** Hook events, plan reloads and toasts change what is drawn. They never change the place, selection or draft. Only keys do, apart from the two selection fallbacks above and **attach** (§11): while the session is unlatched (*following*), a completed write of a plan file in this repo's `rex/plans/` opens that plan's outline in PLAN, and so does a plan file the cold-start scan finds while no plan is open. Even then the place never changes (on the tape you stay on the tape), and a draft in PLAN (except on the Wait screen, where it carries over to the outline), a Name prompt, or an open Completion, Send-off or Pin confirm (in either place) holds the attach until it clears; row 1 says it is waiting. A latched session is never moved: the new plan is only offered on row 1 (§4), and taking it waits for the same things.
 
 ---
 
@@ -40,6 +40,7 @@ Letters always type into the composer. What the text means depends on the screen
 
 | Screen | Composer means | Prefix | Empty placeholder (dim) |
 |---|---|---|---|
+| Wait (no plan yet) | a verb | ` > ` | `?⏎ help` |
 | Library Home | find a plan across `rex/plans/**` | ` / ` | `find or create a plan` |
 | Browse | filter this folder | ` / ` | `type to filter` |
 | Name prompt | plan or folder name | ` + ` | `plan name (a/b for a folder)` |
@@ -51,7 +52,7 @@ Letters always type into the composer. What the text means depends on the screen
 | Help | – | ` > ` | `esc to close` |
 
 **Where verbs run:**
-- Verbs run on the Outline, Plan / Task detail, and the Tape.
+- Verbs run on the Wait screen, the Outline, Plan / Task detail, and the Tape.
 - In the Library composers (Home find, Browse filter, Name prompt), text is taken literally, so `d⏎` there finds or names "d". A leading `/` forces a verb: `/help⏎`, `/breakdance⏎`, and, once a plan is open, `/sendoff⏎`, `/brief⏎`, `/done⏎`.
 - Inside an overlay only that overlay's own inputs work (below); close it first for anything else.
 - A lone `?⏎` opens Help from any screen. Inside an overlay it is that overlay's input like any other text (Pin confirm: cancels).
@@ -97,17 +98,22 @@ Rules:
 | ↑↓ PgUp/PgDn | move | move | – | move (2-row margin) | scroll | scroll 1 line / 1 page | move field / scroll |
 | Home / End | first / last | first / last | – | first / last | top / bottom | oldest / live | – |
 | Ctrl+A / Ctrl+E | – | – | – | – | – | oldest / live | – |
-| ⏎, empty draft | open the selected card or recent | open the plan or enter the folder | "type a name first" | title row → Plan detail; task row → Task detail | – | – | Completion: save; others: nothing |
+| ⏎, empty draft | open the selected card or recent | open the plan or enter the folder | "type a name first" | title row → Plan detail; task row → Task detail; with a new-plan offer on row 1, switch to it | with an offer, switch to it | with an offer, switch PLAN to it (you stay on the tape) | Completion: save; others: nothing |
 | ⏎, with draft | open the selected match, or create from `+ Create 'x'` | open the selected match | create, then open its outline (plan) or enter it (folder) | run the verb | run the verb | run the verb, or add a note | Completion: save · Send-off: `c` copies, `o` prints plain · Pin confirm: `p` writes, anything else cancels · Help: nothing |
 | → | – | enter the folder | – | Task detail | – | – | – |
-| Esc | clear the find text, else nothing | clear the filter, else up one folder, else to Home | clear the name, else cancel (nothing written) | clear the draft, else to Library (cursor on **Continue**) | clear the draft, else back to Outline | clear the draft | close, nothing written |
-| ← (empty draft only) | – | up one folder, else to Home | – | to Library | back to Outline | – | – |
+| Esc | clear the find text, else back to Wait while no plan is open, else nothing | clear the filter, else up one folder, else to Home | clear the name, else cancel (nothing written) | clear the draft, else to Library (cursor on **Continue**) | clear the draft, else back to Outline | clear the draft | close, nothing written |
+| ← (empty draft only) | back to Wait while no plan is open | up one folder, else to Home | – | to Library | back to Outline | – | – |
 | Tab | to TAPE | to TAPE | to TAPE (draft kept) | to TAPE | to TAPE | to PLAN | the overlay stays open in its place |
 | Ctrl+L | full repaint | full repaint | full repaint | full repaint | full repaint | full repaint | full repaint |
 | Ctrl+C | clear + arm quit | clear + arm quit | clear + arm quit | clear + arm quit | clear + arm quit | clear + arm quit | cancel + arm quit |
 
+The Wait screen (§11) takes verbs like the Outline; ↑↓, PgUp/PgDn and Home/End scroll its copy when it runs past a short screen; Esc or ← with an empty draft goes to Library Home, and ⏎ on an empty draft does nothing.
+
+⏎ switches to a new-plan offer only while row 1 shows it (the plan file's error, a toast or hard drift cover it, §4) and opening it would lose nothing: not while PLAN's draft has text, nor while a Completion, Send-off or Pin confirm is open in either place (§11). Otherwise row 1 drops `· ⏎ switch` (or doesn't show the offer) and ⏎ does what it does without an offer.
+
 Esc first clears a non-empty draft. With an empty draft it goes **up one level within the place**:
 - Detail → Outline → Library Home.
+- Wait → Library Home → Wait, while no plan is open: Esc (or ←) takes you back and forth, so the Wait screen is never lost. With a plan open, Home is the top.
 - Browse → parent folder → Home.
 
 At the top of the ladder, Esc does nothing. It never switches place and never quits.
@@ -130,12 +136,12 @@ rex: rex/plans/cuj/sendoff-demo.rex.json · pinned card-highlight
 ### Row 0: header
 
 ```
-REX plan                       running · rex/plans/cuj/sendoff-demo.rex.json
+REX plan            running · following · rex/plans/cuj/sendoff-demo.rex.json
 ```
 
 - Left: `REX` plus the place word, `plan` or `tape`.
-- Right: the turn-state word, then the open plan path relative to the repo root.
-- The state word is colored, and `ask` / `error` use the error color.
+- Right: the turn-state word, then, while a plan is open, `following` or `latched` (§11), then the open plan path relative to the repo root: `running · following · rex/plans/cuj/sendoff-demo.rex.json`.
+- The state word is colored, and `ask` / `error` use the error color. `following` / `latched` are words, so they read under NO_COLOR.
 - The same header appears on **every** screen. The turn state and the open plan are never hidden while you browse.
 - The full repo-relative path (`rex/plans/cuj/sendoff-demo.rex.json`) is shown whenever it fits. When it does not fit, it is shortened in this order:
   1. drop `rex/plans/`;
@@ -143,6 +149,7 @@ REX plan                       running · rex/plans/cuj/sendoff-demo.rex.json
   3. clip with `…` from the left.
 
   So it reads `cuj/sendoff-demo` before `…ndoff-demo`.
+- `following` / `latched` outrank the path's last few cells: the path drops `rex/plans/`, then `.rex.json`, then clips from the left down to 5 cells (`…demo`), and only then is the word dropped. A dropped word never gives `.rex.json` its room back. Whether the word fits is judged against the longest turn state (`thinking`) and the longer word (`following`), so it doesn't come and go with the turn, and `following` and `latched` come and go together. From 38 cells (80×24 with the mascot, a 38-column terminal without) it always shows: `running · latched · scratch`, `thinking · following · …demo`, `idle · following · …off-demo`. Below 38 cells (66–79 columns with the mascot, under 38 without) the word yields before the path; a plan name under 5 cells lets it in a few cells sooner.
 
 ### Row 1: status line
 
@@ -152,13 +159,19 @@ Row 1 is a one-line status shared by both places. It shows the **first** of thes
 2. A toast, which expires after about 3 s:
    - `plan updated · plans-ui → done · +1 task`
    - `✓ card-highlight done · next up load-outline · p⏎ pins it`
+   - `following cuj/next`, when Rex opened a plan the agent wrote
+   - a Library notice (outside git, an old `rex-plans/`) when start opens a plan
 3. `drift · hard: README.md · outside card-highlight files` (§9a)
-4. `drift · soft: internal/tui/live_view.go · next to live.go`
-5. `2 active: card-highlight, load-outline · pinned card-highlight`
-6. `▸ card-highlight  Selected plan card is one block (active)`, or `▸ load-outline  Outline view (next up · p⏎ pins it)` when the pin is computed rather than written.
-7. `no pin · all tasks done` or `no pin · nothing unblocked`.
+4. A new plan (§11):
+   - `new plan cuj/next · ⏎ switch`: a latched session's agent wrote another plan. It stays until ⏎ takes it or you open a plan (⏎ on Continue settles it too); the lines above cover it while they last, and ⏎ switches only while row 1 shows it. It reads just `new plan cuj/next` where ⏎ doesn't take it: in the Library, where ⏎ opens the selected row, and while taking it would lose a draft or a form (§3, §11).
+   - `new plan cuj/next · opens when the line is clear`: a following session holds the agent's write until your draft or form clears.
+   - Narrow, the name is clipped from the left (`new plan …demo · ⏎ switch`, `new plan …demo · waiting`), and dropped only when fewer than 5 cells are left for it.
+5. `drift · soft: internal/tui/live_view.go · next to live.go`
+6. `2 active: card-highlight, load-outline · pinned card-highlight`
+7. `▸ card-highlight  Selected plan card is one block (active)`, or `▸ load-outline  Outline view (next up · p⏎ pins it)` when the pin is computed rather than written.
+8. `no pin · all tasks done` or `no pin · nothing unblocked`.
 
-The line is empty when no plan is open.
+With no plan open, only a toast or a held new plan shows; otherwise the line is empty.
 
 ### Last row: footer
 
@@ -172,11 +185,12 @@ The footer is built from **ranked segments**:
 
 | Screen | Footer (highest rank first; `\|` marks the 38-cell cut) |
 |---|---|
+| Wait (no plan yet) | `no plan · esc plans · tab tape` \| `· ?⏎ help` (`· ↑↓ scroll` before it when the copy runs past a short screen) |
 | Library Home | `plans · ⏎ open · tab tape` \| `· type to find · ctrl+c×2 quit` |
 | Library Home (no plans) | `plans · ⏎ create · tab tape` \| |
 | Browse | `open · ⏎ open · esc back · tab tape` \| `· type to filter` |
 | Name prompt | `new plan · ⏎ create · esc cancel` \| `· tab tape` (`new folder · …` for a folder) |
-| Outline | `outline · tab tape · esc plans` \| `· ⏎ detail · ?⏎ help` |
+| Outline | `outline · tab tape · esc plans` \| `· ⏎ detail · ?⏎ help` (`· ⏎ switch` while row 1 offers a new plan and ⏎ takes it) |
 | Outline (empty plan) | `outline · b⏎ brief · tab tape` \| `· esc plans` |
 | Outline (read-only) | `outline · read-only · esc plans` \| `· tab tape` |
 | Plan / Task detail | `detail · esc outline · ↑↓ scroll` \| `· tab tape` |
@@ -222,12 +236,12 @@ Rules:
 
 ## 6. Outline and detail
 
-Opening or creating a plan lands on its **Outline**.
+Opening, creating or attaching a plan (§11) lands on its **Outline**.
 
 Mockup at 120×32 (78-col text column):
 
 ```
-REX plan                         running · rex/plans/cuj/sendoff-demo.rex.json
+REX plan             running · following · rex/plans/cuj/sendoff-demo.rex.json
 ▸ card-highlight  Selected plan card is one block (active)
 ── Send-off demo · active · 1/3 ──────────────────────────────────────────────
   last ✓ plans-ui: Home cards, browse, duplicate warn
@@ -245,7 +259,7 @@ outline · tab tape · esc plans · ⏎ detail · ?⏎ help
 The same outline at 80×24 (38-col text column):
 
 ```
-REX plan    running · cuj/sendoff-demo
+REX plan  running · following · …-demo
 ▸ card-highlight (active)
 ── Send-off demo · active · 1/3 ──────
   last ✓ plans-ui: Home cards, brow…
@@ -296,19 +310,19 @@ Reload behaviour:
 ## 7. Pin
 
 - **The effective pin.** It is the first `active` leaf task, else the first `pending` leaf whose `depends_on` are all `done` or `skipped`. With no tasks there is no pin; drift is then off and send-off says the plan is empty.
-- **`p⏎` writes.** It writes `"status": "active"` on the target and `"pending"` on **every** other active leaf task (a parent's status is never written; a parent marked `active` is only a label and is not a second pin), and the plan's own `status` becomes `active` if it was `pending` or `done`. Only those status values change in the file. On the tape, a bare `p⏎` pins the next-up task; `pin <id>⏎` pins any task.
+- **`p⏎` writes.** It writes `"status": "active"` on the target and `"pending"` on **every** other active leaf task (a parent's status is never written; a parent marked `active` is only a label and is not a second pin), and the plan's own `status` becomes `active` if it was `pending` or `done`. Only those status values change in the file. On the tape, a bare `p⏎` pins the next-up task; `pin <id>⏎` pins any task. A pin you write latches a followed plan (§11).
 - **Confirmation.** Pinning a task whose status is `blocked` or that has an unmet dependency, or moving the pin while another task is `active`, opens Pin confirm:
   - `p⏎` writes.
   - Esc, Ctrl+C or any other submitted draft cancels.
   - A bare ⏎ does nothing.
   - Tab leaves it open.
 - **Reopening.** Pinning a `done` task reopens it. The status becomes `active`, and the retrospective is kept.
-- **Pin start time.** It is recorded in `~/.rex/state.json` when you pin with `p⏎`. It powers the completion evidence. The JSON gets no timestamps. `~/.rex/state.json` is written only on your own actions, never on events: `p⏎` records the pin start, and opening a plan records it as the repo's Continue plan.
+- **Pin start time.** It is recorded in `~/.rex/state.json` when you pin with `p⏎`. It powers the completion evidence. The JSON gets no timestamps. `~/.rex/state.json` is written only by Rex, never by an agent: `p⏎` records the pin start, and opening a plan records it as the repo's last plan, the one the next start opens (§11). Opening includes start's own landing and attach: a plan Rex opened because the agent wrote it becomes the repo's last plan too. That is the one write an event causes; a pin start still comes only from your own `p⏎`.
   - When Rex didn't see the pin start (the agent or a teammate set `active`, the pin is computed, or Rex wasn't running), the window is "since Rex saw it as the pin this session". That time lives in memory only and resets when Rex restarts, so the pin start in `~/.rex/state.json` still comes only from your own `p⏎`. The panel says `seen since 14:02 (this session)`.
   - When nothing was seen, the panel says `not seen on this machine` and lists no files.
-- **`~/.rex/state.json`** is outside the repo and never committed. It holds the last plan opened per repo root and the pin start times. Each write re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries (two writes in the same instant can still drop one; that costs a Continue card or a start time, never plan data).
+- **`~/.rex/state.json`** is outside the repo and never committed. It holds the last plan opened (or attached) per repo root and the pin start times. Each write re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries (two writes in the same instant can still drop one; that costs which plan the next start opens, or a start time, never plan data).
 - **After `done`, nothing is auto-claimed.**
-  - Done from PLAN, the outline cursor moves to the first newly ready task. Done from the tape, PLAN's cursor stays where you left it (§1: a place moves only on its own keys).
+  - Done from PLAN, the outline cursor moves to the first newly ready task. Done from the tape, PLAN's cursor stays where you left it (§1: a place moves only on its own keys, or an attach).
   - Row 1 says `✓ <id> done · next up <next> · p⏎ pins it` for a few seconds, then `▸ <next> <title> (next up · p⏎ pins it)`.
   - Drift and send-off use the effective pin in the meantime.
 
@@ -347,6 +361,7 @@ At 38 columns, each label sits on its own line above its value, and long values 
   - Saving is a user action. What the fields show when you press ⏎ is written: `"status": "done"` plus `accomplished`, `modified` and `verified_how`.
   - A value you edited replaces the old one. A value you left as prefilled from the JSON is unchanged, so its bytes don't move.
   - Only changed fields are written, so the git diff stays inside that task.
+  - A completion you save latches a followed plan (§11).
 - **Binding.** The overlay is bound to the task id. If that task changed on disk while it was open, it warns: `card-highlight changed on disk · ⏎ to save anyway`.
 - **Esc** writes nothing.
 
@@ -423,7 +438,7 @@ Drift means the session is wandering off the pin. Rex only shows it. It never se
 If the pin lists no files, only the `scope.out` rule applies.
 
 **Display.**
-- **Row 1** shows the last hard drift not yet resolved, else the last soft one: `drift · hard: README.md · outside card-highlight files`. When the plan changes (it was widened), row 1 is judged again.
+- **Row 1** shows the last hard drift not yet resolved, else the last soft one: `drift · hard: README.md · outside card-highlight files` (a new-plan offer ranks between them, §4). When the plan changes (it was widened), row 1 is judged again.
 - **The tape** gets one `── drift ──` block per pin, updated in place:
 
 ```
@@ -467,16 +482,41 @@ If the pin lists no files, only the `scope.out` rule applies.
 
 ---
 
-## 11. Library
+## 11. Start, attach and the Library
+
+Opening a plan is not a step on the happy path: the agent writes the plan, and Rex opens it.
+
+**Landing.** Start never lands on the Library. It opens, in this order:
+1. the plan last opened in this repo, from `~/.rex/state.json`, if that file still exists and is one of this repo's plans (the same jail as attach, below);
+2. else the newest `*.rex.json` under `rex/plans/**` by modification time (only at start, or while no plan is open; see the fallback below);
+3. else the **Wait** screen: PLAN with no plan, `no plan yet · tell your agent to make one`, where the plan file will appear (outside git, the folder it resolves to), and how to teach the agent the format. The Library's notice (outside git, an old `rex-plans/`) shows there too. With plans off (`rex/ is a file here · plans off`) it says only that and how to turn them on: nothing the agent writes can open until the file moves. On a short screen ↑↓, pages and Home/End scroll it. The tape works as always; Esc is the Library, where Create stays as an escape hatch, and while no plan is open Esc or ← from there comes back.
+
+Either plan lands on its outline and is **following**. The Library's notice, which start no longer shows, is a row-1 toast on the first frames instead.
+
+**Following and latched.** The header says which (§4).
+- *Following* (unlatched): Rex opens the plan file the agent writes. Every start is following.
+- *Latched*: you picked another plan in the Library (a recent, a match, a Browse row, Open latest, or one you created there), or you acted on the open plan: a pin you wrote (`p⏎`, §7) or a completion you saved (`d⏎`, §8). ⏎ on Continue, or on any row that names the open plan, picks nothing new and keeps a followed plan followed. Rex keeps showing a latched plan; the agent's write of another plan only puts `new plan <name> · ⏎ switch` on row 1, and ⏎ on an empty draft on the outline, a detail screen or the tape switches to it and follows again. ⏎ takes it only while row 1 shows it (the plan file's error, a toast or hard drift cover it, §4). Taking it opens a plan, so it also waits for what holds an attach (below): while PLAN's draft has text, or a Completion, Send-off or Pin confirm is open in either place, ⏎ keeps its usual meaning and row 1 doesn't offer it. Opening a plan clears the offer. A write held for you when you latch becomes the offer.
+
+**Attach.** Rex follows a hook event, never a guess. In a batch of events, after they are judged for drift, the last one that passes all of these is opened:
+- a completed file edit (a Write, Edit or afterFileEdit result, a Codex or OpenCode `apply_patch`), not a denied or failed write, never a read or a shell command;
+- from this repo's agent (§10, Scope);
+- of an existing regular `*.rex.json` under this repo's `rex/plans/`, once the path is cleaned and its symlinks resolved: a `..` counts by where it leads, and a link out of `rex/plans/` leads nowhere (a relative path is taken from the event's working directory);
+- not the plan already open, judged by the file rather than its spelling (another case on macOS or Windows, a link inside `rex/plans/`). A write of the open plan only reloads it (§6) and never hides another plan written in the same batch or patch: that one is still opened or offered.
+
+Following, it opens the plan's outline (as opening it in the Library would: §6, §7). Row 1 says `following <name>`, and the tape gets one muted `plan` line, `following <name>`, so the move stays on record (Rex's own line, never the feed). The place never changes. A draft in PLAN, a Name prompt (you are making a plan), or an open Completion, Send-off or Pin confirm in either place, holds the attach: row 1 says `new plan <name> · opens when the line is clear` (§4), and the plan opens once they clear (Esc, an emptied draft, the prompt cancelled, the overlay closed). A draft on the Wait screen holds nothing: it is a verb there as on the outline, so it carries over to the outline. A newer write replaces a held one; a write of the open plan drops it (the agent is back on that plan), and so does picking a plan in the Library. Help holds nothing. Keys read together with a batch of events are applied first, so a key acts on the screen you saw and a draft typed with it holds the attach. The plan's first write may be a stub; the outline fills from the 500 ms reload, and the cursor moves to the pin once tasks appear (§1). A plan that doesn't parse when attach opens it shows its error at once, as any first open does; the two-poll debounce is for a plan already open (§6).
+
+**Fallback.** While no plan is open, Rex also looks for a plan file once a poll (an editor save, or a write whose hook was missed) and opens the newest. Once a plan is open, attached or latched, Rex never scans the folder to change the screen: only a write is followed, and newest-by-mtime is never used again.
+
+The Library:
 
 - **Cards, in order:**
-  1. **Continue `<plan>`**: the plan that is open now, else the last plan opened in this repo (from `~/.rex/state.json`). Esc from the Outline lands here.
+  1. **Continue `<plan>`**: the plan that is open now. Esc from the Outline lands here, and ⏎ on it keeps a followed plan followed. (Start already reopens the last plan, above.)
   2. **Create a plan**.
   3. **Open a plan**.
   4. **Open latest**: the newest plan by modification time.
 
   Recents follow. The cursor starts on Continue, else Open latest, else Create.
-- **First run (no plans).** Only Create shows, plus `plans are JSON in rex/plans/ · commit them`.
+- **No plans yet.** Only Create shows, plus `plans are JSON in rex/plans/ · commit them` and, with no plan open, `or ask your agent to write rex/plans/<name>.rex.json · Rex opens it`. Start shows the Wait screen instead of this; Esc from it lands here, and Esc or ← goes back.
 - **Hints** show progress on the cards, recents, Find results and Browse rows, e.g. `2/5 · ▸ card-highlight`. The currently open plan reads `open · 2/5 · ▸ card-highlight` in recents, Find and Browse.
 - **Find (typing on Home)** matches across `rex/plans/**`.
   - The first match is selected.
@@ -492,7 +532,7 @@ If the pin lists no files, only the `scope.out` rule applies.
   - Duplicates warn and never overwrite.
   - A new plan is a valid v1 stub, not `{}`.
 - **Errors** clear on the next key.
-- **Rex never deletes or creates files just by starting.**
+- **Starting Rex never deletes anything, and never creates a plan file or `rex/plans/`.** The plan start opens is recorded in `~/.rex/state.json` (§7), which may create `~/.rex`. Following a plan never writes the plan file.
   - A file named `rex` at the repo root shows `rex/ is a file here · plans off` instead of being removed.
   - Outside a git repo, Home says `not in a git repo · plans go to <cwd>/rex/plans`.
   - Plans left in an old `rex-plans/` folder are reported (`rex-plans/ has 2 old plan(s) · move them into rex/plans`), never moved.
@@ -525,7 +565,7 @@ Notes:
 
 The overlay lists:
 - the keys and verbs (§2, §3);
-- the glyph legend (§5);
+- the glyph legend (§5), and what `following` / `latched` mean (§11);
 - what Rex never does: run tools, approve tools, send anything to the agent, or read transcripts;
 - the feed path and feed health (§10);
 - the hidden-event count.
@@ -540,9 +580,11 @@ The full-loop tests check these counts.
 
 | Step | Keys |
 |---|---|
-| Open the plan you had last time | ⏎ |
-| Open a plan by name | `name` ⏎ |
-| Create a plan | `name` ⏎ via find → `+ Create 'name'` (first run, when only Create shows: ⏎ `name` ⏎); lands on its outline |
+| Open the plan you had last time | 0 (start opens it) |
+| Create a plan | 0 in Rex: ask the agent to write `rex/plans/<name>.rex.json`; Rex opens its outline |
+| Open a plan by name | Esc `name` ⏎ (latches it) |
+| Create a plan in Rex | Esc `name` ⏎ via find → `+ Create 'name'`; lands on its outline (latched) |
+| Switch to a plan the agent wrote while latched | ⏎ |
 | See the pin | 0 (row 1) |
 | Watch the tape | Tab |
 | Pin a task | ↑↓ `p` ⏎ |
@@ -557,12 +599,13 @@ The full-loop tests check these counts.
 
 | State | Entered via | Left via |
 |---|---|---|
-| Library Home | start; Esc from Browse root or from Outline (cursor on Continue) | ⏎ card/recent/match · ⏎ on `+ Create 'x'` creates and opens the outline · typing (find) · Tab |
-| Browse | ⏎ Open a plan | ⏎ plan → Outline · Esc/← · Tab |
-| Name prompt | Create card · `[ + New plan ]` / `[ + New folder ]` rows | ⏎ → Outline (plan) or into the new folder · Esc (nothing written) · Tab (draft kept) |
-| Outline | open or create a plan · Esc from detail · Tab back | ⏎/→ detail · Esc → Library · verbs · Tab |
-| Plan detail | ⏎ on the outline rule | Esc |
-| Task detail | ⏎/→ on a task | Esc |
+| Wait | start with no plan to open · Esc/← from Library Home while no plan is open | an attach (the agent writes a plan, or the fallback finds one) → Outline, the draft carried over · Esc/← → Library Home · verbs · Tab |
+| Library Home | Esc from Wait, from Browse root or from Outline (cursor on Continue) | ⏎ card/recent/match (latches another plan; Continue keeps following) · ⏎ on `+ Create 'x'` creates and opens the outline · typing (find) · Esc/← → Wait while no plan is open · an attach while following · Tab |
+| Browse | ⏎ Open a plan | ⏎ plan → Outline · Esc/← · an attach while following (with an empty filter) · Tab |
+| Name prompt | Create card · `[ + New plan ]` / `[ + New folder ]` rows | ⏎ → Outline (plan) or into the new folder · Esc (nothing written) · Tab (draft kept). An attach waits until it closes, and creating a plan drops it |
+| Outline | start (the last or newest plan) · an attach · open or create a plan · ⏎ on a new-plan offer · Esc from detail · Tab back | ⏎/→ detail (⏎ switches while row 1 offers a new plan) · Esc → Library · an attach of another plan while following · verbs · Tab |
+| Plan detail | ⏎ on the outline rule | Esc · an attach of another plan while following · ⏎ on a new-plan offer |
+| Task detail | ⏎/→ on a task | Esc · an attach of another plan while following · ⏎ on a new-plan offer |
 | Pin confirm | `p⏎` on a blocked task or over another active task | `p⏎` writes · Esc / Ctrl+C / any other submitted draft cancels · bare ⏎ does nothing · Tab keeps it open |
 | Completion | `d⏎`/`done⏎` with an effective pin | ⏎ save (toast) · Esc · Ctrl+C |
 | Send-off | `s⏎`/`sendoff⏎`/`handoff⏎` (sendoff mode) · `b⏎`/`brief⏎` (planning mode) | Esc · `o⏎` (plain print, ⏎ returns) · `c⏎` copies again |

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -120,8 +121,10 @@ func TestDriftClearsWhenThePlanIsWidened(t *testing.T) {
 	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
 	os.WriteFile(path, []byte(strings.Replace(driftDemo, `"files": ["internal/tui/plans.go"`, `"files": ["README.md", "internal/tui/plans.go"`, 1)), 0o644)
 	later(a, c)
-	if s, ok := a.driftStatus(); ok {
-		t.Fatalf("README.md is listed now: %q", s.Text)
+	for _, level := range []plan.DriftLevel{plan.Soft, plan.Hard} {
+		if s, ok := a.driftStatus(level); ok {
+			t.Fatalf("README.md is listed now: %q", s.Text)
+		}
 	}
 }
 

@@ -7,7 +7,7 @@ description: 'Write or update a Rex plan file (rex/plans/**/*.rex.json), the v1 
 
 # Rex plans
 
-A Rex plan is one unit of work (a feature, a fix, a migration) saved as JSON at `rex/plans/<name>.rex.json` in the repo, committed with the code. Rex shows it as an outline next to the agent tape, pins one task at a time, and turns it into a send-off brief for the next chat. You write the plan as an ordinary file. Rex never sends you anything; a person copies briefs into chat.
+A Rex plan is one unit of work (a feature, a fix, a migration) saved as JSON at `rex/plans/<name>.rex.json` in the repo, committed with the code. Rex shows it as an outline next to the agent tape, pins one task at a time, and turns it into a send-off brief for the next chat. You write the plan as an ordinary file; nobody creates or opens it in Rex first. Rex never sends you anything; a person copies briefs into chat.
 
 The format is frozen at `"version": 1`; the full contract is `docs/plan-format.md` in the Rex repo.
 
@@ -16,6 +16,14 @@ The format is frozen at `"version": 1`; the full contract is `docs/plan-format.m
 - You are asked to plan, to break work down, or to fill or refine a `.rex.json`.
 - The work is bigger than one PR. One plan per unit of work; a second feature gets its own file.
 - Do not create a plan for a one-line fix, and do not add tasks for work nobody asked for.
+
+## Writing the file
+
+- Write it yourself at `rex/plans/<name>.rex.json` under the repo root (`rex/plans/<area>/<name>.rex.json` groups plans), creating the folders if they are missing. `<name>` is a short slug, usually the plan's `id`.
+- Use your file write or edit tool, not a shell redirect or a script: Rex follows the file edits your hooks report, and a shell command that writes the file is not one of them.
+- Write valid JSON each time you save. Writing the whole plan at once works, and so does a first save with an empty `tasks` array that you fill next; the outline updates as the file changes.
+- To fill or refine a plan that exists, edit that file in place and keep every other byte.
+- A running Rex that is following opens it; if the person picked another plan, Rex offers yours on its status line. Don't ask them to create or open it in Rex.
 
 ## The shape
 

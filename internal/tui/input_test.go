@@ -20,6 +20,7 @@ func browseApp(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
+	press(a, "esc") // start opened seed; Esc is the plan list
 	for i, row := range a.plans.Rows {
 		if row.Kind == PlanRowOpen {
 			a.plans.Cursor = i
@@ -72,7 +73,7 @@ func TestBackspaceNeverNavigates(t *testing.T) {
 
 func TestNamePromptKeepsTheNameAcrossTab(t *testing.T) {
 	a := testApp(t)
-	press(a, "\r")
+	press(a, "esc", "\r") // the plan list, then its Create card
 	typeText(a, "half")
 	press(a, "\t", "\t")
 	if a.plans.Screen != ScreenCreate || a.draft != "half" {
@@ -174,6 +175,7 @@ func TestHelpOverlay(t *testing.T) {
 
 func TestLibraryTextIsLiteralUnlessSlashed(t *testing.T) {
 	a := testApp(t)
+	press(a, "esc") // the plan list
 	typeText(a, "help")
 	press(a, "\r")
 	if a.overlay[a.pane] != overlayNone {
@@ -240,6 +242,7 @@ func TestDisarmingQuitAlwaysRedraws(t *testing.T) {
 
 func TestSlashWordIsOnlyEverAVerb(t *testing.T) {
 	a := testApp(t)
+	press(a, "esc") // the plan list
 	typeText(a, "/zap")
 	press(a, "\r")
 	if a.plans.Current != "" || a.plans.Screen != ScreenHome || !strings.Contains(a.plans.Err, "'/zap' is not a verb") {

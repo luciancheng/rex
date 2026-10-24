@@ -164,7 +164,7 @@ PLAN•[AGENT] running   latched scratch
 
 Row 1 is a one-line status shared by both places. It shows the **first** of these that applies:
 
-1. `plan JSON error 14:3 · showing last good`
+1. `plan JSON error 14:3 · showing last good`; a file Rex can't open says why, `plan error: can't read the file: permission denied · showing last good` (the cause, never the file's path, §6)
 2. A toast, which expires after about 3 s:
    - `plan updated · plans-ui → done · +1 task`, when the file changed (the agent pinned a task, or a teammate's pull); the plan's own status reads `plan → active` / `plan → done`
    - `✓ card-highlight done · next up load-outline`, when the file marks the pin done (the agent finished it; `· now load-outline` when the same save started that task; `· the plan is done` or `· nothing else is unblocked` when there is no next up). The agent's follow-up saves that move no task (its retrospective, the plan's own status) leave it up until it expires (§8).
@@ -375,6 +375,7 @@ Rex never writes the plan, in any state.
 |---|---|
 | No tasks (a new stub) | `No tasks yet · your agent fills this file` |
 | Invalid JSON | row 1: `plan JSON error 14:3 · showing last good` |
+| Unreadable (no permission, a folder, too big) | row 1: `plan error: can't read the file: permission denied · showing last good`, the cause and never the file's absolute path; with no good copy yet the outline says `can't read this plan` and why |
 | File missing (branch switch) | `plan file missing · showing last good` |
 | Conflict markers / `version` newer than Rex | `read-only: <reason>` above the tasks (a warning for whoever edits it) |
 | Two `active` tasks | first one pinned; row 1 warns |
@@ -667,7 +668,7 @@ enter open  tab agent  ? help  ↑↓ move
   4. `then`: the next one or two unfinished leaves after the pin, with their glyphs (§5), and from 60 cells their titles;
   5. `done`: the last done task and what it accomplished (`✓ plans-ui  Home cards, folder browser, …`).
 
-  A plan with no tasks says `no tasks yet · the agent adds them`, and one that doesn't parse `can't read: <why>`, in red. When rows run short its lines drop (§12): `then` first, then `goal`, then under 60 cells `done` and the title, from 60 cells the status and `done`; the pin stays. Under 30 cells it is the title and `▸ <id>`, unlabeled. Folders and actions don't open. The list reads each plan once per version of its file, keyed by its path, modification time and size, when the list is built (opening it, a find or filter key, a write the agent reports, a change to the open plan): drawing it and moving the cursor read no files. The open plan is never read for it: its row and accordion, wherever they show, are the plan the outline shows (§6), its last good copy while a save is half-written, and `can't read` only once row 1 shows the error.
+  A plan with no tasks says `no tasks yet · the agent adds them`, and one Rex can't read or parse `can't read: <why>`, in red: the cause (`permission denied`, `1:12: …`), never the file's path. When rows run short its lines drop (§12): `then` first, then `goal`, then under 60 cells `done` and the title, from 60 cells the status and `done`; the pin stays. Under 30 cells it is the title and `▸ <id>`, unlabeled. Folders and actions don't open. The list reads each plan once per version of its file, keyed by its path, modification time and size, when the list is built (opening it, a find or filter key, a write the agent reports, a change to the open plan): drawing it and moving the cursor read no files. The open plan is never read for it: its row and accordion, wherever they show, are the plan the outline shows (§6), its last good copy while a save is half-written, and `can't read` only once row 1 shows the error.
 - **No plans yet.** `PLANS` with `0 plans`, one sentence, `No plans in rex/plans/ yet. Type a name below, or ask your agent to write one.` (from 16 rows under a blank row, as on the Wait screen; at 7 rows it goes), then `+ New plan` (selected) and `+ New folder` (any folders above them). Start shows the Wait screen instead of this; Esc from it lands here, and Esc or ← goes back.
 - **Find (typing in the list)** matches across `rex/plans/**` under `PLANS › find`, its meta the number of matches. It is one flat list, folder-qualified and best match first, with no groups:
   - The first match is selected and opens in place; the open plan's meta reads `open · 1/3`.
@@ -682,6 +683,7 @@ enter open  tab agent  ? help  ↑↓ move
 - **Name prompt** (enter on `+ New plan` or `+ New folder`; `PLANS › new plan`, from Browse `PLANS › cuj/ › new plan`): `Name the plan, then enter.` and `a/b makes plan b in folder a.`, then where it goes, updated as you type (`→ rex/plans/auth-flow.rex.json`, `→ rex/plans/<name>.rex.json` while empty, `→ rex/plans/team/<name>.rex.json` while the name ends in a folder, `team/`), then `never overwrites a file`. It creates in `rex/plans/` from the list and in the folder being browsed from Browse, where the preview says. A name that would climb out of `rex/plans/` says so before enter. Short of rows, the blank row goes, then the `a/b` line, the overwrite line and the first line; where it goes stays.
   - `a/b` creates the plan inside folder `a`.
   - Duplicates warn and never overwrite.
+  - A name the filesystem refuses says why, with the cause alone (`file name too long`, `permission denied`), never the full path it would have had.
   - A new plan is a valid v1 stub, not `{}`.
 - **Errors** clear on the next key.
 - **Starting Rex never deletes anything, and never creates a plan file or `rex/plans/`.** The plan start opens is recorded in `~/.rex/state.json` (§7), which may create `~/.rex`. Following or showing a plan never writes the plan file; the only plan Rex ever writes is the new empty stub you create here (never over an existing file).

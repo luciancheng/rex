@@ -49,7 +49,7 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, news planNews) 
 	if err != nil {
 		// There, but not readable as a plan (a folder, a FIFO, too big, no
 		// permission): say so, keep the last good copy.
-		why := "can't read the file: " + err.Error()
+		why := "can't read the file: " + cause(err)
 		changed = d.err != why || d.gone
 		d.err, d.gone, d.hash = why, false, ""
 		return changed, planNews{}

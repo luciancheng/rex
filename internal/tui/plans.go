@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -587,22 +588,22 @@ func (b *PlanBrowser) Activate() PlanAction {
 func (b *PlanBrowser) CommitCreate(name string) PlanAction {
 	path, err := b.createTarget(name)
 	if err != nil {
-		b.Err = err.Error()
+		b.Err = cause(err)
 		return PlanStay
 	}
 	if _, err := EnsurePlansDir(b.Repo); err != nil {
-		b.Err = err.Error()
+		b.Err = cause(err)
 		return PlanStay
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		b.Err = err.Error()
+		b.Err = cause(err)
 		return PlanStay
 	}
 	if err := writeNew(path, plan.Stub(planStem(filepath.Base(path)))); err != nil {
 		if os.IsExist(err) {
 			err = errors.New(b.relName(path) + " already exists")
 		}
-		b.Err = err.Error()
+		b.Err = cause(err)
 		return PlanStay
 	}
 	b.Err = ""
@@ -691,11 +692,11 @@ func (b *PlanBrowser) relName(path string) string {
 func (b *PlanBrowser) CommitFolder(name string) PlanAction {
 	rel, err := folderPath(name)
 	if err != nil {
-		b.Err = err.Error()
+		b.Err = cause(err)
 		return PlanStay
 	}
 	if _, err := EnsurePlansDir(b.Repo); err != nil {
-		b.Err = err.Error()
+		b.Err = cause(err)
 		return PlanStay
 	}
 	path := filepath.Join(b.promptBase(), filepath.FromSlash(rel))
@@ -704,7 +705,7 @@ func (b *PlanBrowser) CommitFolder(name string) PlanAction {
 		return PlanStay
 	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
-		b.Err = err.Error()
+		b.Err = cause(err)
 		return PlanStay
 	}
 	b.Err = ""
@@ -846,9 +847,20 @@ func (b *PlanBrowser) readSums() {
 func readSum(path string) planSummary {
 	p, err := loadPlan(path)
 	if err != nil {
-		return planSummary{err: err.Error()}
+		return planSummary{err: cause(err)}
 	}
 	return summarize(p)
+}
+
+// cause is err as a row shows it. An *fs.PathError leads with the
+// absolute path ("open /…/rex/plans/x.rex.json: permission denied"),
+// which would push the cause off the row, so it is just the cause.
+func cause(err error) string {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Err.Error()
+	}
+	return err.Error()
 }
 
 // summarize is a plan as the list sums it up: the pin as the outline has

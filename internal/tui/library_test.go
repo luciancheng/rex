@@ -484,6 +484,64 @@ func TestOpenRowFollowsTheOutline(t *testing.T) {
 	}
 }
 
+// docs/ux.md §4, §11: a plan Rex can't open says why on row 1 and in the
+// accordion, the open plan's and another's alike: the cause, never the
+// absolute path an open error leads with, which pushed the cause off.
+func TestUnreadablePlansSayWhy(t *testing.T) {
+	a, c, path := cujApp(t)
+	other := writePlan(t, a.plans.Repo, "other.rex.json", demoPlan)
+	for _, p := range []string{path, other} {
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(p, 0o644) })
+	}
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("this user reads a file with no permissions (root, or Windows)")
+	}
+	c.t = c.t.Add(docPollEvery)
+	a.tick()
+	if got, want := a.statusLine().Text, "plan error: can't read the file: permission denied · showing last good"; got != want {
+		t.Fatalf("row 1: %q, want %q", got, want)
+	}
+	a.plans.walk = planWalk{}
+	press(a, "esc")
+	for _, name := range []string{"cuj/sendoff-demo.rex.json", "other.rex.json"} {
+		pickRow(a, PlanRowPlan, name)
+		view := BuildPlanView(a.plans, 78)
+		if line := strings.TrimRight(lineWith(view, "▌   can't read"), " "); line != "▌   can't read: permission denied" {
+			t.Errorf("%s: %q\n%s", name, line, viewText(view))
+		}
+	}
+	if f := a.frame(); strings.Contains(f, "open /") || !strings.Contains(f, "can't read: permission denied") {
+		t.Fatalf("the cause, not the path\n%s", f)
+	}
+}
+
+// docs/ux.md §11: a name the filesystem refuses says why in the Name
+// prompt, not the absolute path the error leads with.
+func TestNamePromptSaysWhyCreateFails(t *testing.T) {
+	long := strings.Repeat("x", draftCap) // over any filesystem's 255
+	for kind, made := range map[PlanRowKind]func(string) error{
+		PlanRowNew:   func(dir string) error { return writeNew(filepath.Join(dir, long+".rex.json"), nil) },
+		PlanRowMkdir: func(dir string) error { return os.Mkdir(filepath.Join(dir, long), 0o755) },
+	} {
+		err := made(t.TempDir())
+		pe, ok := err.(*os.PathError)
+		if !ok {
+			t.Fatalf("setup: %v", err)
+		}
+		a, _ := libraryApp(t)
+		pickRow(a, kind, "")
+		press(a, "\r")
+		typeText(a, long)
+		press(a, "\r")
+		if !a.plans.Prompting() || a.plans.Err != pe.Err.Error() || !strings.Contains(a.frame(), "  "+pe.Err.Error()) {
+			t.Errorf("row %d: %q, want %q\n%s", kind, a.plans.Err, pe.Err, a.frame())
+		}
+	}
+}
+
 // docs/ux.md §11: RECENT starts with the plans opened earlier in this run,
 // the latest first, then the newest: the plan you just left leads it,
 // however old its file. Each plan is still listed once.

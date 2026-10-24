@@ -1112,8 +1112,10 @@ func TestOpenPlanIsListedOnceByFile(t *testing.T) {
 	next := writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan)
 	upper := filepath.Join(a.plans.Root, "CUJ", "Next.rex.json")
 	if _, err := os.Stat(upper); err == nil {
-		if a.ingest([]watch.Event{wrote(a.plans.Repo, upper)}); a.plans.Current != upper {
-			t.Fatalf("setup: the agent's spelling is open: %q", a.plans.Current)
+		// Windows resolves the write to the file's own case (EvalSymlinks),
+		// macOS keeps the agent's: either way it is one plan, listed once.
+		if a.ingest([]watch.Event{wrote(a.plans.Repo, upper)}); a.plans.Current != upper && a.plans.Current != next {
+			t.Fatalf("setup: the agent's spelling, or the file's own, is open: %q", a.plans.Current)
 		}
 		press(a, "esc")
 		once(t, a, next, "cuj/next.rex.json")

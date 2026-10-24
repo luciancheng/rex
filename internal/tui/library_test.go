@@ -7,12 +7,17 @@ import (
 	"testing"
 )
 
+// libraryApp is the plan list as Esc from the wait screen shows it, with
+// plans that appeared after start (no tick ran, so none was attached).
 func libraryApp(t *testing.T, plans ...string) (*app, string) {
 	t.Helper()
 	repo := t.TempDir()
 	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
 	root := seedPlans(t, repo, plans...)
-	return newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32), root
+	a.plans.walk = planWalk{}
+	press(a, "esc")
+	return a, root
 }
 
 func TestFindAcrossAllPlans(t *testing.T) {
@@ -290,11 +295,33 @@ func TestLibraryHeaderNeverScrollsAway(t *testing.T) {
 
 func TestOutsideGitNoticeShowsOnASmallScreen(t *testing.T) {
 	repo := t.TempDir()
-	seedPlans(t, repo, "one.rex.json")
 	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 60, 20)
 	a.settle(60, 20)
-	if frame := a.frame(); !strings.Contains(frame, "not in") {
-		t.Fatalf("the outside-git notice is on the first frame\n%s", frame)
+	if frame := a.frame(); a.at != atWait || !strings.Contains(frame, "not in") {
+		t.Fatalf("the outside-git notice is on the first frame, the wait screen\n%s", frame)
+	}
+	press(a, "esc")
+	if frame := a.frame(); a.at != atLibrary || !strings.Contains(frame, "not in") {
+		t.Fatalf("and on the plan list\n%s", frame)
+	}
+
+	// Start opens a plan rather than the list: the notice is row 1 on the
+	// first frames, fitted, and so is an old rex-plans/ folder's.
+	seeded := t.TempDir()
+	seedPlans(t, seeded, "one.rex.json")
+	b := newApp("yellow", false, "idle", NewPlanBrowser(seeded), 60, 20)
+	b.settle(60, 20)
+	if row := b.frameRows().Rows[1]; b.at != atOutline || !strings.HasPrefix(row, "not in a git repo · plans go to …") || !strings.HasSuffix(row, "/rex/plans") {
+		t.Fatalf("at=%d row 1 %q\n%s", b.at, row, b.frame())
+	}
+	legacy := t.TempDir()
+	os.Mkdir(filepath.Join(legacy, ".git"), 0o755)
+	seedPlans(t, legacy, "one.rex.json")
+	os.MkdirAll(filepath.Join(legacy, "rex-plans"), 0o755)
+	os.WriteFile(filepath.Join(legacy, "rex-plans", "old.rex.json"), []byte("{}"), 0o644)
+	c := newApp("yellow", false, "idle", NewPlanBrowser(legacy), 60, 20)
+	if row := c.frameRows().Rows[1]; c.at != atOutline || !strings.Contains(row, "rex-plans/") {
+		t.Fatalf("at=%d row 1 %q", c.at, row)
 	}
 }
 

@@ -111,6 +111,8 @@ func helpLines(width int) []LogLine {
 		head("outline"),
 		row("▸ ○ ·", "pinned / ready / waiting (after another task)"),
 		row("✓ – !", "done / skipped / blocked; 1/3 a parent's progress"),
+		row("following", "Rex opens each plan file your agent writes"),
+		row("latched", "you picked this plan or wrote to it (p⏎, d⏎); another the agent writes shows on row 1, ⏎ switches"),
 	}
 	for _, r := range rows {
 		switch v := r.(type) {

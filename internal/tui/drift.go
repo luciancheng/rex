@@ -70,10 +70,7 @@ func (a *app) judge(ev watch.Event) []driftNote {
 		return nil
 	}
 	switch {
-	case ev.Kind == "result" && watch.IsFileEditEvent(ev):
-		if ok, has := ev.Meta["ok"].(bool); has && !ok {
-			return nil // a write that was denied didn't happen
-		}
+	case completedEdit(ev): // a write that was denied didn't happen
 		var notes []driftNote
 		for _, path := range watch.EventPaths(ev) {
 			rel, in := a.scope.Rel(path)
@@ -191,8 +188,10 @@ func (a *app) noteDrift(n driftNote) bool {
 	return true
 }
 
-// driftStatus is row 1's drift line for the current pin, if any.
-func (a *app) driftStatus() (StatusLine, bool) {
+// driftStatus is row 1's drift line of this level for the current pin,
+// if any: the last unresolved hard notice, or, with none, the last soft
+// one. They rank apart on row 1 (docs/ux.md §4).
+func (a *app) driftStatus(level plan.DriftLevel) (StatusLine, bool) {
 	if a.doc == nil || a.doc.plan == nil {
 		return StatusLine{}, false
 	}
@@ -204,7 +203,7 @@ func (a *app) driftStatus() (StatusLine, bool) {
 	if n == nil {
 		n = a.drift.soft
 	}
-	if n == nil {
+	if n == nil || n.d.Level != level {
 		return StatusLine{}, false
 	}
 	d := n.d

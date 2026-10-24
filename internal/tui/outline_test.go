@@ -67,6 +67,7 @@ func openDemo(t *testing.T, src string, cols, rows int) (*app, *clock, string) {
 	}
 	a.plans.walk = planWalk{}
 	a.plans.Rebuild()
+	press(a, "esc") // from the wait screen to the plan list
 	typeText(a, "cuj/demo")
 	press(a, "\r")
 	if a.at != atOutline || a.doc == nil {
@@ -323,18 +324,27 @@ func TestOutlineTypingIsForVerbs(t *testing.T) {
 	}
 }
 
+// Start reopens the plan last opened in this repo, with no keys, and
+// follows it (docs/ux.md §11, §14); Esc shows it as Continue.
 func TestContinueCardAfterRestart(t *testing.T) {
 	a, _, path := openDemo(t, demoPlan, 120, 32)
+	// A newer plan doesn't win over the one in ~/.rex/state.json.
+	other := filepath.Join(a.plans.Root, "zz-newer.rex.json")
+	os.WriteFile(other, []byte(demoPlan), 0o644)
 	again := newApp("yellow", false, "idle", NewPlanBrowser(a.plans.Repo), 120, 32)
+	if again.at != atOutline || again.plans.Current != path || !again.follow || again.outline.sel != "card-highlight" {
+		t.Fatalf("at=%d current=%q follow=%v sel=%q", again.at, again.plans.Current, again.follow, again.outline.sel)
+	}
+	if frame := again.frame(); !strings.Contains(frame, "idle · following · rex/plans/cuj/demo.rex.json") {
+		t.Fatalf("the header names the plan and that Rex follows\n%s", frame)
+	}
+	press(again, "esc")
 	row := again.plans.Rows[again.plans.Cursor]
 	if row.Kind != PlanRowContinue || row.Path != path {
 		t.Fatalf("cursor on %+v", row)
 	}
 	if !strings.Contains(again.frame(), "Continue cuj/demo") || !strings.Contains(again.frame(), "1/3 · ▸ card-highlight") {
 		t.Fatalf("%s", again.frame())
-	}
-	if again.plans.Current != "" || strings.Contains(again.frame(), "· rex/plans/cuj/demo.rex.json") {
-		t.Fatal("start does not open a plan by itself")
 	}
 }
 

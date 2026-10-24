@@ -33,7 +33,7 @@ var fieldLabels = [2]string{"did ›", "verified ›"}
 // doneVerb is d⏎ / done⏎: open the completion form for the effective pin.
 func (a *app) doneVerb() {
 	if a.doc == nil {
-		a.flash("no plan open · tab to plan and open one", "error")
+		a.noPlanYet()
 		return
 	}
 	if why := a.doc.writable(); why != "" {
@@ -152,6 +152,7 @@ func (a *app) saveDone() bool {
 		return true
 	}
 	a.doc.took(saved)
+	a.latch() // you acted on this plan: it stays (docs/ux.md §11)
 	a.overlay[a.pane] = overlayNone
 	a.form[a.pane] = nil
 	a.draft = ""

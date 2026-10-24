@@ -228,6 +228,11 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 			t.Fatalf("%s footer cut mid-segment: %q", s.name, footer)
 		}
 	}
+	wait := testApp(t) // no plan yet: the wait screen (docs/ux.md §11)
+	wait.settle(80, 24)
+	if rows := wait.frameRows().Rows; !strings.Contains(rows[len(rows)-1], "no plan · esc plans · tab tape") {
+		t.Fatalf("wait footer at 38 cells: %q", rows[len(rows)-1])
+	}
 	for _, w := range []int{24, 38, 78} {
 		got := fitFooter([]string{"outline", "tab tape", "esc plans", "⏎ detail", "?⏎ help"}, w)
 		if cellLen(got) > w || strings.HasSuffix(got, "·") {

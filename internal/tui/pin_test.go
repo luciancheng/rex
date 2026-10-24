@@ -126,7 +126,7 @@ func TestPinRefusesReadOnlyPlans(t *testing.T) {
 	b := testApp(t)
 	typeText(b, "/p")
 	press(b, "\r")
-	if b.statusLine().Text != "no plan open · tab to plan and open one" {
+	if b.statusLine().Text != noPlanText {
 		t.Fatal(b.statusLine().Text)
 	}
 }

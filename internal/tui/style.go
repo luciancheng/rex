@@ -83,6 +83,54 @@ func paintSpans(spans []Span, kind, fill string, width int, enabled bool) string
 	return b.String()
 }
 
+// spansLen is the cells spans take, as clip measures them.
+func spansLen(spans []Span) int {
+	n := 0
+	for _, s := range spans {
+		n += cellLen(flat(s.Text))
+	}
+	return n
+}
+
+// cutSpans cuts spans to width cells with a trailing "…" when they don't
+// fit, as clip does a string; the "…" takes the cut span's style.
+func cutSpans(spans []Span, width int) []Span {
+	if spansLen(spans) <= width {
+		return spans
+	}
+	var out []Span
+	used := 0
+	for _, s := range spans {
+		s.Text = flat(s.Text)
+		if n := cellLen(s.Text); used+n > width-1 {
+			s.Text = cutCells(s.Text, max(0, width-1-used)) + "…"
+			return append(out, s)
+		}
+		out = append(out, s)
+		used += cellLen(s.Text)
+	}
+	return out
+}
+
+// padSpans pads spans with blanks to width cells.
+func padSpans(spans []Span, width int) []Span {
+	if n := spansLen(spans); n < width {
+		return append(spans, Span{Text: strings.Repeat(" ", width-n)})
+	}
+	return spans
+}
+
+// sideSpans fits left and a right-hand meta into width cells, the meta
+// ending at the edge (sideBySide for spans): left clips first, and the
+// meta goes only when the left would keep fewer than 6 cells.
+func sideSpans(left []Span, meta Span, width int) []Span {
+	room := width - cellLen(meta.Text) - 2
+	if meta.Text == "" || room < 6 {
+		return cutSpans(left, width)
+	}
+	return append(padSpans(cutSpans(left, room), width-cellLen(meta.Text)), meta)
+}
+
 func paintRun(text string, s Span, kind, fill string, enabled bool) string {
 	if text == "" {
 		return ""

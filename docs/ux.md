@@ -81,10 +81,10 @@ Keys are written as words everywhere Rex shows them: `enter`, `esc`, `tab`, `?`,
 | ↑↓ PgUp/PgDn | move | move | – | move (2-row margin) | scroll | scroll 1 line / 1 page | scroll |
 | Home / End | first / last | first / last | – | first / last (Home is the title row) | top / bottom | oldest / live | – |
 | Ctrl+A / Ctrl+E | as Home / End | as Home / End | – | as Home / End | as Home / End | oldest / live | – |
-| enter | open the selected card, recent or match, or create from `+ Create 'x'`; a `/word` runs it | open the plan or enter the folder | create, then open its outline (plan) or enter it (folder); empty: "type a name first" | title row (the page title) → Plan detail; task row → Task detail; with a new-plan offer on row 1, switch to it | with an offer, switch to it | with an offer, switch PLAN to it (you stay on AGENT) | nothing |
-| → | – | enter the folder | – | Task detail | – | – | – |
-| Esc | clear the find text, else back to Wait while no plan is open, else nothing | clear the filter, else up one folder, else to Home | clear the name, else cancel (nothing written) | to the plan list (cursor on **Continue**) | back to Outline | nothing | close |
-| ← | (empty draft) back to Wait while no plan is open | (empty draft) up one folder, else to Home | – | to the plan list | back to Outline | – | – |
+| enter | open the selected plan or folder, or start `+ New plan` / `+ New folder`, or create from `+ Create 'x'`; a `/word` runs it | open the plan or enter the folder | create, then open its outline (plan) or enter it (folder); empty: "type a name first" | title row (the page title) → Plan detail; task row → Task detail; with a new-plan offer on row 1, switch to it | with an offer, switch to it | with an offer, switch PLAN to it (you stay on AGENT) | nothing |
+| → | enter the selected folder | enter the folder | – | Task detail | – | – | – |
+| Esc | clear the find text, else back to Wait while no plan is open, else nothing | clear the filter, else up one folder (from a top folder, to the plan list) | clear the name, else cancel (nothing written) | to the plan list (cursor on the plan, under **OPEN**) | back to Outline | nothing | close |
+| ← | (empty draft) back to Wait while no plan is open | (empty draft) up one folder (from a top folder, to the plan list) | – | to the plan list | back to Outline | – | – |
 | `?` | Help, when the composer is empty | Help, when the filter is empty | Help, when the name is empty | Help | Help | Help | nothing |
 | letters, paste | type | type | type | nothing | nothing | nothing | nothing |
 | Tab | to AGENT | to AGENT | to AGENT (name kept) | to AGENT | to AGENT | to PLAN | Help stays open in its place |
@@ -98,7 +98,7 @@ enter switches to a new-plan offer only while row 1 shows it (the plan file's er
 In the plan list, Esc first clears a non-empty draft. Otherwise it goes **up one level within the place**, to the crumb on the left of the page title (§4), and the footer names where: `esc plans`, `esc outline`, `esc up`, `esc clear`, `esc cancel`, `esc close`, and `esc wait` on the plan list while no plan is open.
 - Detail → Outline → plan list Home (`PLANS › Send-off demo › about`).
 - Wait → plan list Home → Wait, while no plan is open: Esc (or ←) takes you back and forth, so the Wait screen is never lost, and the plan list's footer says `esc wait`. With a plan open, Home is the top.
-- Browse → parent folder → Home (`PLANS › rex/plans/ › cuj/`).
+- Browse → parent folder → the plan list, on the folder you came from (`PLANS › cuj/ › sub/`); `../` climbs the same way. There is no Browse root: from a top folder Esc is `esc plans`.
 
 At the top of the ladder, Esc does nothing. It never switches place and never quits.
 
@@ -173,7 +173,7 @@ Row 1 is a one-line status shared by both places. It shows the **first** of thes
    - a plan list notice (outside git, an old `rex-plans/`) when start opens a plan, unless the skill line above took the toast
 3. `drift · hard: README.md · outside card-highlight files` (§9a)
 4. A new plan (§11):
-   - `new plan cuj/next · enter switch`: a latched session's agent wrote another plan. It stays until enter takes it or you open a plan (enter on Continue settles it too); the lines above cover it while they last, and enter switches only while row 1 shows it. It reads just `new plan cuj/next` where enter doesn't take it: in the plan list, where enter opens the selected row, and while taking it would lose the plan list's draft or a Name prompt (§3, §11).
+   - `new plan cuj/next · enter switch`: a latched session's agent wrote another plan. It stays until enter takes it or you open a plan (enter on the open plan in the plan list settles it too); the lines above cover it while they last, and enter switches only while row 1 shows it. It reads just `new plan cuj/next` where enter doesn't take it: in the plan list, where enter opens the selected row, and while taking it would lose the plan list's draft or a Name prompt (§3, §11).
    - `new plan cuj/next · opens when the line is clear`: a following session holds the agent's write until the plan list's draft clears. While a Name prompt is open, even an empty one, it reads `new plan cuj/next · opens when the prompt closes`: only closing the prompt lets it through.
    - Narrow, the name is clipped from the left (`new plan …demo · enter switch`, `new plan …demo · waiting`), then the tail goes (`new plan cuj/next`), and the name goes only when fewer than 5 cells are left for it.
 5. `drift · soft: internal/tui/live_view.go · next to live.go`
@@ -203,8 +203,8 @@ Row 2 is a full-width slate bar: a breadcrumb from column 2, the root crumb in c
 |---|---|---|---|
 | plan list | `PLANS` | `4 plans` | `esc wait` while no plan is open, else – |
 | Find | `PLANS › find` | `1 match` / `N matches` | `esc clear` |
-| Browse | `PLANS › rex/plans/` (deeper: `› cuj/`) | plans in that folder and below; with a filter, those under the rows it leaves | `esc plans` at the top, else `esc up` |
-| Name prompt | `PLANS › new plan` / `new folder` (from Browse: `PLANS › rex/plans/ › cuj/ › new plan`) | – | `esc cancel` (`esc clear` with a name) |
+| Browse | `PLANS › cuj/` (deeper: `› sub/`) | plans in that folder and below; with a filter, those under the rows it leaves | `esc plans` from a top folder, else `esc up` |
+| Name prompt | `PLANS › new plan` / `new folder` (from Browse: `PLANS › cuj/ › new plan`) | – | `esc cancel` (`esc clear` with a name) |
 | Wait | `PLANS › waiting for a plan` | – | `esc plans` |
 | Outline | `PLANS › <plan title>` | the plan's status (`active`); `· tasks 3/8` once the list scrolls | `esc plans` |
 | Outline, unreadable | `PLANS › <file stem>` | `can't read` (red) | `esc plans` |
@@ -237,14 +237,14 @@ The footer lists **keys**, never the screen's name: the tab pill and the page ti
 | Screen | 38 cells (80×24) | Every segment, in rank order |
 |---|---|---|
 | plan list | `enter open  tab agent  ? help  ↑↓ move` | `enter open  tab agent  ? help  ↑↓ move  type to find` |
-| plan list, on Create | `enter create  tab agent  ? help` | `enter create  tab agent  ? help  ↑↓ move  type to find` |
+| plan list, on `+ New plan` / `+ New folder` | `enter create  tab agent  ? help` | `enter create  tab agent  ? help  ↑↓ move  type to find` |
 | plan list, no plan open | `enter open  esc wait  tab agent  ?` | `enter open  esc wait  tab agent  ? help  ↑↓ move  type to find` |
-| plan list, no plan open, on Create | `enter create  esc wait  tab agent  ?` | `enter create  esc wait  tab agent  ? help  ↑↓ move  type to find` |
+| plan list, no plan open, on `+ New plan` | `enter create  esc wait  tab agent  ?` | `enter create  esc wait  tab agent  ? help  ↑↓ move  type to find` |
 | Find (typing) | `enter open  esc clear  tab agent` | `enter open  esc clear  tab agent  ↑↓ move` |
 | Find, on `+ Create 'x'` | `enter create  esc clear  tab agent` | `enter create  esc clear  tab agent  ↑↓ move` |
-| Browse, the top folder | `enter open  esc plans  tab agent  ?` | `enter open  esc plans  tab agent  ? help  ↑↓ move  type to filter` |
+| Browse, a top folder | `enter open  esc plans  tab agent  ?` | `enter open  esc plans  tab agent  ? help  ↑↓ move  type to filter` |
 | Browse, deeper | `enter open  esc up  tab agent  ? help` | `enter open  esc up  tab agent  ? help  ↑↓ move  type to filter` |
-| Browse, on `[ + New folder ]` / `[ + New plan ]` | `enter create  esc plans  tab agent  ?` | `enter create  esc plans  tab agent  ? help  ↑↓ move  type to filter` (`esc up` deeper) |
+| Browse, on `+ New plan` / `+ New folder` | `enter create  esc plans  tab agent  ?` | `enter create  esc plans  tab agent  ? help  ↑↓ move  type to filter` (`esc up` deeper) |
 | Name prompt (empty) | `enter create  esc cancel  tab agent  ?` | `enter create  esc cancel  tab agent  ? help` |
 | Name prompt (named) | `enter create  esc clear  tab agent` | `enter create  esc clear  tab agent` |
 | Plan list, a `/word` typed | `enter help  esc clear  tab agent` | (or `enter breakdance`, `enter not a verb`) |
@@ -285,7 +285,8 @@ Near the draft cap the count is a must-have too: `enter open  250/256  esc clear
 | `–` | skipped |
 | `!` | blocked (status `blocked`); on row 0, the other place needs you (§4) |
 | `•` | on row 0, the other place has something new (§4) |
-| `▌` | the selected row or card, and the outline's title row when selected |
+| `▌` | the selected row (down the whole block of a plan opened in place in the plan list, §11), and the outline's title row when selected |
+| `+` | an action that creates: `+ New plan`, `+ New folder`, `+ Create 'x'` (green) |
 | `[PLAN]` | the place on screen: a pill, its brackets visible only without color |
 | `›` | between the crumbs of a page title (§4); `rex ›` starts Rex's own lines on AGENT (§10) |
 | `×N` | on AGENT, a run of N thoughts folded to its latest (§10) |
@@ -293,9 +294,9 @@ Near the draft cap the count is a must-have too: `enter open  250/256  esc clear
 | `[ASK]` | on AGENT, the agent waits on you: a red pill (§10) |
 
 **The five rules.**
-1. **A fill means "here".** Only the active tab's pill, the page-title bar, the selection and AGENT's `[ASK]` pill get a fill.
-2. **Each color has one meaning.** Yellow is the pin in PLAN (`▸` and its id on row 1, the outline's pinned row) and live agent work on AGENT and in the turn word (`thinking`, `running`, commands, soft drift); cyan is you (the cursor, your prompts); red needs you; green creates something; orange is a folder. Yellow is also the `REX` brand (the mascot's color) and news: the `•` cue and row 1's toasts and new-plan offer. Titles, rules and parents are not yellow, except, until the outline's own redesign, its parent rows and Task detail's title and `retrospective` rule.
-3. **Three header levels, three devices.** H1 is the page title, a full-width slate bar on row 2. H2 is a bold label in capitals at column 0, a slate rule to the edge and optional muted meta (`HOW IT GOES ───`, `FEED ───`); from 16 rows a blank row goes above it; what it heads is indented 2. H3 is a muted lowercase label in an 8-cell column with its value beside it.
+1. **A fill means "here".** Only the active tab's pill, the page-title bar, the selection and AGENT's `[ASK]` pill get a fill. A plan opened in place in the plan list has `▌` down its block, but only its own row is filled.
+2. **Each color has one meaning.** Yellow is the pin in PLAN (`▸` and its id on row 1, the `▸ <id>` in the plan list's accordion, the outline's pinned row) and live agent work on AGENT and in the turn word (`thinking`, `running`, commands, soft drift); cyan is you (the cursor, your prompts); red needs you; green creates something; orange is a folder. Yellow is also the `REX` brand (the mascot's color) and news: the `•` cue and row 1's toasts and new-plan offer. Titles, rules and parents are not yellow, except, until the outline's own redesign, its parent rows and Task detail's title and `retrospective` rule.
+3. **Three header levels, three devices.** H1 is the page title, a full-width slate bar on row 2. H2 is a bold label in capitals at column 0, a slate rule to the edge and optional muted meta (`HOW IT GOES ───`, `FEED ───`); from 16 rows a blank row goes above it (on the plan list, only where the selected plan keeps its lines with it, §12); what it heads is indented 2. H3 is a muted lowercase label in an 8-cell column with its value beside it.
 4. **Color never changes the characters.** Color and bold only add emphasis: a color frame stripped of its SGR is the NO_COLOR frame (a test checks every screen), except that the composer's placeholder takes parentheses without color (§2).
 5. **One left edge in PLAN.** Column 0 is the selection gutter and content starts at column 2; H2 labels are outdented to column 0. Rows 0 and 1, the footer and AGENT start at column 0.
 
@@ -577,7 +578,7 @@ Opening a plan is not a step on the happy path: the agent writes the plan, and R
    3. the keys: `esc  open a plan that already exists`, `tab  watch the agent`;
    4. while the `rex-plan` skill is installed nowhere Rex knows (the user's or this repo's `.claude/skills` or `.agents/skills`, or `$CLAUDE_CONFIG_DIR/skills`), a muted hint with the command in text: `agents learn plans from the rex-plan skill · rex ingest --install-skill` when it fits on one line, else a lead over the command: `agents learn the plan format from the rex-plan skill:` where it fits a row, `agents learn plans from the rex-plan skill:` where only that does, and narrower the first one wrapped, never leaving a word alone above the command. The command is never clipped: it wraps whole. When a copy there is Rex's but an older Rex wrote it (an older skill version in its marker, or none: it still teaches that Rex's workflow), it is `rex-plan skill is out of date · rex ingest --install-skill`, or `… --install-skill --project` when the old copy is the repo's (the user's copies are judged first). With `$CLAUDE_CONFIG_DIR` set, Rex's copy left in `~/.claude/skills` counts like any of the user's: `--install-skill` updates it.
 
-   When rows run short, these go in order: the blank rows, the key rows, `HOW IT GOES`, and the long hint, for the short one (`teach it: rex ingest --install-skill`, or `update: rex ingest --install-skill`, the command under the word where it doesn't fit beside it). The headline and the short hint never go; what still doesn't fit scrolls with ↑↓, pages and Home/End. With plans off (`rex/ is a file here · plans off`) it says only that and how to turn them on: nothing the agent writes can open until the file moves. AGENT works as always; Esc or ← is the plan list, where Create stays as an escape hatch, and while no plan is open Esc or ← from there comes back.
+   When rows run short, these go in order: the blank rows, the key rows, `HOW IT GOES`, and the long hint, for the short one (`teach it: rex ingest --install-skill`, or `update: rex ingest --install-skill`, the command under the word where it doesn't fit beside it). The headline and the short hint never go; what still doesn't fit scrolls with ↑↓, pages and Home/End. With plans off (`rex/ is a file here · plans off`) it says only that and how to turn them on: nothing the agent writes can open until the file moves. AGENT works as always; Esc or ← is the plan list, where `+ New plan` stays as an escape hatch, and while no plan is open Esc or ← from there comes back.
 
 ```
 [PLAN] AGENT idle
@@ -610,7 +611,7 @@ Either plan lands on its outline and is **following**. The plan list's notice, w
 
 **Following and latched.** Row 0 says which (§4).
 - *Following* (unlatched): Rex opens the plan file the agent writes. Every start is following.
-- *Latched*: you picked another plan in the plan list (a recent, a match, a Browse row, Open latest, or one you created there). That is the only way to latch: Rex has no other action on a plan. enter on Continue, or on any row that names the open plan, picks nothing new and keeps a followed plan followed. Rex keeps showing a latched plan; the agent's write of another plan only puts `new plan <name> · enter switch` on row 1 (and PLAN's cue, seen from AGENT), and enter on the outline, a detail screen or AGENT switches to it and follows again. enter takes it only while row 1 shows it (the plan file's error, a toast or hard drift cover it, §4). Only drift judged before the offer appears can cover it, an edit in the same poll as the write that brings it included: while it stands, nothing is judged against the latched pin (§9a). Taking it opens a plan, so it also waits for what holds an attach (below): while the plan list's composer has text or a Name prompt is open, enter keeps its usual meaning and row 1 doesn't offer it. Opening a plan clears the offer. A write held while you pick or create a plan in the plan list becomes the offer, neither opened nor lost, unless it is the plan you picked.
+- *Latched*: you picked another plan in the plan list (a row under `RECENT` or `FOLDERS`, a match, a Browse row, or one you created there). That is the only way to latch: Rex has no other action on a plan. enter on the open plan, under `OPEN` or on any row that names it, picks nothing new and keeps a followed plan followed. Rex keeps showing a latched plan; the agent's write of another plan only puts `new plan <name> · enter switch` on row 1 (and PLAN's cue, seen from AGENT), and enter on the outline, a detail screen or AGENT switches to it and follows again. enter takes it only while row 1 shows it (the plan file's error, a toast or hard drift cover it, §4). Only drift judged before the offer appears can cover it, an edit in the same poll as the write that brings it included: while it stands, nothing is judged against the latched pin (§9a). Taking it opens a plan, so it also waits for what holds an attach (below): while the plan list's composer has text or a Name prompt is open, enter keeps its usual meaning and row 1 doesn't offer it. Opening a plan clears the offer. A write held while you pick or create a plan in the plan list becomes the offer, neither opened nor lost, unless it is the plan you picked.
 
 **Attach.** Rex follows a hook event, never a guess. In a batch of events, after they are judged for drift, the last one that passes all of these is opened:
 - a completed file edit (a Write, Edit or afterFileEdit result, a Codex or OpenCode `apply_patch`), not a denied or failed write, never a read or a shell command;
@@ -622,36 +623,72 @@ Following, it opens the plan's outline (as opening it in the plan list would: §
 
 **Fallback.** While no plan is open, Rex also looks for a plan file once a poll (an editor save, or a write whose hook was missed) and opens the newest. Once a plan is open, attached or latched, Rex never scans the folder to change the screen: only a write is followed, and newest-by-mtime is never used again.
 
-The plan list (`PLANS`, with how many plans there are as its meta):
+The plan list (`PLANS`, with how many plans there are as its meta) is where Esc from the outline and from the Wait screen lands. **Each plan is on it once**, by file, not by spelling: the open plan written in another case (macOS, Windows) is still its one row under `OPEN`, named as the folder names it, and a link inside `rex/plans/` (a symlink or a hard link) to a plan already listed is left out of the groups and the counts, unless the plan was opened by that name (a find still matches a link by its name). Plans in hidden folders (`.archive/`) are left out, as Browse leaves the folder out, except the open plan, which is under `OPEN` wherever it lives; a find still matches them, and start can still land on one as the newest plan. The page's count, a folder's `1 plan` and Browse's count all count this one set, so every plan counted is on the list or in a folder on it. Three groups, each under an H2 (§5):
 
-- **Cards, in order:**
-  1. **Continue `<plan>`**: the plan that is open now. Esc from the Outline lands here, and enter on it keeps a followed plan followed. (Start already reopens the last plan, above.)
-  2. **Create a plan**.
-  3. **Open a plan**.
-  4. **Open latest**: the newest plan by modification time.
+| Group | H2 meta | Rows |
+|---|---|---|
+| `OPEN` | `following` / `latched` (§4) | The open plan; absent while none is open. Esc from the outline lands here, and enter on it keeps a followed plan followed. |
+| `RECENT` | – | Up to 5 other plans: first the ones opened earlier in this run, the latest first (memory only: `state.json` keeps just the last plan), then the newest by modification time. Named by their path under `rex/plans/` (`ux/redesign`), the folder part orange. |
+| `FOLDERS` | `rex/plans/` | The folders right under `rex/plans/` (`cuj/`, with `1 plan`: the plans in it and below), then the root plans not shown above, by name, then `+ New plan` and `+ New folder`. |
 
-  Recents follow. The cursor starts on Continue, else Open latest, else Create.
-- **No plans yet.** Only Create shows, plus `plans are JSON in rex/plans/ · commit them` and, with no plan open, `or ask your agent to write rex/plans/<name>.rex.json · Rex opens it`. Start shows the Wait screen instead of this; Esc from it lands here, and Esc or ← goes back.
-- **Hints** show progress on the cards, recents, Find results and Browse rows, e.g. `2/5 · ▸ card-highlight`. The currently open plan reads `open · 2/5 · ▸ card-highlight` in recents, Find and Browse.
-- **Find (typing on Home)** matches across `rex/plans/**`.
-  - The first match is selected.
+```
+[PLAN] AGENT idle  following …off-demo
+▸ card-highlight  Selected plan…   1/3
+  PLANS                       4 plans
+
+OPEN ─────────────────────── following
+▌ cuj/sendoff-demo                 1/3
+▌   Send-off demo · active
+▌   goal    A teammate opens this pla…
+▌   pinned  ▸ card-highlight  Selecte…
+▌   then    · load-outline
+▌   done    ✓ plans-ui  Home cards, f…
+
+RECENT ───────────────────────────────
+  ux/redesign                      1/6
+  auth-flow                        0/4
+  rex/v1-sendoff-loop          ✓ 13/13
+
+FOLDERS ─────────────────── rex/plans/
+  cuj/                          1 plan
+  ↓ more
+╭────────────────────────────────────╮
+│ / find or create a plan            │
+╰────────────────────────────────────╯
+enter open  tab agent  ? help  ↑↓ move
+```
+
+- **Rows.** Under 60 cells a row is the name with its meta on the right; from 60 cells the name is in a 22-cell column, then the plan's title, muted (`cuj/sendoff-demo      Send-off demo … 1/3`); a plan with no title (a new stub has only an id) leaves it blank. The meta is the plan's progress (`1/3`), `✓ 13/13` once every leaf is done or skipped (the whole row muted), `no tasks`, or `can't read` (red); at 7 rows, where no `OPEN` H2 says so, the open plan's reads `open · 1/3`, as in a find and in Browse. Folders are orange and actions green; none has brackets.
+- **Cursor and spacing.** The cursor starts on the open plan, else the newest plan, else `+ New plan`, and selection follows the plan, not the row (§1). From 16 rows a blank row goes above each H2 where the selected plan keeps its lines with it; at 7 rows there are no H2s, only rows (§12). A long list scrolls with `↑ more` and `↓ more`: `↑ more` never stands on an H2 or hides only blank rows, and `↓ more` comes right under the last row, never under a blank row or an H2 with nothing under it.
+- **The accordion.** The selected plan opens in place under its row, so you see what it is before you open it. `▌` runs down the whole block, but only the plan's own row has the selection's fill, so the pin keeps its yellow. Its lines, with H3 labels in their 8-cell column (§5):
+  1. the title and the plan's status (`Send-off demo · active`), just the status when the plan has no title; from 60 cells, where the title is on the row, the status and when the file changed (`active · changed 2m ago`);
+  2. `goal`, on one row;
+  3. `pinned` (the agent's active task) or `next up` (the pin worked out, §7), `▸ <id>  <title>`; else `✓ all done` (under the other values) or `no pin · nothing unblocked`;
+  4. `then`: the next one or two unfinished leaves after the pin, with their glyphs (§5), and from 60 cells their titles;
+  5. `done`: the last done task and what it accomplished (`✓ plans-ui  Home cards, folder browser, …`).
+
+  A plan with no tasks says `no tasks yet · the agent adds them`, and one that doesn't parse `can't read: <why>`, in red. When rows run short its lines drop (§12): `then` first, then `goal`, then under 60 cells `done` and the title, from 60 cells the status and `done`; the pin stays. Under 30 cells it is the title and `▸ <id>`, unlabeled. Folders and actions don't open. The list reads each plan once per version of its file, keyed by its path, modification time and size, when the list is built (opening it, a find or filter key, a write the agent reports, a change to the open plan): drawing it and moving the cursor read no files. The open plan is never read for it: its row and accordion, wherever they show, are the plan the outline shows (§6), its last good copy while a save is half-written, and `can't read` only once row 1 shows the error.
+- **No plans yet.** `PLANS` with `0 plans`, one sentence, `No plans in rex/plans/ yet. Type a name below, or ask your agent to write one.` (from 16 rows under a blank row, as on the Wait screen; at 7 rows it goes), then `+ New plan` (selected) and `+ New folder` (any folders above them). Start shows the Wait screen instead of this; Esc from it lands here, and Esc or ← goes back.
+- **Find (typing in the list)** matches across `rex/plans/**` under `PLANS › find`, its meta the number of matches. It is one flat list, folder-qualified and best match first, with no groups:
+  - The first match is selected and opens in place; the open plan's meta reads `open · 1/3`.
   - The list always ends with `+ Create 'x'` (unless a plan is named exactly `x`). With no match, that row is selected, and enter creates the plan at once and opens its outline. There is no extra prompt.
-- **Browse** (`PLANS › rex/plans/`, then `› cuj/` for each folder down; its meta counts the plans in that folder and below, and with a filter the plans under the folders and plans it leaves):
+- **Browse** (enter or → on a folder; `PLANS › cuj/`, then `› sub/` for each folder down; its meta counts the plans in that folder and below, and with a filter the plans under the folders and plans it leaves). There is no Browse root: `FOLDERS` is it.
+  - Rows: `../`, the subfolders, the plans (the selected one opens in place; the open one's meta reads `open · 1/3`), other files (muted), a rule, then `+ New plan` and `+ New folder`.
   - The cursor starts on the first folder or plan, and a filter selects its first match.
-  - `[ + New folder ]` / `[ + New plan ]` sit **below** the listing.
+  - `../`, Esc and ← go up a folder; from a top folder they go back to the plan list, the cursor on that folder.
   - Entering or leaving a folder clears the filter.
   - enter on a non-plan file says `not a .rex.json`.
   - With nothing matching, it shows `no match for 'x' in rex/plans/sub`.
-- **Name prompt:**
-  - `a/b` creates the plan inside folder `a`, and the target path is shown before enter.
+- **Name prompt** (enter on `+ New plan` or `+ New folder`; `PLANS › new plan`, from Browse `PLANS › cuj/ › new plan`): `Name the plan, then enter.` and `a/b makes plan b in folder a.`, then where it goes, updated as you type (`→ rex/plans/auth-flow.rex.json`, `→ rex/plans/<name>.rex.json` while empty, `→ rex/plans/team/<name>.rex.json` while the name ends in a folder, `team/`), then `never overwrites a file`. It creates in `rex/plans/` from the list and in the folder being browsed from Browse, where the preview says. A name that would climb out of `rex/plans/` says so before enter. Short of rows, the blank row goes, then the `a/b` line, the overwrite line and the first line; where it goes stays.
+  - `a/b` creates the plan inside folder `a`.
   - Duplicates warn and never overwrite.
   - A new plan is a valid v1 stub, not `{}`.
 - **Errors** clear on the next key.
 - **Starting Rex never deletes anything, and never creates a plan file or `rex/plans/`.** The plan start opens is recorded in `~/.rex/state.json` (§7), which may create `~/.rex`. Following or showing a plan never writes the plan file; the only plan Rex ever writes is the new empty stub you create here (never over an existing file).
   - A file named `rex` at the repo root shows `rex/ is a file here · plans off` instead of being removed.
-  - Outside a git repo, Home says `not in a git repo · plans go to <cwd>/rex/plans`.
+  - Outside a git repo, the plan list says `not in a git repo · plans go to <cwd>/rex/plans`.
   - Plans left in an old `rex-plans/` folder are reported (`rex-plans/ has 2 old plan(s) · move them into rex/plans`), never moved.
-  - `rex/plans/` is created on the first Create or New folder.
+  - `rex/plans/` is created on the first new plan or folder.
 
 ---
 
@@ -662,7 +699,7 @@ The plan list (`PLANS`, with how many plans there are as its meta):
 | ≥ 66 cols | mascot (40) + gutter (2) + text column (≥ 24) |
 | < 66 cols | **text only**: the mascot is hidden and the text column uses the full width |
 | text column ≥ 42 cols | row 0 starts with `REX` (120 columns, or a text-only terminal of 42–65); narrower, the mascot is the brand |
-| text column < 30 cols | an AGENT thought run is only `thinking ×N`, without its latest thought (§10) |
+| text column < 30 cols | an AGENT thought run is only `thinking ×N`, without its latest thought (§10); the plan list's accordion is the title and `▸ <id>`, unlabeled (§11) |
 | text column < 24 cols | `REX · widen to 24 cols`; keys other than Ctrl+C and Ctrl+L are ignored |
 | < 16 rows | the plan list's composer is one borderless row; no blank row goes above an H2 |
 | < 12 rows | AGENT has no page title: its body takes row 2, and its scroll count leads the footer (`12↑  end live …`). It has no blank rows, and a live thought run takes 1 row instead of 2 (§10) |
@@ -678,7 +715,12 @@ Body rows under the page title:
 | 12 | 8 | 7 | 8 |
 | 7 | 3 | 2 | 4 (no page title) |
 
-The page title is chrome: it is never a body line, so the lines that stay put above a list and the selection margin never see it. A selected row or card taller than the rows its list has (a plan-list card at 7 rows) shows its top, so its title is never the part cut.
+The page title is chrome: it is never a body line, so the lines that stay put above a list and the selection margin never see it. A selection taller than the rows its list has shows its top, so a plan's own row is never the part cut.
+
+The plan list's shape (§11) is one function of its body rows, which the selection margin reads too:
+- its H2s need 5 body rows, so at 7 rows it is only rows: no H2, no blank row, no accordion;
+- the accordion takes the rows the rest of the screen leaves (the rest keeps at most 5: the selected row and two either side), up to its 5 lines. On the list that is all of them from 17 rows, 4 at 14 to 16 rows (`then` gone), 2 at 12 rows (the title and the pin under 60 cells, the pin and `done` from 60), none at 7; a find or a folder with few rows has more. A 15-row terminal sizes it as a 16-row one, where the composer's box takes two rows, so a taller terminal never shows fewer of its lines;
+- the blank rows (above each H2, and under the notice or the error) go in from 16 rows, and only where the accordion keeps its lines with them: on a long list from 19 rows.
 
 Notes:
 - **No full clears.** Rex never clears the whole screen on a normal frame. Each changed row is erased from column 1 and then written whole, inside synchronized-output markers. Nothing is erased after a row: after a write to the last column the cursor stays there, and an erase would wipe that cell. The cursor is hidden while painting.
@@ -693,7 +735,7 @@ Notes:
 ## 13. Help overlay (`?`)
 
 `?` opens it at once from any screen (§2); `/help` then enter does too in the plan list. Its page title is the crumbs of the page under it, then `HELP` (`PLANS › Send-off demo › HELP`), and it keeps its place across Tab. It keeps `THIS PAGE` and its scroll while it is open: a plan the agent writes meanwhile opens under it (§11) without changing them, and Esc shows it. The crumbs follow the page under Help, so they always name where Esc goes (§4). Its sections, each under an H2:
-1. `THIS PAGE`, with the page's name as meta (`outline`, `about`, `task`, `plans`, `folder`, `new plan`, `new folder`, `waiting`, `agent`): the keys of the page it was opened over. On `agent` a note under the keys, with no key beside it, says that folding is display only: the feed keeps every thought (§10).
+1. `THIS PAGE`, with the page's name as meta (`outline`, `about`, `task`, `plans`, `folder`, `new plan`, `new folder`, `waiting`, `agent`): the keys of the page it was opened over. Two pages have a note under the keys, with no key beside it: on `agent`, that folding is display only: the feed keeps every thought (§10); on `plans`, that the selected plan opens in place, with its goal, pin, what's next and what's done (§11).
 2. `EVERYWHERE`: `tab` (switch plan / agent), `?`, `ctrl+l`, `ctrl+c ×2`.
 3. `MARKS`: the plan glyphs of §5 (`▸`, `○ · ✓`, `– !`, a parent's `1/3`, the cursor `▌`), the cue (`•` `!`), and what `following` / `latched` mean (§11). AGENT's marks are under `AGENT TAB`.
 4. `AGENT TAB`: how AGENT names its blocks (§10): `thinking` (a run of N thoughts, `×N`), `$`, `✗`, `[ASK]`, `reply ───`, `rex ›`.
@@ -718,6 +760,7 @@ The full-loop tests check these counts.
 | Open the plan you had last time | 0 (start opens it) |
 | Create a plan | 0 in Rex: ask the agent to write `rex/plans/<name>.rex.json`; Rex opens its outline |
 | Open a plan by name | Esc `name` enter (latches it) |
+| Open the plan you had open before, else the newest other plan | Esc ↓ enter (the first under `RECENT`; latches it) |
 | Create a plan in Rex | Esc `name` enter via find → `+ Create 'name'`; lands on its outline (latched) |
 | Switch to a plan the agent wrote while latched | enter |
 | See the pin | 0 (row 1) |
@@ -738,9 +781,9 @@ Each state's page title (§4) names it; AGENT under 12 rows has only its tab.
 | State | Page title | Entered via | Left via |
 |---|---|---|---|
 | Wait | `PLANS › waiting for a plan` | start with no plan to open · Esc/← from the plan list's Home while no plan is open | an attach (the agent writes a plan, or the fallback finds one) → Outline · Esc/← → plan list Home · `?` · Tab |
-| plan list Home | `PLANS` (`PLANS › find` while finding) | Esc from Wait, from Browse root or from Outline (cursor on Continue) | enter on a card, recent or match (latches another plan; Continue keeps following) · enter on `+ Create 'x'` creates and opens the outline · typing (find) · Esc/← → Wait while no plan is open · an attach while following (with an empty find) · `?` on an empty find · Tab |
-| Browse | `PLANS › rex/plans/ › …` | enter on Open a plan | enter on a plan → Outline · Esc/← · an attach while following (with an empty filter) · Tab |
-| Name prompt | `PLANS › new plan` / `new folder` | Create card · `[ + New plan ]` / `[ + New folder ]` rows | enter → Outline (plan) or into the new folder · Esc (nothing written) · Tab (name kept). An attach waits until it closes, and creating a plan makes it the row-1 offer |
+| plan list Home | `PLANS` (`PLANS › find` while finding) | Esc from Wait, from a top folder in Browse (cursor on that folder) or from Outline (cursor on the plan, under OPEN) | enter on a plan or match (latches another plan; the open one keeps following) · enter/→ on a folder → Browse · enter on `+ Create 'x'` creates and opens the outline · typing (find) · Esc/← → Wait while no plan is open · an attach while following (with an empty find) · `?` on an empty find · Tab |
+| Browse | `PLANS › cuj/ › …` | enter/→ on a folder under FOLDERS | enter on a plan → Outline · enter/→ on a folder · `../`/Esc/← up (from a top folder, to the plan list) · an attach while following (with an empty filter) · Tab |
+| Name prompt | `PLANS › new plan` / `new folder` | `+ New plan` / `+ New folder` rows | enter → Outline (plan) or into the new folder · Esc (nothing written) · Tab (name kept). An attach waits until it closes, and creating a plan makes it the row-1 offer |
 | Outline | `PLANS › <title>` | start (the last or newest plan) · an attach · open or create a plan · enter on a new-plan offer · Esc from detail · Tab back | enter/→ detail (enter switches while row 1 offers a new plan) · Esc/← → plan list · an attach of another plan while following · `?` · Tab |
 | Plan detail | `PLANS › <title> › about` | enter on the title row | Esc/← · an attach of another plan while following · enter on a new-plan offer · `?` · Tab |
 | Task detail | `PLANS › <title> › <id>` | enter/→ on a task | Esc/← · an attach of another plan while following · enter on a new-plan offer · `?` · Tab |
@@ -772,8 +815,8 @@ This is what the 2026-10 audit found, from four lenses: first run, daily loop, t
 | F14 | med | Turn state is wrong: Claude never idles; a tool failure idles mid-turn; restart shows idle | Cursor `stop` → idle and tool errors keep the turn running (`fix/cursor_installer`); map Claude Stop (`feature/harness_hooks`); warm start (`feature/event_scope`) | `fix/cursor_installer`, `feature/harness_hooks`, `feature/event_scope` |
 | F15 | design | Outline hotkeys would collide with the composer and with paste | ⏎-only verbs (§2). *Replaced:* no verbs and no composer outside the plan list; keys act at once (F36) | `feature/ux_input` |
 | F16 | med | Esc and Backspace navigate inconsistently (Esc on Home jumps to the tape) | Esc ladder; Backspace only deletes (§3) | `feature/ux_input` |
-| F17 | med | The plans header drops turn state and path; the open plan is invisible in the library | Header on every screen; Continue card (§4, §11) | `feature/ux_chrome`, `feature/plan_outline` |
-| F18 | med | Home: inert composer, dead cards, sticky errors, Open latest takes ↓↓⏎ | Find on Home; hide dead cards; clear errors; default cursor (§11) | `fix/library_navigation` |
+| F17 | med | The plans header drops turn state and path; the open plan is invisible in the library | Header on every screen; Continue card (§4, §11). *Replaced:* the open plan is the plan list's `OPEN` group (F43) | `feature/ux_chrome`, `feature/plan_outline` |
+| F18 | med | Home: inert composer, dead cards, sticky errors, Open latest takes ↓↓⏎ | Find on Home; hide dead cards; clear errors; default cursor (§11). *Replaced:* no cards; `OPEN` / `RECENT` / `FOLDERS` groups (F43) | `fix/library_navigation` |
 | F19 | med | Lists have no scroll position; selection is a row index | Scroll offset + margin; selection by identity (§1, §6) | `fix/library_navigation` |
 | F20 | med | Footers are cut mid-word at 80 cols | Ranked segments (§4) | `feature/ux_chrome` |
 | F21 | med | The existing write pattern reorders keys and isn't atomic; agents edit the same file | Byte-span edits, hash re-check, atomic writes. *Replaced:* Rex no longer writes plans at all, only a new stub (F37) | `feature/plan_store` |
@@ -798,6 +841,8 @@ This is what the 2026-10 audit found, from four lenses: first run, daily loop, t
 | F40 | med | Section headers blend into the text; no visual hierarchy (2026-10-24 feedback) | H1 page title bar, H2 capitals with a rule, H3 field labels; bold as the one added attribute (§5) | `feature/chrome_tabs` |
 | F41 | med | Footer keys read as icons (`⏎`) in ` · `-joined lists that name the screen and miss `? help` at 80×24 (2026-10-24 feedback) | Keys only, as words (`enter`, `esc`), bold, two spaces apart, rank = display order with short forms; `? help` and Esc's target fit 38 cells (§4) | `feature/chrome_tabs` |
 | F42 | high | AGENT is crowded with thinking spam: a `── thinking ──` rule over every run, each thought wrapped in full, a rule on every block (2026-10-24 feedback) | A run of thoughts is one row, `thinking ×N` and its latest (two while live); command runs over 5 fold to `$ … +N earlier` and the last 4; a failed step is one `✗` row; only a reply and the warm start keep a rule, the rest are named by their first characters; blank rows only around prompts and before replies and asks, none under 12 rows; folding is display only (§10) | `feature/agent_stream` |
+| F43 | high | The plan list is confusing and crowded: four cards (Continue, Create, Open, Open latest) over a recents list, so the open plan shows twice and a plan up to three times, Browse repeats the root, and nothing groups or spaces the rows (2026-10-24 feedback) | `OPEN` / `RECENT` / `FOLDERS` under H2s, each plan once, `RECENT` leading with the plans opened earlier in the run; a blank row above each H2 from 16 rows where the accordion keeps its lines; actions without brackets; FOLDERS replaces Browse's root, and `../`, Esc and ← from a top folder go back to the list (§11) | `feature/plan_list_groups` |
+| F44 | med | A plan's row says only its progress: what it is for, what is pinned and what got done take opening it (2026-10-24 feedback: details on hover) | The selected plan opens in place: title and status, `goal`, `pinned` / `next up`, `then`, `done`, dropping in a fixed order as rows run short, from a summary cached by path, modification time and size, so moving the cursor reads no files (§11, §12) | `feature/plan_list_groups` |
 
 Found in the same audit, outside the UI:
 

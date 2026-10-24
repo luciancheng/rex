@@ -20,8 +20,8 @@ func parseVerb(text string) (verb string, ok bool) {
 	return verb, ok
 }
 
-// forcedVerb is a Library draft that asks for a verb: "/name" or a lone
-// "?". Other Library text is a find query, filter or name, taken literally.
+// forcedVerb is a plan list draft that asks for a verb: "/name" or a lone
+// "?". Other text there is a find query, filter or name, taken literally.
 func forcedVerb(text string) bool {
 	t := strings.TrimSpace(text)
 	return t == "?" || strings.HasPrefix(t, "/")

@@ -166,15 +166,15 @@ func TestOutlineDetailAndBack(t *testing.T) {
 		t.Fatalf("a done task shows its retrospective\n%s", frame)
 	}
 	press(a, "esc", "esc")
-	if a.at != atLibrary || a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Kind != PlanRowContinue {
-		t.Fatalf("Esc from the outline lands on Continue: at=%d row=%+v", a.at, a.plans.Rows[a.plans.Cursor])
+	if a.at != atLibrary || a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Group != groupOpen {
+		t.Fatalf("Esc from the outline lands on OPEN: at=%d row=%+v", a.at, a.plans.Rows[a.plans.Cursor])
 	}
 	if !strings.Contains(a.frame(), "rex/plans/cuj/demo.rex.json") {
 		t.Fatal("the plan stays open in the header")
 	}
 	press(a, "\r")
 	if a.at != atOutline {
-		t.Fatal("Continue reopens the outline")
+		t.Fatal("enter on the open plan reopens the outline")
 	}
 }
 
@@ -517,8 +517,8 @@ func TestOutlineKeysActAtOnce(t *testing.T) {
 }
 
 // Start reopens the plan last opened in this repo, with no keys, and
-// follows it (docs/ux.md §11, §14); Esc shows it as Continue.
-func TestContinueCardAfterRestart(t *testing.T) {
+// follows it (docs/ux.md §11, §14); Esc shows it under OPEN.
+func TestOpenGroupAfterRestart(t *testing.T) {
 	a, _, path := openDemo(t, demoPlan, 120, 32)
 	// A newer plan doesn't win over the one in ~/.rex/state.json.
 	other := filepath.Join(a.plans.Root, "zz-newer.rex.json")
@@ -532,11 +532,11 @@ func TestContinueCardAfterRestart(t *testing.T) {
 	}
 	press(again, "esc")
 	row := again.plans.Rows[again.plans.Cursor]
-	if row.Kind != PlanRowContinue || row.Path != path {
+	if row.Group != groupOpen || row.Path != path {
 		t.Fatalf("cursor on %+v", row)
 	}
-	if !strings.Contains(again.frame(), "Continue cuj/demo") || !strings.Contains(again.frame(), "1/3 · ▸ card-highlight") {
-		t.Fatalf("%s", again.frame())
+	if frame := again.frame(); !strings.Contains(frame, "OPEN ─") || !strings.Contains(frame, "▌ cuj/demo ") || !strings.Contains(frame, "▌   pinned  ▸ card-highlight") {
+		t.Fatalf("%s", frame)
 	}
 }
 
@@ -572,19 +572,19 @@ func TestOutlinePageTitleStaysAsTheListScrolls(t *testing.T) {
 	}
 }
 
-func TestContinueKeepsTheOpenPlan(t *testing.T) {
+func TestReopeningKeepsTheOpenPlan(t *testing.T) {
 	a, c, path := openDemo(t, demoPlan, 120, 32)
 	press(a, "down") // load-outline
 	sel := a.outline.sel
-	press(a, "esc") // the Library, Continue selected
+	press(a, "esc") // the plan list, the open plan selected
 	os.WriteFile(path, []byte(`{"tasks": [`), 0o644)
 	c.t = c.t.Add(docPollEvery + time.Millisecond)
 	press(a, "\r")
 	if a.at != atOutline || a.outline.sel != sel {
-		t.Fatalf("Continue keeps the selection: at=%v sel=%q, want %q", a.at, a.outline.sel, sel)
+		t.Fatalf("reopening keeps the selection: at=%v sel=%q, want %q", a.at, a.outline.sel, sel)
 	}
 	if a.doc.plan == nil || a.doc.err != "" {
-		t.Fatalf("a half-saved file right after Continue keeps the last good copy: err=%q", a.doc.err)
+		t.Fatalf("a half-saved file right after reopening keeps the last good copy: err=%q", a.doc.err)
 	}
 }
 

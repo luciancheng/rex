@@ -312,7 +312,7 @@ func TestLatchedOffersTheNewPlan(t *testing.T) {
 	if got := a.statusLine().Text; got != "new plan cuj/next" {
 		t.Fatalf("in the list enter opens the selected row, so the offer doesn't claim it: %q", got)
 	}
-	press(a, "\r") // Continue
+	press(a, "\r") // the open plan, under OPEN
 	if a.offer != "" || a.plans.Current != path || a.follow {
 		t.Fatalf("opening a plan settles the offer: offer=%q current=%q", a.offer, a.plans.Current)
 	}
@@ -362,7 +362,9 @@ func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 
 	// A Name prompt in the plan list, enter on the tape.
 	a, path, next = offered(t)
-	press(a, "esc", "home", "down", "\r")
+	press(a, "esc")
+	pickRow(a, PlanRowNew, "")
+	press(a, "\r")
 	if !a.plans.Prompting() {
 		t.Fatal("setup: the Name prompt")
 	}
@@ -455,9 +457,10 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	repo := attachRepo(t)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
 	a := startIn(repo)
-	press(a, "esc", "home", "down")
+	press(a, "esc")
+	pickRow(a, PlanRowNew, "")
 	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowNew {
-		t.Fatal("setup: the Create card")
+		t.Fatal("setup: + New plan")
 	}
 	press(a, "\r")
 	if !a.plans.Prompting() {
@@ -485,7 +488,9 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 		t.Fatalf("cancelling lets it through: current=%q at=%d prompting=%v", a.plans.Current, a.at, a.plans.Prompting())
 	}
 
-	press(a, "esc", "home", "down", "\r")
+	press(a, "esc")
+	pickRow(a, PlanRowNew, "")
+	press(a, "\r")
 	three := writePlan(t, repo, "three.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(repo, three)})
 	typeText(a, "mine")
@@ -776,7 +781,7 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 	if s, ok := a.driftStatus(plan.Soft); !ok || a.statusLine().Text != "new plan cuj/next · enter switch" {
 		t.Fatalf("soft drift %q (%v) is under the offer: %q", s.Text, ok, a.statusLine().Text)
 	}
-	press(a, "esc", "\r") // Continue settles the offer
+	press(a, "esc", "\r") // the open plan settles the offer
 	if got := a.statusLine().Text; a.offer != "" || !strings.HasPrefix(got, "drift · soft: internal/tui/live.go") {
 		t.Fatalf("row 1 %q", got)
 	}
@@ -801,7 +806,7 @@ func TestOnlyThePlanListLatches(t *testing.T) {
 	for _, k := range []string{"p", "\r", "esc", "d", "\r", "esc", "s", "\r", "esc", "b", "\r", "esc", "\t", "p", "d", "\r", "\t"} {
 		press(a, k)
 		if k == "esc" && a.at == atLibrary {
-			press(a, "\r") // back on Continue: it picks nothing new
+			press(a, "\r") // back on the open plan: it picks nothing new
 		}
 	}
 	if after, _ := os.ReadFile(one); !a.follow || string(after) != string(before) {
@@ -819,15 +824,15 @@ func TestOnlyThePlanListLatches(t *testing.T) {
 	}
 }
 
-// enter on Continue reopens the plan already open: it picks nothing new, so
+// enter on the open plan, under OPEN, reopens it: it picks nothing new, so
 // a followed plan stays followed (docs/ux.md §11).
-func TestContinueKeepsFollowing(t *testing.T) {
+func TestOpenRowKeepsFollowing(t *testing.T) {
 	repo := attachRepo(t)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
 	a := startIn(repo)
 	press(a, "esc")
-	if a.plans.Rows[a.plans.Cursor].Kind != PlanRowContinue {
-		t.Fatal("setup: on Continue")
+	if a.plans.Rows[a.plans.Cursor].Group != groupOpen {
+		t.Fatal("setup: on OPEN")
 	}
 	press(a, "\r")
 	if a.plans.Current != one || a.at != atOutline || !a.follow || !strings.Contains(a.frame(), "following rex/plans/one.rex.json") {
@@ -912,12 +917,12 @@ func TestAHeldAttachShowsOnRowOne(t *testing.T) {
 	}
 }
 
-// docs/ux.md §3, §11: with no plan open, Esc and ← climb from Library Home
-// back to the Wait screen; with one open, Home is the top.
+// docs/ux.md §3, §11: with no plan open, Esc and ← climb from the plan
+// list back to the Wait screen; with one open, the list is the top.
 func TestEscFromTheListGoesBackToWait(t *testing.T) {
 	a := testApp(t)
 	press(a, "esc")
-	if a.at != atLibrary || !strings.Contains(a.frame(), "or ask your agent to write rex/plans/<name>.rex.json · Rex opens it") {
+	if a.at != atLibrary || !strings.Contains(a.frame(), "No plans in rex/plans/ yet. Type a name below, or ask your agent to write") {
 		t.Fatalf("the plan list with no plans says the agent can write one\n%s", a.frame())
 	}
 	typeText(a, "x")
@@ -1080,6 +1085,68 @@ func TestAnotherCaseIsTheSamePlan(t *testing.T) {
 	if b.ingest([]watch.Event{wrote(b.plans.Repo, filepath.Join(filepath.Dir(demo), "Demo.rex.json"))}); b.offer != "" {
 		t.Fatalf("latched: offered the plan on screen: %q", b.offer)
 	}
+}
+
+// docs/ux.md §11: the plan list goes by the file, not the spelling. The
+// open plan, written in another case or reached through a link, is under
+// OPEN, once, by the name the folder gives it, and Esc lands on it.
+func TestOpenPlanIsListedOnceByFile(t *testing.T) {
+	once := func(t *testing.T, a *app, path, name string) {
+		t.Helper()
+		row := a.plans.Rows[a.plans.Cursor]
+		if a.at != atLibrary || row.Group != groupOpen || row.Name != name {
+			t.Fatalf("Esc lands on OPEN %s: at=%d on %+v", name, a.at, row)
+		}
+		n := 0
+		for _, row := range a.plans.Rows {
+			if row.Kind == PlanRowPlan && samePlan(row.Path, path) {
+				n++
+			}
+		}
+		if n != 1 || strings.Contains(a.frame(), "open ·") {
+			t.Fatalf("listed %d times\n%s", n, a.frame())
+		}
+	}
+
+	a, _, _ := cujApp(t)
+	next := writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan)
+	upper := filepath.Join(a.plans.Root, "CUJ", "Next.rex.json")
+	if _, err := os.Stat(upper); err == nil {
+		if a.ingest([]watch.Event{wrote(a.plans.Repo, upper)}); a.plans.Current != upper {
+			t.Fatalf("setup: the agent's spelling is open: %q", a.plans.Current)
+		}
+		press(a, "esc")
+		once(t, a, next, "cuj/next.rex.json")
+	}
+
+	// A hard link is one file under two names too: listed once, under the
+	// open plan's name, and counted once.
+	h, _, hdemo := cujApp(t)
+	if err := os.Link(hdemo, filepath.Join(h.plans.Root, "hard.rex.json")); err == nil {
+		h.plans.walk = planWalk{}
+		press(h, "esc")
+		once(t, h, hdemo, "cuj/sendoff-demo.rex.json")
+		if meta := libraryPage(h.plans).Meta; meta != "1 plan" {
+			t.Fatalf("a hard link counted twice: %q", meta)
+		}
+	}
+
+	b, _, demo := cujApp(t)
+	alias := filepath.Join(b.plans.Root, "alias.rex.json")
+	if err := os.Symlink(demo, alias); err != nil {
+		t.Skip("no symlinks here (Windows without the privilege)")
+	}
+	b.plans.walk = planWalk{}
+	press(b, "esc")
+	once(t, b, demo, "cuj/sendoff-demo.rex.json")
+	if title := strings.TrimSpace(textOf(b.frameRows().Rows[2], b.columns)); !strings.HasSuffix(title, " 1 plan") {
+		t.Fatalf("one plan, counted once: %q", title)
+	}
+	// Latched on the link, the file keeps the link's name, and a find
+	// still matches it by that name.
+	typeText(b, "alias")
+	press(b, "\r", "esc")
+	once(t, b, demo, "alias.rex.json")
 }
 
 // With plans off, the Wait screen says so and how to turn them on, and
@@ -1495,7 +1562,7 @@ func TestTheListShowsAPlanTheAgentWrote(t *testing.T) {
 	press(a, "esc")
 	next := writePlan(t, a.plans.Repo, "cuj/zzz-brand-new.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
-	if a.plans.Rows[a.plans.Cursor].Kind != PlanRowContinue || !strings.Contains(viewText(BuildPlanView(a.plans, 78)), "cuj/zzz-brand-new.rex.json") {
+	if a.plans.Rows[a.plans.Cursor].Group != groupOpen || !strings.Contains(viewText(BuildPlanView(a.plans, 78)), "cuj/zzz-brand-new ") {
 		t.Fatalf("cursor on %v\n%s", a.plans.Rows[a.plans.Cursor].Kind, viewText(BuildPlanView(a.plans, 78)))
 	}
 }

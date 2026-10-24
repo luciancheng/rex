@@ -119,7 +119,7 @@ func TestHostilePlanFileNamesAreCleaned(t *testing.T) {
 	b := NewPlanBrowser(repo)
 	frame := ComposeFrame("idle", "yellow", ComposeOptions{Enabled: false, Columns: 120, Lines: 30, Pane: PanePlans, Plans: b, Composer: true})
 	assertNoForeignControl(t, frame)
-	if !strings.Contains(frame, "evilname.rex.json") {
+	if !strings.Contains(frame, "evilname") {
 		t.Fatal("cleaned name should still show")
 	}
 }

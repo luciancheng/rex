@@ -14,7 +14,7 @@ func browseApp(t *testing.T) *app {
 	t.Helper()
 	repo := t.TempDir()
 	root := filepath.Join(repo, "rex", "plans")
-	if err := os.MkdirAll(filepath.Join(root, "team"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "team", "inner"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "seed.rex.json"), []byte("{}"), 0o644); err != nil {
@@ -23,8 +23,8 @@ func browseApp(t *testing.T) *app {
 	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
 	press(a, "esc") // start opened seed; Esc is the plan list
 	for i, row := range a.plans.Rows {
-		if row.Kind == PlanRowOpen {
-			a.plans.Cursor = i
+		if row.Kind == PlanRowDir {
+			a.plans.Cursor = i // team/, under FOLDERS
 		}
 	}
 	press(a, "\r")
@@ -42,21 +42,21 @@ func TestEscLadder(t *testing.T) {
 		}
 	}
 	press(a, "right")
-	if !strings.HasSuffix(a.plans.Dir, "team") {
+	if !strings.HasSuffix(a.plans.Dir, "inner") {
 		t.Fatalf("→ enters a folder: %q", a.plans.Dir)
 	}
 	typeText(a, "zz")
 	press(a, "esc")
-	if a.draft != "" || !strings.HasSuffix(a.plans.Dir, "team") {
+	if a.draft != "" || !strings.HasSuffix(a.plans.Dir, "inner") {
 		t.Fatal("first Esc clears the filter and stays")
 	}
 	press(a, "esc")
-	if a.plans.Dir != a.plans.Root || !a.plans.Browsing() {
+	if !strings.HasSuffix(a.plans.Dir, "team") || !a.plans.Browsing() {
 		t.Fatal("then Esc climbs one folder")
 	}
 	press(a, "esc")
-	if a.plans.Screen != ScreenHome {
-		t.Fatal("then to Home")
+	if a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Name != "team" {
+		t.Fatal("then, from a top folder, to the plan list, on the folder")
 	}
 	press(a, "esc")
 	if a.pane != PanePlans || a.plans.Screen != ScreenHome {
@@ -74,7 +74,7 @@ func TestBackspaceNeverNavigates(t *testing.T) {
 
 func TestNamePromptKeepsTheNameAcrossTab(t *testing.T) {
 	a := testApp(t)
-	press(a, "esc", "\r") // the plan list, then its Create card
+	press(a, "esc", "\r") // the plan list, then + New plan
 	typeText(a, "half")
 	press(a, "\t", "\t")
 	if a.plans.Screen != ScreenCreate || a.draft != "half" {
@@ -315,9 +315,9 @@ func TestHelpTakesNoTyping(t *testing.T) {
 func TestHelpOverBrowseLeavesTheFilterAlone(t *testing.T) {
 	a := testApp(t)
 	root := filepath.Join(a.plans.Repo, "rex", "plans")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "alpha.rex.json"), []byte("{}"), 0o644)
-	a.at, a.plans.Screen, a.plans.Dir = atLibrary, ScreenBrowse, root
+	os.MkdirAll(filepath.Join(root, "team"), 0o755)
+	os.WriteFile(filepath.Join(root, "team", "alpha.rex.json"), []byte("{}"), 0o644)
+	a.at, a.plans.Screen, a.plans.Dir = atLibrary, ScreenBrowse, filepath.Join(root, "team")
 	a.plans.Rebuild()
 	press(a, "?")
 	typeText(a, "zz")
@@ -355,9 +355,9 @@ func TestDraftCapAndPlaceholderWithoutColor(t *testing.T) {
 func TestCtrlCClosesHelp(t *testing.T) {
 	a := testApp(t)
 	root := filepath.Join(a.plans.Repo, "rex", "plans")
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "alpha.rex.json"), []byte("{}"), 0o644)
-	a.at, a.plans.Screen, a.plans.Dir = atLibrary, ScreenBrowse, root
+	os.MkdirAll(filepath.Join(root, "team"), 0o755)
+	os.WriteFile(filepath.Join(root, "team", "alpha.rex.json"), []byte("{}"), 0o644)
+	a.at, a.plans.Screen, a.plans.Dir = atLibrary, ScreenBrowse, filepath.Join(root, "team")
 	a.plans.Rebuild()
 	press(a, "?")
 	typeText(a, "zz")

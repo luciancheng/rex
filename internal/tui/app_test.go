@@ -51,8 +51,8 @@ func TestAppStartsOnTheWaitScreen(t *testing.T) {
 		t.Fatalf("the footer says where to go\n%s", frame)
 	}
 	press(a, "esc")
-	if a.at != atLibrary || !strings.Contains(a.frame(), "Create a plan") {
-		t.Fatalf("Esc is the plan list, Create in it\n%s", a.frame())
+	if a.at != atLibrary || !strings.Contains(a.frame(), "▌ + New plan") {
+		t.Fatalf("Esc is the plan list, + New plan in it\n%s", a.frame())
 	}
 }
 
@@ -266,7 +266,7 @@ func TestAppScrolledViewStaysPut(t *testing.T) {
 func TestAppKeysFromOneReadSettleInOrder(t *testing.T) {
 	a := testApp(t)
 	press(a, "esc")
-	root := filepath.Join(a.plans.Repo, "rex", "plans")
+	root := filepath.Join(a.plans.Repo, "rex", "plans", "team")
 	os.MkdirAll(root, 0o755)
 	for _, name := range []string{"alpha.rex.json", "beta.rex.json"} {
 		os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o644)

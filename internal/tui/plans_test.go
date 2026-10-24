@@ -422,11 +422,12 @@ func TestPlanBrowseDoesNotLeaveRoot(t *testing.T) {
 func TestComposeFramePlansPane(t *testing.T) {
 	repo := t.TempDir()
 	b := NewPlanBrowser(repo)
+	page := libraryPage(b)
 	frame := ComposeFrame("idle", "yellow", ComposeOptions{
 		Enabled: false, Columns: 80, Lines: 24,
-		Pane: PanePlans, Plans: b, Composer: true,
+		Pane: PanePlans, Plans: b, Composer: true, Page: &page,
 	})
-	if !strings.Contains(frame, "── plans") || !strings.Contains(frame, "Create a plan") {
+	if !strings.Contains(frame, "  PLANS                       0 plans") || !strings.Contains(frame, "Create a plan") {
 		t.Fatalf("%s", frame)
 	}
 }

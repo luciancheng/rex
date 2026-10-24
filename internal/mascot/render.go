@@ -106,6 +106,28 @@ func PaintFill(text string, fg, bg RGB, enabled bool) string {
 	return FG(fg) + BG(bg) + text + Reset
 }
 
+// PaintStyle is Paint with an optional fill and bold, the only attribute
+// Rex adds (docs/ux.md §5). Under 256 colors fg and bg go through the same
+// map, so text painted in its own fill stays invisible.
+func PaintStyle(text string, fg, bg *RGB, bold, enabled bool) string {
+	if !enabled {
+		return text
+	}
+	var b strings.Builder
+	if fg != nil {
+		b.WriteString(FG(*fg))
+	}
+	if bg != nil {
+		b.WriteString(BG(*bg))
+	}
+	if bold {
+		b.WriteString("\033[1m")
+	}
+	b.WriteString(text)
+	b.WriteString(Reset)
+	return b.String()
+}
+
 func pixelRGB(ch rune, palette Palette) (*RGB, error) {
 	if ch == '.' || ch == ' ' {
 		return nil, nil

@@ -467,7 +467,7 @@ func claudeTool(payload map[string]any) (string, any) {
 }
 
 // MapClaude maps Claude Code hook payloads. Claude has no hook for
-// thinking, so the tape shows prompts, tool calls, results and the final
+// thinking, so AGENT shows prompts, tool calls, results and the final
 // reply (Stop's last_assistant_message), never a transcript.
 func MapClaude(payload map[string]any) *Event {
 	if _, fromCursor := payload["cursor_version"]; fromCursor {
@@ -580,7 +580,7 @@ func MapClaude(payload map[string]any) *Event {
 }
 
 // claudeToolText is a short line for one of Claude Code's own tools: a
-// plan, a todo list or a subagent prompt is never flattened onto the tape,
+// plan, a todo list or a subagent prompt is never flattened onto AGENT,
 // and nothing falls back to a JSON dump of the input.
 func claudeToolText(tool string, input any) string {
 	data := asDict(input)

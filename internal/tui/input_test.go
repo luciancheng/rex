@@ -132,18 +132,23 @@ func TestIdleIsNoLongerAVerb(t *testing.T) {
 }
 
 // ? opens Help at once on a screen without a composer (docs/ux.md §2).
+// Its page title is the page it opened over, then HELP, and THIS PAGE lists
+// that page's keys (docs/ux.md §13).
 func TestHelpOverlay(t *testing.T) {
 	a := testApp(t)
 	press(a, "\t", "?")
 	frame := a.frame()
-	if !strings.Contains(frame, "── help") || !strings.Contains(frame, "rex never") || !strings.Contains(frame, "esc close") {
-		t.Fatalf("help overlay\n%s", frame)
+	for _, want := range []string{"AGENT › HELP", "THIS PAGE", "agent", "EVERYWHERE", "switch plan / agent", "esc close"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("help overlay lacks %q\n%s", want, frame)
+		}
 	}
 	// Help lists keys, not verbs: Rex has no pin, done, send-off, brief or
-	// note (docs/ux.md §13). No row's key is a lone letter.
-	for _, width := range []int{38, 80} {
+	// note (docs/ux.md §13). No row's key is a lone letter, and no key is
+	// an icon.
+	for _, width := range []int{30, 38, 80} {
 		body := viewText(a.helpBody(width))
-		for _, never := range []string{"p⏎", "d⏎", "s⏎", "b⏎", "o⏎", "sendoff", "send-off", "brief", "note", "clipboard", "what you typed", "pin the", "mark the"} {
+		for _, never := range []string{"p⏎", "d⏎", "s⏎", "b⏎", "o⏎", "⏎", "↔", "tape", "sendoff", "send-off", "brief", "note", "clipboard", "what you typed", "pin the", "mark the"} {
 			if strings.Contains(body, never) {
 				t.Fatalf("help at %d offers %q\n%s", width, never, body)
 			}
@@ -151,18 +156,46 @@ func TestHelpOverlay(t *testing.T) {
 		if m := regexp.MustCompile(`(?m)^  [a-z]( |$)`).FindString(body); m != "" {
 			t.Fatalf("help at %d has a one-letter key %q\n%s", width, m, body)
 		}
+		for _, want := range []string{"THIS PAGE", "MARKS", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("help at %d lacks %q\n%s", width, want, body)
+			}
+		}
+		for _, line := range a.helpBody(width) {
+			if cellLen(line.Text) > width {
+				t.Fatalf("help at %d: %q is %d cells", width, line.Text, cellLen(line.Text))
+			}
+		}
 	}
 	press(a, "\t")
-	if strings.Contains(a.frame(), "── help") {
-		t.Fatal("overlay belongs to the tape")
+	if strings.Contains(a.frame(), "› HELP") {
+		t.Fatal("overlay belongs to AGENT")
 	}
 	press(a, "\t")
-	if !strings.Contains(a.frame(), "── help") {
+	if !strings.Contains(a.frame(), "› HELP") {
 		t.Fatal("Tab keeps the overlay open in its place")
 	}
 	press(a, "esc")
-	if strings.Contains(a.frame(), "── help") {
+	if strings.Contains(a.frame(), "› HELP") {
 		t.Fatal("Esc closes it")
+	}
+	// THIS PAGE follows the page under Help.
+	b, _, _ := openDemo(t, demoPlan, 120, 32)
+	for _, step := range []struct {
+		keys        []string
+		page, crumb string
+	}{
+		{nil, "outline", "PLANS › Send-off demo › HELP"},
+		{[]string{"esc", "\r"}, "task", "PLANS › Send-off demo › card-highlight › HELP"},
+		{[]string{"esc", "esc", "home", "\r"}, "about", "PLANS › Send-off demo › about › HELP"},
+		{[]string{"esc", "esc", "esc"}, "plans", "PLANS › HELP"},
+	} {
+		press(b, step.keys...)
+		press(b, "?")
+		body := viewText(b.helpBody(78))
+		if !strings.Contains(strings.SplitN(body, "\n", 3)[1], "THIS PAGE") || !strings.Contains(body, step.page+"\n") || !strings.Contains(b.frame(), step.crumb) {
+			t.Fatalf("%s: help\n%s", step.page, b.frame())
+		}
 	}
 }
 
@@ -170,7 +203,7 @@ func TestLibraryTextIsLiteralUnlessSlashed(t *testing.T) {
 	a := testApp(t)
 	press(a, "esc") // the plan list
 	typeText(a, "help")
-	if a.overlay[a.pane] != overlayNone || a.preview() != "" || !strings.Contains(a.frame(), "find · ⏎ create") {
+	if a.overlay[a.pane] != overlayNone || a.preview() != "" || !strings.Contains(a.frame(), "enter create  esc clear  tab agent") {
 		t.Fatal("plain 'help' on Home is a find, not a verb")
 	}
 	press(a, "\x15")
@@ -315,20 +348,20 @@ func TestCtrlCClosesHelp(t *testing.T) {
 	}
 	a.settle(80, 24)
 	press(a, "?")
-	if f := a.frameRows().Rows; !strings.Contains(f[len(f)-1], "tab tape") {
+	if f := a.frameRows().Rows; !strings.Contains(f[len(f)-1], "tab agent") {
 		t.Fatalf("help keeps its must-have tab at 38 cells: %q", f[len(f)-1])
 	}
 	press(a, "esc")
 	typeText(a, "/zap")
-	if !strings.Contains(a.frame(), "⏎ not a verb") {
-		t.Fatal("the footer says a /word isn't a verb before ⏎")
+	if !strings.Contains(a.frame(), "enter not a verb") {
+		t.Fatal("the footer says a /word isn't a verb before enter")
 	}
 }
 
 // docs/ux.md §2, §3: the outline, both details, the tape and the wait
 // screen have no composer. Letters (the old verbs too) and a paste change
 // nothing and write nothing, neither the plan nor ~/.rex/state.json; ? opens
-// Help at once; Esc, Tab and ⏎ do what §3 says.
+// Help at once; Esc, Tab and enter do what §3 says.
 func TestComposerLessScreensIgnoreTyping(t *testing.T) {
 	type screen struct {
 		name  string
@@ -372,7 +405,7 @@ func TestComposerLessScreensIgnoreTyping(t *testing.T) {
 				t.Fatal("tape: Esc never leaves the place")
 			}
 			if press(a, "\r"); a.pane != PaneChat || a.at != atOutline {
-				t.Fatal("tape: ⏎ with no offer does nothing")
+				t.Fatal("tape: enter with no offer does nothing")
 			}
 		case PanePlans:
 			want := map[planAt]planAt{atOutline: atLibrary, atTaskDetail: atOutline, atPlanDetail: atOutline}[s.at]

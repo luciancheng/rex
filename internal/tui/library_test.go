@@ -50,7 +50,7 @@ func TestFindWithNoMatchCreatesInOneKey(t *testing.T) {
 	}
 	press(a, "\r")
 	if _, err := os.Stat(filepath.Join(root, "fresh-idea.rex.json")); err != nil {
-		t.Fatal("⏎ on + Create makes the plan")
+		t.Fatal("enter on + Create makes the plan")
 	}
 }
 
@@ -86,7 +86,7 @@ func TestBrowseCursorFilterAndActionsBelow(t *testing.T) {
 	}
 	press(a, "\r")
 	if !strings.HasSuffix(a.plans.Current, "zeta.rex.json") {
-		t.Fatal("⏎ after a filter opens the match, not New folder")
+		t.Fatal("enter after a filter opens the match, not New folder")
 	}
 }
 
@@ -183,7 +183,7 @@ func TestLongListScrollsWithTheSelection(t *testing.T) {
 
 func TestFindComparesTheWholeName(t *testing.T) {
 	// A root plan b doesn't count as a/b: + Create 'a/b' is offered, and
-	// ⏎ makes it in folder a.
+	// enter makes it in folder a.
 	a, root := libraryApp(t, "b.rex.json")
 	typeText(a, "a/b")
 	b := a.plans
@@ -225,7 +225,7 @@ func TestFindRanksTheExactNameFirst(t *testing.T) {
 	}
 	press(a, "\r")
 	if b.Current != filepath.Join(root, "auth.rex.json") {
-		t.Fatalf("name⏎ opened %q", b.Current)
+		t.Fatalf("name enter opened %q", b.Current)
 	}
 }
 
@@ -262,7 +262,7 @@ func TestLibraryHeaderNeverScrollsAway(t *testing.T) {
 	a, root := libraryApp(t, names...)
 	os.WriteFile(filepath.Join(root, "many", "zz-notes.txt"), []byte("x"), 0o644)
 	a.settle(110, 20)
-	if frame := a.frame(); !strings.Contains(frame, "── plans") || !strings.Contains(frame, "rex/plans") {
+	if frame := a.frame(); !strings.Contains(frame, "  PLANS ") || !strings.Contains(frame, "rex/plans") {
 		t.Fatalf("first frame keeps the title and folder\n%s", frame)
 	}
 	for i, row := range a.plans.Rows {
@@ -279,10 +279,10 @@ func TestLibraryHeaderNeverScrollsAway(t *testing.T) {
 		press(a, "up")
 		a.frame()
 	}
-	if frame := a.frame(); !strings.Contains(frame, "── open") || !strings.Contains(frame, "rex/plans/many") {
+	if frame := a.frame(); !strings.Contains(frame, "PLANS › rex/plans/ › many/") || !strings.Contains(frame, "  rex/plans/many ") {
 		t.Fatalf("back at the top, the title and folder show\n%s", frame)
 	}
-	// ⏎ on a file far down the list says why, on screen.
+	// enter on a file far down the list says why, on screen.
 	for a.plans.Rows[a.plans.Cursor].Kind != PlanRowFile {
 		press(a, "down")
 		a.frame()
@@ -356,7 +356,7 @@ func TestBrowseNewPlanKeepsTheFilter(t *testing.T) {
 	}
 	press(a, "\r")
 	if _, err := os.Stat(filepath.Join(root, "roadmap.rex.json")); err != nil {
-		t.Fatal("⏎ creates the filtered name")
+		t.Fatal("enter creates the filtered name")
 	}
 }
 
@@ -402,16 +402,16 @@ func TestHelpPagesOverlapUnderTheMarkers(t *testing.T) {
 }
 
 func TestHomeTakesWordsLiterally(t *testing.T) {
-	// In the Library text is a name (docs/ux.md §2): done⏎ finds or creates
+	// In the plan list text is a name (docs/ux.md §2): done enter finds or creates
 	// "done"; a /word is only ever /help or /breakdance.
 	a, root := libraryApp(t, "alpha.rex.json")
 	typeText(a, "done")
-	if !strings.Contains(a.frame(), "⏎ create") {
-		t.Fatalf("the footer says ⏎ creates\n%s", a.frame())
+	if !strings.Contains(a.frame(), "enter create") {
+		t.Fatalf("the footer says enter creates\n%s", a.frame())
 	}
 	press(a, "\r")
 	if _, err := os.Stat(filepath.Join(root, "done.rex.json")); err != nil {
-		t.Fatal("done⏎ on Home creates done.rex.json")
+		t.Fatal("done enter on Home creates done.rex.json")
 	}
 }
 
@@ -501,6 +501,26 @@ func TestOpenPlanHintNeverDangles(t *testing.T) {
 	for _, row := range b.Rows {
 		if row.Path == b.Current && row.Hint != "open" {
 			t.Fatalf("hint %q", row.Hint)
+		}
+	}
+}
+
+// At 7 rows the plan list has two body rows, fewer than a card: the
+// selected card shows its top, so its title is never the part cut
+// (docs/ux.md §12).
+func TestSevenRowsShowTheSelectedCardsTitle(t *testing.T) {
+	for _, cols := range []int{24, 80} {
+		a, _, _ := cujApp(t)
+		press(a, "esc")
+		a.settle(cols, 7)
+		if body := strings.Join(a.frameRows().Rows[3:5], "\n"); !strings.Contains(body, "╭ Continue cuj/sendo") {
+			t.Fatalf("%d×7: the selected card's title is cut\n%s", cols, a.frame())
+		}
+		empty := testApp(t)
+		press(empty, "esc")
+		empty.settle(cols, 7)
+		if body := strings.Join(empty.frameRows().Rows[3:5], "\n"); !strings.Contains(body, "╭ Create a plan") {
+			t.Fatalf("%d×7, no plans: the Create card's title is cut\n%s", cols, empty.frame())
 		}
 	}
 }

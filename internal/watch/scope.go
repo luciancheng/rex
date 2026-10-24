@@ -173,7 +173,7 @@ func (s Scope) eventFile(ev Event) string {
 	return p
 }
 
-// Display rewrites absolute paths for the tape: inside the repo to
+// Display rewrites absolute paths for the AGENT tab: inside the repo to
 // repo-relative, under home to ~. Only tool lines are touched, and only at
 // their real paths; a reply, thought or prompt is shown as written.
 func (s Scope) Display(ev Event) Event {

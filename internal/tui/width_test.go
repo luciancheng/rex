@@ -15,6 +15,7 @@ func TestCellWidth(t *testing.T) {
 		'a': 1, 'é': 1, '中': 2, '한': 2, 'Ａ': 2, '😀': 2, '🚀': 2,
 		'\u0301': 0, '\u200d': 0, '\ufe0f': 0,
 		'·': 1, '…': 1, '─': 1, '│': 1, '▌': 1, '○': 1, '✓': 1, '▸': 1, '↑': 1,
+		'•': 1, '›': 1, '×': 1, '✗': 1, '━': 1, '→': 1, // the redesign's glyphs (docs/ux.md §5)
 	} {
 		if got := cellWidth(r); got != want {
 			t.Errorf("cellWidth(%q) = %d, want %d", r, got, want)

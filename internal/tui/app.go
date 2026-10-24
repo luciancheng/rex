@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,13 +32,21 @@ type app struct {
 
 	overlay       [2]overlayKind // per place
 	overlayScroll [2]int
+	// helpOver names the page each place's Help was opened over, for THIS
+	// PAGE (docs/ux.md §13): a plan that opens under Help doesn't swap it
+	// mid-read. Help's crumbs are the page under it now, the Esc ladder.
+	helpOver [2]string
+	// unseen is each place's cue on the tab bar while the other is on
+	// screen: "•" news, "!" needs you (docs/ux.md §4). Memory only.
+	unseen [2]string
 
-	log      []watch.Event
-	logRev   int
-	view     logViewCache
-	scroll   int
-	turn     Turn
-	lastKind string
+	log         []watch.Event
+	logRev      int
+	view        logViewCache
+	scroll      int
+	unseenLines int // AGENT lines that arrived below a scrolled view
+	turn        Turn
+	lastKind    string
 
 	quitPending bool
 	quitTicks   int
@@ -56,7 +66,7 @@ type app struct {
 	statePath  string
 	drift      driftState    // drift from the current pin, shown only
 	driftGen   int           // numbers each pin stint's drift block
-	driftQueue []watch.Event // live events to judge once their batch is on the tape
+	driftQueue []watch.Event // live events to judge once their batch is on AGENT
 	skill      skillSeen     // whether an agent can learn plans, for the wait screen
 
 	// Attach (docs/ux.md §11): follow opens the plan the agent writes;
@@ -64,13 +74,13 @@ type app struct {
 	// write is then only offered on row 1.
 	follow    bool
 	pending   string    // a write to open once the plan list's draft or Name prompt clears
-	offer     string    // latched: the plan the agent wrote, ⏎ switches to it
+	offer     string    // latched: the plan the agent wrote, enter switches to it
 	wrote     string    // the last other plan file written in the batch being ingested
 	wroteOpen bool      // the batch wrote the open plan too
 	scanned   time.Time // the last cold-start look for a plan file
 }
 
-// logViewCache keeps the laid-out tape for one log revision and width; the
+// logViewCache keeps the laid-out AGENT stream for one log revision and width; the
 // loop needs it several times per tick.
 type logViewCache struct {
 	rev, width int
@@ -128,6 +138,7 @@ func (a *app) composeOptions() ComposeOptions {
 		Log:         a.log,
 		QuitPending: a.quitPending,
 		Status:      statusForTurn(a.turn, a.lastKind),
+		Cue:         a.unseen[a.other()],
 		Scroll:      a.scroll,
 		Pane:        a.pane,
 		Plans:       a.plans,
@@ -145,32 +156,157 @@ func (a *app) composeOptions() ComposeOptions {
 		opt.LogView = a.logView(textW)
 		if len(a.log) == 0 {
 			a.health.refresh(time.Now())
-			opt.LogView = a.health.lines(textW, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), true)
+			opt.LogView = a.health.lines(textW, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), a.lines < agentTitleRows)
 		}
 	}
-	if a.pane == PanePlans && a.at != atLibrary && a.doc != nil {
-		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
-		opt.PlanFooter = a.planFooter()
-	}
-	if a.pane == PanePlans && a.at == atWait {
-		body := a.waitBody(l.textW)
+	page := a.page()
+	switch {
+	case a.pane == PaneChat:
+		opt.Footer = agentFooter(a.scroll, page != nil, a.offerTakes())
+	case a.at == atWait:
+		body := a.waitBody(l.textW, l.bodyH)
 		a.outline.scroll = max(0, min(a.outline.scroll, len(body)-l.bodyH))
 		opt.PlanView, opt.PlanScroll = body, a.outline.scroll
-		opt.PlanFooter = a.waitFooter(len(body) > l.bodyH)
-	}
-	if a.overlay[a.pane] == overlayHelp {
-		other := "tab tape"
-		if a.pane == PaneChat {
-			other = "tab plan"
+		opt.Footer = waitFooter(len(body) > l.bodyH)
+	case a.at != atLibrary && a.doc != nil:
+		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
+		opt.Footer = a.planFooter()
+		if a.at == atOutline && a.doc.plan != nil && len(opt.PlanView) > l.bodyH {
+			// The list scrolls: where the selection is in it.
+			rows := outlineRows(a.doc.plan)
+			at := 0
+			for i, k := range rows {
+				if k == a.outline.sel {
+					at = i
+				}
+			}
+			// The tag joins the status only while it fits (docs/ux.md §6).
+			page.MetaShort = page.Meta
+			page.Meta += fmt.Sprintf(" · tasks %d/%d", at, len(rows)-1)
 		}
+	}
+	opt.Page = page
+	if a.overlay[a.pane] == overlayHelp {
 		body := a.helpBody(textW)
-		footer := []string{"help", "esc close", other}
+		other := FooterSeg{Text: "tab " + strings.ToLower(tabWords[a.other()])}
+		footer := []FooterSeg{{Text: "esc close"}, other}
 		if len(body) > l.bodyH {
-			footer = []string{"help", "esc close", other, "↑↓ scroll"}
+			footer = []FooterSeg{{Text: "esc close"}, {Text: "↑↓ scroll"}, other}
 		}
 		opt.Overlay = &Overlay{Lines: body, Footer: footer, Scroll: a.overlayScroll[a.pane]}
+		crumbs := []string{tabWords[PaneChat]} // AGENT has no page title of its own under 12 rows
+		if page != nil {
+			crumbs = page.Crumbs
+		}
+		opt.Page = &Page{Crumbs: append(append([]string(nil), crumbs...), "HELP")}
 	}
 	return opt
+}
+
+// other is the place not on screen, whose cue the tab bar shows.
+func (a *app) other() PaneKind {
+	if a.pane == PanePlans {
+		return PaneChat
+	}
+	return PanePlans
+}
+
+// light puts a cue on place p's tab while the other place is on screen:
+// "!" outranks "•". Showing a place clears its cue, so nothing builds up
+// for the place you are looking at, and a cue never moves you (docs/ux.md
+// §4).
+func (a *app) light(p PaneKind, mark string) {
+	if a.pane == p {
+		return
+	}
+	if mark == "!" || a.unseen[p] == "" {
+		a.unseen[p] = mark
+	}
+}
+
+// titled reports that the screen has a page title: PLAN screens and Help
+// always, AGENT from agentTitleRows rows (docs/ux.md §4).
+func (a *app) titled() bool {
+	return a.pane == PanePlans || a.overlay[a.pane] != overlayNone || a.lines >= agentTitleRows
+}
+
+// page is the page title of the screen under any overlay (docs/ux.md
+// §4), or nil on AGENT without one. Its crumbs are the Esc ladder: Esc
+// goes to the crumb on the left.
+func (a *app) page() *Page {
+	var p Page
+	switch {
+	case a.pane == PaneChat:
+		if a.lines < agentTitleRows {
+			return nil
+		}
+		p = Page{Crumbs: []string{tabWords[PaneChat]}, Meta: "live"}
+		switch {
+		case len(a.log) == 0:
+			p.Meta = "waiting for events"
+		case a.scroll > 0 && a.unseenLines > 0:
+			p.Meta = fmt.Sprintf("%d↑ · %d new", a.scroll, a.unseenLines)
+		case a.scroll > 0:
+			p.Meta = fmt.Sprintf("%d↑", a.scroll)
+		}
+	case a.at == atWait:
+		p = Page{Crumbs: []string{"PLANS", "waiting for a plan"}}
+	case a.at != atLibrary && a.doc != nil:
+		p = a.docPage()
+	default:
+		p = libraryPage(a.plans)
+	}
+	return &p
+}
+
+// docPage is the open plan's page title: PLANS › its title, then "about"
+// or the task's id on a detail screen. On the outline it is the title
+// row, selected while the cursor is on it, with the plan's status as meta.
+func (a *app) docPage() Page {
+	d := a.doc
+	crumbs := []string{"PLANS", planTitle(d.plan, d.path)}
+	switch {
+	case a.at == atPlanDetail:
+		return Page{Crumbs: append(crumbs, "about")}
+	case a.at == atTaskDetail:
+		return Page{Crumbs: append(crumbs, a.outline.sel)}
+	case d.plan == nil:
+		return Page{Crumbs: crumbs, Meta: "can't read", MetaRole: "error"}
+	}
+	return Page{Crumbs: crumbs, Meta: string(d.plan.Status), Selected: a.outline.sel == ""}
+}
+
+// libraryPage is the plan list's page title: PLANS, then find, the folder
+// being browsed (rex/plans/ and each folder under it), or the Name
+// prompt, with how many plans the list holds as meta.
+func libraryPage(b *PlanBrowser) Page {
+	crumbs := []string{"PLANS"}
+	if b.Browsing() || (b.Prompting() && b.From == ScreenBrowse) {
+		crumbs = append(crumbs, folderCrumbs(b)...)
+	}
+	switch {
+	case b.Screen == ScreenCreate:
+		return Page{Crumbs: append(crumbs, "new plan")}
+	case b.Screen == ScreenFolder:
+		return Page{Crumbs: append(crumbs, "new folder")}
+	case b.Browsing():
+		return Page{Crumbs: crumbs, Meta: plural(b.total, "%d plan", "%d plans")}
+	case b.Find != "":
+		return Page{Crumbs: append(crumbs, "find"), Meta: plural(b.total, "%d match", "%d matches")}
+	}
+	return Page{Crumbs: crumbs, Meta: plural(b.total, "%d plan", "%d plans")}
+}
+
+// folderCrumbs is the folder being browsed as crumbs: "rex/plans/", then
+// each folder under it.
+func folderCrumbs(b *PlanBrowser) []string {
+	crumbs := []string{"rex/plans/"}
+	if rel, err := filepath.Rel(b.Root, b.Dir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+			crumbs = append(crumbs, part+"/")
+		}
+	}
+	return crumbs
 }
 
 // composing reports that the plan list's composer is on screen and takes
@@ -186,6 +322,9 @@ func (a *app) layout() layout {
 	l := layoutFor(a.columns, a.lines)
 	if !a.composing() {
 		l = l.bare()
+	}
+	if !a.titled() {
+		l = l.untitled()
 	}
 	return l
 }
@@ -204,11 +343,11 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 	case atTaskDetail:
 		body = taskDetail(a.doc, v.sel, width)
 	default:
-		body = outlineBody(a.doc, v, width, viewH)
+		body = outlineBody(a.doc, v, width)
 		head := headOf(body)
 		pinned := planHead(body[:head], len(body), viewH)
 		if v.sel == "" {
-			v.view = 0 // the title row is selected: the list starts at its top
+			v.view = 0 // the title row, above the list, is selected: the list starts at its top
 		}
 		v.view = windowStart(body[head:], viewH-len(pinned), v.view)
 		return body, v.view
@@ -217,16 +356,29 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 	return body, v.scroll
 }
 
-// planFooter is the footer for the open plan's screens (docs/ux.md §4).
-func (a *app) planFooter() []string {
+// planFooter is the footer for the open plan's screens (docs/ux.md §4):
+// where Esc goes, Tab, what enter does, then ? help. Row 1's offer, while
+// enter takes it, leads.
+func (a *app) planFooter() []FooterSeg {
+	offer := a.offerTakes()
 	if a.at == atPlanDetail || a.at == atTaskDetail {
-		return []string{"detail", "esc outline", "↑↓ scroll", "tab tape", "? help"}
+		if offer {
+			return []FooterSeg{{Text: "enter switch"}, {Text: "esc outline"}, {Text: "tab agent"}, helpSeg}
+		}
+		return []FooterSeg{{Text: "esc outline"}, {Text: "tab agent"}, {Text: "↑↓ scroll"}, helpSeg}
 	}
-	enter := "⏎ detail"
-	if a.offerTakes() {
-		enter = "⏎ switch" // row 1's offer takes ⏎ (docs/ux.md §11)
+	p := a.doc.plan
+	switch {
+	case offer:
+		return []FooterSeg{{Text: "enter switch"}, {Text: "esc plans"}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}}
+	case p == nil:
+		return []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, helpSeg}
+	case a.outline.sel == "" && len(p.Tasks) == 0:
+		return []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, {Text: "enter about"}, helpSeg}
+	case a.outline.sel == "":
+		return []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, {Text: "enter about"}, helpSeg, {Text: "↑↓ move"}}
 	}
-	return []string{"outline", "tab tape", "esc plans", enter, "? help"}
+	return []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, {Text: "enter open"}, helpSeg, {Text: "↑↓ move"}}
 }
 
 // placeholder is the dim hint in the plan list's empty composer: what you
@@ -243,7 +395,7 @@ func (a *app) placeholder() string {
 	return "find or create a plan"
 }
 
-// preview says what ⏎ will do with a /word in the plan list, for the
+// preview says what enter will do with a /word in the plan list, for the
 // footer; other text there is a find, filter or name.
 func (a *app) preview() string {
 	text := strings.TrimSpace(a.draft)
@@ -251,15 +403,23 @@ func (a *app) preview() string {
 		return ""
 	}
 	if verb, ok := parseVerb(text); ok {
-		return "⏎ " + verb
+		return "enter " + verb
 	}
-	return "⏎ not a verb"
+	return "enter not a verb"
 }
 
 // statusLine picks row 1, the first of these that applies (docs/ux.md
 // §4): the plan file can't be read, a toast, hard drift, a new plan
 // (offered or held), soft drift, the pin.
 func (a *app) statusLine() StatusLine {
+	s := a.statusText()
+	if a.doc != nil && s.Text != "" {
+		s.Right = progress(a.doc.plan) // while a plan is open, whatever row 1 says
+	}
+	return s
+}
+
+func (a *app) statusText() StatusLine {
 	if s, ok := a.overOffer(); ok {
 		return s
 	}
@@ -332,7 +492,7 @@ func (a *app) logLines() int {
 	return len(a.logView(textW))
 }
 
-// ingest applies hook events: turn state for every event, the tape for the
+// ingest applies hook events: turn state for every event, AGENT for the
 // ones worth drawing. A scrolled-up view keeps showing the same lines while
 // new ones arrive below (until MaxLog trims the oldest).
 func (a *app) ingest(fresh []watch.Event) (changed bool) {
@@ -341,7 +501,7 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 	}
 	hidden := a.hidden
 	fresh = a.own(fromFeed(fresh), true)
-	// A plan file the agent wrote is opened once the batch is on the tape
+	// A plan file the agent wrote is opened once the batch is on AGENT
 	// and judged for drift against the plan it was written under.
 	defer func() {
 		if a.planWritten() {
@@ -349,7 +509,7 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 		}
 	}()
 	if len(fresh) == 0 {
-		// A hidden event still changes the count the empty tape shows.
+		// A hidden event still changes the count the empty AGENT tab shows.
 		return a.hidden != hidden && len(a.log) == 0
 	}
 	before := a.logLines()
@@ -366,10 +526,20 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 	n := len(a.log)
 	added := ExtendLog(&a.log, fresh)
 	if len(added) > 0 || len(a.log) != n {
-		a.logRev++ // a trim to MaxLog changes the tape too
+		a.logRev++ // a trim to MaxLog changes AGENT too
 	}
-	if len(added) > 0 && a.scroll > 0 {
-		a.scroll += max(0, a.logLines()-before)
+	if len(added) > 0 {
+		a.below(before)
+	}
+	for _, ev := range added {
+		// Only what AGENT draws: never a file look, a result or a
+		// thought, another repo's event, or Rex's own line (docs/ux.md §4).
+		switch {
+		case ev.Kind == "text":
+			a.light(PaneChat, "•")
+		case ev.Kind == "question", ev.Kind == "error" && watch.MetaTool(ev) == "":
+			a.light(PaneChat, "!")
+		}
 	}
 	drifted := a.applyDrift() // after the batch, so its block sits below what it judges
 	if len(added) > 0 || a.turn != prevTurn {
@@ -380,7 +550,7 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 }
 
 // keys applies one read's keys in order, settling after each one, so a
-// filter letter and ⏎ read together act like two separate presses.
+// filter letter and enter read together act like two separate presses.
 func (a *app) keys(pressed []string) bool {
 	changed := false
 	for _, key := range pressed {
@@ -441,7 +611,7 @@ func (a *app) own(events []watch.Event, live bool) []watch.Event {
 		}
 		if live {
 			a.checkDrift(ev) // history from before Rex started never counts
-			a.sawWrite(ev)   // nor opens a plan; raw, since quiet results never reach the tape
+			a.sawWrite(ev)   // nor opens a plan; raw, since quiet results never reach AGENT
 		}
 		out = append(out, a.scope.Display(ev))
 	}
@@ -467,7 +637,7 @@ func (a *app) warmStart(recent []watch.Event, now time.Time) {
 		}
 		a.syncTurn()
 	}
-	// The same merging and dedupe as the live tape, so a growing reply is
+	// The same merging and dedupe as the live stream, so a growing reply is
 	// one block; then the last few blocks.
 	var shown []watch.Event
 	ExtendLog(&shown, recent)
@@ -545,6 +715,7 @@ func (a *app) applyKey(key string) bool {
 			a.pane = PanePlans
 			a.plans.Rebuild()
 		}
+		a.unseen[a.pane] = "" // shown: its news is seen
 		return true
 	}
 	if a.quitPending {
@@ -610,6 +781,7 @@ func (a *app) handleKeyArmed(key string) bool {
 func (a *app) openHelp() {
 	a.overlay[a.pane] = overlayHelp
 	a.overlayScroll[a.pane] = 0
+	a.helpOver[a.pane] = a.pageKind()
 }
 
 // submit runs the plan list's draft if it is a /word: /help or
@@ -630,6 +802,7 @@ func (a *app) submit(text string) bool {
 }
 
 func (a *app) tapeKey(key string) bool {
+	defer a.live()
 	bodyH := PaneBodyHeight(a.lines)
 	total := a.logLines()
 	maxScroll := ClampScroll(total, bodyH, total)
@@ -653,9 +826,16 @@ func (a *app) tapeKey(key string) bool {
 		a.scroll = 0
 		return true
 	case "\r", "\n":
-		return a.takeOffer() // PLAN switches; you stay on the tape
+		return a.takeOffer() // PLAN switches; you stay on AGENT
 	}
 	return false
+}
+
+// live keeps the count of lines that came in below a scrolled view to the
+// lines still below it, so "N↑ · M new" never has M over N, and clears it
+// once the view is back at the bottom.
+func (a *app) live() {
+	a.unseenLines = min(a.unseenLines, a.scroll)
 }
 
 func (a *app) planKey(key string) bool {
@@ -891,7 +1071,7 @@ func (a *app) openDetail() bool {
 }
 
 // toLibrary leaves the open plan for Library Home, cursor on Continue. The
-// plan stays open: the header and the tape keep it.
+// plan stays open: row 0 and AGENT keep it.
 func (a *app) toLibrary() bool {
 	b := a.plans
 	a.at = atLibrary
@@ -903,7 +1083,7 @@ func (a *app) toLibrary() bool {
 }
 
 // pollDoc re-reads the open plan. An edit keeps the selection, shows a
-// toast, and leaves one "plan" line on the tape. The agent pins
+// toast, and leaves one "plan" line on AGENT. The agent pins
 // and finishes tasks this way: when the file marks the pin done, the
 // toast says so and names what is next up (docs/ux.md §7, §8).
 func (a *app) pollDoc() bool {
@@ -919,6 +1099,11 @@ func (a *app) pollDoc() bool {
 	if !changed {
 		return false
 	}
+	if _, bad := docStatus(a.doc); bad {
+		a.light(PanePlans, "!") // the file is gone or doesn't parse
+	} else if a.unseen[PanePlans] == "!" {
+		a.unseen[PanePlans] = "•" // fixed: nothing needs you, but the plan did change
+	}
 	if a.at != atTaskDetail {
 		a.outline.keepSel(a.doc.plan)
 	}
@@ -931,6 +1116,7 @@ func (a *app) pollDoc() bool {
 		return true
 	}
 	a.tapeLine("plan", news.text)
+	a.light(PanePlans, "•")
 	if done := doneToast(was, a.doc.plan); done.Text != "" {
 		a.toast, a.toastUntil = done, a.now().Add(toastFor)
 		return true
@@ -1016,21 +1202,60 @@ func (a *app) overlayKey(key string) bool {
 	return false
 }
 
-// helpBody is the Help overlay's lines at width.
+// helpBody is the Help overlay's lines at width: the page it was opened
+// over first, then the feed's health (docs/ux.md §13).
 func (a *app) helpBody(width int) []LogLine {
-	help := append(helpLines(width), LogLine{Kind: "gap"})
+	tall := a.lines >= 16
+	help := helpLines(width, a.helpOver[a.pane], tall)
+	if tall {
+		help = append(help, LogLine{Kind: "gap"})
+	}
 	a.health.refresh(time.Now())
 	return append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), false)...)
 }
 
-// tapeLine adds one local line to the tape. It is never written to the
+// pageKind names the page Help opens over, for its THIS PAGE section.
+func (a *app) pageKind() string {
+	switch {
+	case a.pane == PaneChat:
+		return "agent"
+	case a.at == atWait:
+		return "waiting"
+	case a.at == atLibrary || a.doc == nil:
+	case a.at == atPlanDetail:
+		return "about"
+	case a.at == atTaskDetail:
+		return "task"
+	default:
+		return "outline"
+	}
+	switch a.plans.Screen {
+	case ScreenBrowse:
+		return "folder"
+	case ScreenCreate:
+		return "new plan"
+	case ScreenFolder:
+		return "new folder"
+	}
+	return "plans"
+}
+
+// tapeLine adds one local line to AGENT. It is never written to the
 // feed and never sent anywhere.
 func (a *app) tapeLine(kind, text string) {
 	before := a.logLines()
 	a.log = append(a.log, watch.NewEvent("rex", kind, text, nil))
 	a.logRev++
+	a.below(before)
+}
+
+// below keeps a scrolled-up view on the lines it showed while the stream
+// grew from before lines, and counts the new ones for AGENT's page title.
+func (a *app) below(before int) {
 	if a.scroll > 0 {
-		a.scroll += max(0, a.logLines()-before)
+		grew := max(0, a.logLines()-before)
+		a.scroll += grew
+		a.unseenLines += grew
 	}
 }
 
@@ -1112,7 +1337,7 @@ func (a *app) tick() bool {
 }
 
 // settle runs after every key or tick: it applies the browse filter, opens
-// a held attach, picks up a resize, and keeps the tape scroll in range.
+// a held attach, picks up a resize, and keeps AGENT's scroll in range.
 func (a *app) settle(columns, lines int) bool {
 	changed := false
 	if a.composing() && a.syncPlanInput() {
@@ -1131,6 +1356,7 @@ func (a *app) settle(columns, lines int) bool {
 		a.scroll = clamped
 		changed = true
 	}
+	a.live()
 	return changed
 }
 

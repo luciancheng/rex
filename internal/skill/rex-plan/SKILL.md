@@ -7,7 +7,7 @@ description: 'Write, fill or work a Rex plan file (rex/plans/**/*.rex.json), the
 
 # Rex plans
 
-A Rex plan is one unit of work (a feature, a fix, a migration) saved as JSON at `rex/plans/<name>.rex.json` in the repo, committed with the code. Rex attaches to the plan file you write and shows it live as an outline next to the agent tape, with the task you are on pinned. You write the plan, its statuses and its completion fields; Rex only reads the file. Rex has no actions of its own: never tell the person to create, open, pin or mark anything done in Rex. Rex never sends you anything either; the plan file is how a new chat picks up the work.
+A Rex plan is one unit of work (a feature, a fix, a migration) saved as JSON at `rex/plans/<name>.rex.json` in the repo, committed with the code. Rex attaches to the plan file you write and shows it live as an outline beside what the agent is doing, with the task you are on pinned. You write the plan, its statuses and its completion fields; Rex only reads the file. Rex has no actions of its own: never tell the person to create, open, pin or mark anything done in Rex. Rex never sends you anything either; the plan file is how a new chat picks up the work.
 
 The format is frozen at `"version": 1`; the full contract is `docs/plan-format.md` in the Rex repo.
 

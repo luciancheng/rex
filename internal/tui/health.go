@@ -8,7 +8,7 @@ import (
 	"github.com/luciancheng/rex/internal/watch"
 )
 
-// feedHealth is what the empty tape and Help say about the feed: which
+// feedHealth is what the empty AGENT tab and Help say about the feed: which
 // agents are wired (machine-wide, or for this repo only), whether they
 // can learn plans (the rex-plan skill), when the last event came, and
 // what Rex hid. The wiring is re-read every few seconds
@@ -48,8 +48,9 @@ func (h *feedHealth) saw(ev watch.Event) {
 	}
 }
 
-// lines is the health block; sk is how the rex-plan skill stands. waiting
-// titles it for the empty tape; Help just says "feed".
+// lines is the health block under its FEED header (docs/ux.md §10); sk is
+// how the rex-plan skill stands. waiting says so in the header, for the
+// empty AGENT tab when it has no page title to say it.
 func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, waiting bool) []LogLine {
 	var lines []LogLine
 	row := func(kind, name, what string) {
@@ -60,11 +61,11 @@ func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, w
 			lines = append(lines, LogLine{Kind: kind, Text: "  " + padRight(name, 9) + w})
 		}
 	}
-	title := "feed"
+	meta := ""
 	if waiting {
-		title = "feed · waiting for agent events"
+		meta = "waiting for agent events"
 	}
-	lines = append(lines, LogLine{Kind: "idle", Text: rule(title, width)})
+	lines = append(lines, h2Line("FEED", meta, width))
 	last := "no events yet"
 	if h.last != nil {
 		last = "last event " + ago(now.Sub(time.Unix(0, int64(h.last.TS*1e9)))) + " (" + h.last.Source + ")"

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/luciancheng/rex/internal/watch"
 )
@@ -46,7 +47,7 @@ func TestAppStartsOnTheWaitScreen(t *testing.T) {
 	if !strings.Contains(frame, "no plan yet · tell your agent to make one") || strings.Contains(frame, "Create a plan") {
 		t.Fatalf("%s", frame)
 	}
-	if !strings.Contains(frame, "no plan · esc plans · tab tape") {
+	if !strings.Contains(frame, "esc plans  tab agent  ? help") || !strings.Contains(frame, "PLANS › waiting for a plan") {
 		t.Fatalf("the footer says where to go\n%s", frame)
 	}
 	press(a, "esc")
@@ -159,9 +160,9 @@ func TestAppBreakdancePlaysOnceThenResumes(t *testing.T) {
 	}
 }
 
-// The tape has no composer and no notes: words typed there go nowhere,
-// and its body takes the composer's rows (docs/ux.md §2, §10).
-func TestAppTapeHasNoComposer(t *testing.T) {
+// AGENT has no composer and no notes: words typed there go nowhere, and
+// its body takes the composer's rows (docs/ux.md §2, §10).
+func TestAppAgentHasNoComposer(t *testing.T) {
 	a := testApp(t)
 	press(a, "\t")
 	typeText(a, "a note")
@@ -172,8 +173,11 @@ func TestAppTapeHasNoComposer(t *testing.T) {
 	if f := a.frame(); strings.Contains(f, "╭") || strings.Contains(f, "a note") || strings.Contains(f, "pasted") {
 		t.Fatalf("no box, nothing typed\n%s", f)
 	}
-	if PaneBodyHeight(a.lines) != a.lines-3 {
-		t.Fatalf("the tape's body is every row but the header, row 1 and the footer: %d", PaneBodyHeight(a.lines))
+	if PaneBodyHeight(a.lines) != a.lines-4 {
+		t.Fatalf("AGENT's body is every row but rows 0 to 2 and the footer: %d", PaneBodyHeight(a.lines))
+	}
+	if PaneBodyHeight(11) != 11-3 {
+		t.Fatalf("under 12 rows it has no page title: %d", PaneBodyHeight(11))
 	}
 }
 
@@ -257,7 +261,7 @@ func TestAppScrolledViewStaysPut(t *testing.T) {
 	}
 }
 
-// Keys from one read are applied one at a time: a filter letter and ⏎ in
+// Keys from one read are applied one at a time: a filter letter and enter in
 // the same read open the row the filter selected.
 func TestAppKeysFromOneReadSettleInOrder(t *testing.T) {
 	a := testApp(t)
@@ -309,5 +313,135 @@ func TestTUINeverBranchesOnVendor(t *testing.T) {
 		if m := vendor.Find(data); m != nil {
 			t.Errorf("%s names a vendor: %s", f, m)
 		}
+	}
+}
+
+// docs/ux.md §4: the tab bar's cue says the other place has news: from
+// PLAN, • for a reply and ! for an ask or a turn's error; from AGENT, •
+// for a plan change and ! for a plan Rex can't read. Showing a place
+// clears its cue, and a cue never moves you.
+func TestCue(t *testing.T) {
+	a, c, path := openDemo(t, demoPlan, 120, 32)
+	press(a, "down")
+	sel := a.outline.sel
+	unmoved := func(pane PaneKind, at planAt) {
+		t.Helper()
+		if a.pane != pane || a.at != at || a.outline.sel != sel {
+			t.Fatalf("a cue moved you: pane=%d at=%d sel=%q", a.pane, a.at, a.outline.sel)
+		}
+	}
+	head := func() string { return a.frameRows().Rows[0] }
+	for i, ev := range []watch.Event{
+		{Source: "claude", Kind: "thought", Text: "thinking it over"},
+		{Source: "claude", Kind: "command", Text: "go test ./...", Meta: map[string]any{"tool": "Bash"}},
+		{Source: "claude", Kind: "error", Text: "exit status 1", Meta: map[string]any{"tool": "Bash"}},
+		{Source: "claude", Kind: "result", Text: "ok", Meta: map[string]any{"tool": "Bash"}},
+		{Source: "claude", Kind: "command", Text: "Read README.md", Meta: map[string]any{"tool": "Read", "path": "README.md"}},
+		{Source: "claude", Kind: "text", Text: "a reply in another repo", Meta: map[string]any{"cwd": t.TempDir()}},
+		{Source: "rex", Kind: "text", Text: "a feed line posing as Rex"},
+	} {
+		if a.ingest([]watch.Event{ev}); a.unseen[PaneChat] != "" || !strings.Contains(head(), "[PLAN] AGENT") {
+			t.Fatalf("event %d (%s) lit the cue: %q", i, ev.Kind, head())
+		}
+	}
+	a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "Done: one block now."}})
+	if !strings.Contains(head(), "[PLAN]•AGENT") {
+		t.Fatalf("a reply waits on AGENT: %q", head())
+	}
+	a.ingest([]watch.Event{{Source: "claude", Kind: "question", Text: "Which file?"}})
+	a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "Another reply."}})
+	if !strings.Contains(head(), "[PLAN]!AGENT") {
+		t.Fatalf("an ask outranks a reply: %q", head())
+	}
+	unmoved(PanePlans, atOutline)
+	press(a, "\t")
+	if a.unseen[PaneChat] != "" || !strings.Contains(head(), "PLAN [AGENT]") {
+		t.Fatalf("showing AGENT clears its cue: %q", head())
+	}
+	a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "Seen as it comes."}})
+	if a.unseen[PaneChat] != "" {
+		t.Fatal("nothing builds up for the place on screen")
+	}
+	// Scrolled up on AGENT, the agent edits the plan: PLAN lights, and
+	// neither place, selection nor scroll moves.
+	var many []watch.Event
+	for i := 0; i < 40; i++ {
+		many = append(many, watch.NewEvent("claude", "text", "line "+string(rune('a'+i%26))+string(rune('a'+i/26)), nil))
+	}
+	a.ingest(many)
+	press(a, "up", "up")
+	body := func() string { rows := a.frameRows().Rows; return strings.Join(rows[3:len(rows)-1], "\n") }
+	before := body()
+	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"status": "pending"`, `"status": "skipped"`, 1)), 0o644)
+	later(a, c)
+	if !strings.Contains(head(), "PLAN•[AGENT]") || a.unseen[PanePlans] != "•" {
+		t.Fatalf("a plan change lights PLAN: %q", head())
+	}
+	if body() != before || !strings.Contains(a.frameRows().Rows[2], " new") {
+		t.Fatalf("the scrolled view moved, or doesn't count what came in below\n%s", a.frame())
+	}
+	unmoved(PaneChat, atOutline)
+	os.WriteFile(path, []byte(demoPlan[:100]), 0o644)
+	later(a, c)
+	later(a, c)
+	if !strings.Contains(head(), "PLAN![AGENT]") {
+		t.Fatalf("a plan Rex can't read: %q", head())
+	}
+	// Fixed, nothing needs you any more, but the plan did change.
+	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"Outline view"`, `"Outline view, fixed"`, 1)), 0o644)
+	later(a, c)
+	if !strings.Contains(head(), "PLAN•[AGENT]") || !strings.HasPrefix(a.statusLine().Text, "plan updated") {
+		t.Fatalf("a fixed plan is news, not an alarm: %q, row 1 %q", head(), a.statusLine().Text)
+	}
+	press(a, "\t")
+	if a.unseen[PanePlans] != "" || !strings.Contains(head(), "[PLAN] AGENT") {
+		t.Fatalf("showing PLAN clears its cue: %q", head())
+	}
+	// A turn's own error needs you too; a failed tool call doesn't.
+	a.ingest([]watch.Event{{Source: "claude", Kind: "error", Text: "the turn failed"}})
+	if a.unseen[PaneChat] != "!" {
+		t.Fatalf("a turn's error: %q", a.unseen[PaneChat])
+	}
+	// From AGENT, a plan that opens with no hook (the cold-start scan)
+	// lights PLAN too.
+	w := testApp(t)
+	wc := &clock{t: time.Unix(1_800_000_000, 0)}
+	w.now = wc.now
+	press(w, "\t")
+	writePlan(t, w.plans.Repo, "found.rex.json", demoPlan)
+	later(w, wc)
+	if w.at != atOutline || w.pane != PaneChat || w.unseen[PanePlans] != "•" {
+		t.Fatalf("an attach from the scan: at=%d pane=%d cue=%q", w.at, w.pane, w.unseen[PanePlans])
+	}
+	// A plan the agent writes that Rex can't read opens with its error at
+	// once, and no poll will say so: it lights !.
+	broken := writePlan(t, w.plans.Repo, "cuj/broken.rex.json", "{nope")
+	w.ingest([]watch.Event{wrote(w.plans.Repo, broken)})
+	if w.plans.Current != broken || w.unseen[PanePlans] != "!" || !strings.Contains(w.frameRows().Rows[0], "PLAN![AGENT]") {
+		t.Fatalf("an unreadable attach: current=%q cue=%q row 1 %q", w.plans.Current, w.unseen[PanePlans], w.statusLine().Text)
+	}
+	// The agent then writes a plan Rex can read: it replaces the broken one,
+	// so nothing needs you any more.
+	good := writePlan(t, w.plans.Repo, "cuj/good.rex.json", demoPlan)
+	w.ingest([]watch.Event{wrote(w.plans.Repo, good)})
+	if w.plans.Current != good || w.unseen[PanePlans] != "•" || !strings.Contains(w.frameRows().Rows[0], "PLAN•[AGENT]") {
+		t.Fatalf("a readable attach puts out the !: current=%q cue=%q", w.plans.Current, w.unseen[PanePlans])
+	}
+	// Latched, seen from AGENT, the agent writes another plan: row 1
+	// offers it and PLAN lights, and nothing moves.
+	o, _, opened := openDemo(t, demoPlan, 120, 32)
+	press(o, "down", "\t")
+	osel := o.outline.sel
+	next := writePlan(t, o.plans.Repo, "cuj/next.rex.json", demoPlan)
+	o.ingest([]watch.Event{wrote(o.plans.Repo, next)})
+	if o.offer == "" || o.unseen[PanePlans] != "•" || !strings.Contains(o.frameRows().Rows[0], "PLAN•[AGENT]") {
+		t.Fatalf("an offer lights PLAN: offer=%q cue=%q %q", o.offer, o.unseen[PanePlans], o.frameRows().Rows[0])
+	}
+	if o.pane != PaneChat || o.at != atOutline || o.outline.sel != osel || o.plans.Current != opened || o.follow {
+		t.Fatalf("an offer moved you: pane=%d at=%d sel=%q current=%q", o.pane, o.at, o.outline.sel, o.plans.Current)
+	}
+	// The cue lives in memory only.
+	if data, _ := os.ReadFile(a.statePath); strings.Contains(string(data), "unseen") || strings.Contains(string(data), "•") {
+		t.Fatalf("state.json holds a cue: %s", data)
 	}
 }

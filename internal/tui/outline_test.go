@@ -86,17 +86,19 @@ func TestOutlineAtAGlance(t *testing.T) {
 	a, _, _ := openDemo(t, demoPlan, 120, 32)
 	frame := a.frame()
 	for _, want := range []string{
-		"REX plan",
-		"rex/plans/cuj/demo.rex.json",
-		"▸ card-highlight  Selected plan card is one block (active)",
-		"── Send-off demo · active · 1/3 ──",
+		"REX [PLAN] AGENT idle",
+		"latched rex/plans/cuj/demo.rex.json",
+		"▸ card-highlight  Selected plan card is one block",
+		"1/3 done",
+		"  PLANS › Send-off demo",
+		"active",
 		"last ✓ plans-ui: Home cards, browse, duplicate warn",
 		"✓ plans-ui",
 		"▌ ▸ card-highlight",
 		"Selected plan card is one block · Bar, border, and fill",
 		"· load-outline",
 		"after card-highlight",
-		"outline · tab tape · esc plans · ⏎ detail · ? help",
+		"esc plans  tab agent  enter open  ? help  ↑↓ move",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("missing %q\n%s", want, frame)
@@ -118,7 +120,7 @@ func TestOutlineNarrowShowsTheBlurbUnderTheSelection(t *testing.T) {
 	if strings.Contains(frame, "Plans navigator · Create") {
 		t.Fatal("rows are title-only below 60 columns")
 	}
-	if !strings.Contains(frame, "▌ ▸ card-highlight Selected") || !strings.Contains(frame, "▌   Bar, border") || !strings.Contains(frame, "▸ card-highlight (active)") {
+	if !strings.Contains(frame, "▌ ▸ card-highlight Selected") || !strings.Contains(frame, "▌   Bar, border") || !strings.Contains(frame, "▸ card-highlight  Selected plan…") {
 		t.Fatalf("the selected row's blurb is on its own line\n%s", frame)
 	}
 	for _, row := range a.frameRows().Rows {
@@ -132,10 +134,10 @@ func TestOutlineDetailAndBack(t *testing.T) {
 	a, _, _ := openDemo(t, demoPlan, 120, 32)
 	press(a, "\r")
 	if a.at != atTaskDetail {
-		t.Fatal("⏎ on a task opens its detail")
+		t.Fatal("enter on a task opens its detail")
 	}
 	frame := a.frame()
-	for _, want := range []string{"── card-highlight · active ──", "after", "✓ plans-ui: Plans navigator", "then", "load-outline: Outline view", "needs", "pick / pickbg colors exist", "verify", "files", "detail · esc outline"} {
+	for _, want := range []string{"PLANS › Send-off demo › card-highlight", "  active", "after", "✓ plans-ui: Plans navigator", "then", "load-outline: Outline view", "needs", "pick / pickbg colors exist", "verify", "files", "esc outline  tab agent  ↑↓ scroll"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("task detail missing %q\n%s", want, frame)
 		}
@@ -145,12 +147,12 @@ func TestOutlineDetailAndBack(t *testing.T) {
 		t.Fatal("Esc goes back to the outline, selection kept")
 	}
 	press(a, "up", "up", "up")
-	if a.outline.sel != "" {
-		t.Fatalf("the title rule is the top row, got %q", a.outline.sel)
+	if a.outline.sel != "" || !strings.Contains(a.frame(), "▌ PLANS › Send-off demo") {
+		t.Fatalf("the title row, the page title, is the top row, got %q\n%s", a.outline.sel, a.frame())
 	}
 	press(a, "\r")
 	frame = a.frame()
-	for _, want := range []string{"── plan · Send-off demo", "goal", "Show a plan, pin a task", "in scope", "out of scope", "extra palettes"} {
+	for _, want := range []string{"PLANS › Send-off demo › about", "active · 1/3 done · demo.rex.json", "goal", "Show a plan, pin a task", "in scope", "out of scope", "extra palettes"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("plan detail missing %q\n%s", want, frame)
 		}
@@ -215,7 +217,7 @@ func TestOutlineReloadsOutsideEdits(t *testing.T) {
 	}
 	c.t = c.t.Add(toastFor)
 	a.tick()
-	if a.statusLine().Text != "▸ card-highlight  Selected plan card is one block (active)" {
+	if a.statusLine().Text != "▸ card-highlight  Selected plan card is one block" {
 		t.Fatalf("the toast expires: %q", a.statusLine().Text)
 	}
 	if got, _ := os.ReadFile(path); string(got) != edited {
@@ -241,7 +243,7 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
 	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "card-highlight → done" {
 		t.Fatalf("tape line %+v", last)
 	}
-	a.settle(80, 24) // 38 text cells: the done id clips, the next one stays
+	a.settle(80, 24) // 38 text cells: the done id clips, the next one stays, and progress yields
 	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "✓ …ghlight done · next up load-outline" {
 		t.Fatalf("row 1 at 80×24: %q", row)
 	}
@@ -353,7 +355,7 @@ func TestTheDoneToastSaysNowWhenTheNextIsStarted(t *testing.T) {
 	if got := a.statusLine().Text; got != "✓ card-highlight done · now load-outline" {
 		t.Fatalf("row 1 %q", got)
 	}
-	a.settle(80, 24) // 38 text cells: the done id clips, what is on now stays
+	a.settle(80, 24) // 38 text cells: the done id clips, what is on now stays, and progress yields
 	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "✓ …d-highlight done · now load-outline" {
 		t.Fatalf("38 cells: %q", row)
 	}
@@ -439,12 +441,12 @@ func TestOutlineInvalidJSONIsDebounced(t *testing.T) {
 func TestOutlineStates(t *testing.T) {
 	a, _, _ := openDemo(t, `{"version": 2, "tasks": [{"id": "a", "title": "A"}]}`, 120, 32)
 	frame := a.frame()
-	if !strings.Contains(frame, "read-only: version 2 · newer than this Rex reads") || strings.Contains(frame, "to edit") || !strings.Contains(frame, "outline · tab tape · esc plans") {
+	if !strings.Contains(frame, "read-only: version 2 · newer than this Rex reads") || strings.Contains(frame, "to edit") || !strings.Contains(frame, "esc plans  tab agent  enter open") {
 		t.Fatalf("%s", frame)
 	}
 	b, _, _ := openDemo(t, `{"tasks": [{"id": "a", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]}]}`, 120, 32)
 	frame = b.frame()
-	for _, want := range []string{"after ?zz", "cycle", "! 2 problems · ⏎ on the title lists them", "no pin · nothing unblocked"} {
+	for _, want := range []string{"after ?zz", "cycle", "! 2 problems · enter on the title lists them", "no pin · nothing unblocked"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("missing %q\n%s", want, frame)
 		}
@@ -454,7 +456,7 @@ func TestOutlineStates(t *testing.T) {
 		t.Fatal(c.statusLine().Text)
 	}
 	d, _, _ := openDemo(t, `{"tasks": [`, 120, 32)
-	if frame := d.frame(); !strings.Contains(frame, "can't read this plan") || !strings.HasPrefix(d.statusLine().Text, "plan JSON error 1:") {
+	if frame := d.frame(); !strings.Contains(frame, "can't read this plan") || !strings.Contains(frame, "PLANS › demo") || !strings.Contains(frame, "can't read ") || !strings.HasPrefix(d.statusLine().Text, "plan JSON error 1:") {
 		t.Fatalf("%q\n%s", d.statusLine().Text, frame)
 	}
 	e, _, _ := openDemo(t, `{"tasks": [{"id": "a", "status": "active"}, {"id": "b", "status": "active"}]}`, 120, 32)
@@ -525,7 +527,7 @@ func TestContinueCardAfterRestart(t *testing.T) {
 	if again.at != atOutline || again.plans.Current != path || !again.follow || again.outline.sel != "card-highlight" {
 		t.Fatalf("at=%d current=%q follow=%v sel=%q", again.at, again.plans.Current, again.follow, again.outline.sel)
 	}
-	if frame := again.frame(); !strings.Contains(frame, "idle · following · rex/plans/cuj/demo.rex.json") {
+	if frame := again.frame(); !strings.Contains(frame, "following rex/plans/cuj/demo.rex.json") {
 		t.Fatalf("the header names the plan and that Rex follows\n%s", frame)
 	}
 	press(again, "esc")
@@ -538,7 +540,9 @@ func TestContinueCardAfterRestart(t *testing.T) {
 	}
 }
 
-func TestOutlineRuleStaysAsTheListScrolls(t *testing.T) {
+// The page title stays as the list scrolls, and says where the selection
+// is in it (docs/ux.md §6).
+func TestOutlinePageTitleStaysAsTheListScrolls(t *testing.T) {
 	var tasks []string
 	for i := 1; i <= 40; i++ {
 		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d"}`, i, i))
@@ -548,8 +552,23 @@ func TestOutlineRuleStaysAsTheListScrolls(t *testing.T) {
 		press(a, "down")
 	}
 	frame := a.frame()
-	if !strings.Contains(frame, "── Big") || !strings.Contains(frame, "tasks 31/40") || !strings.Contains(frame, "↑ more") || !strings.Contains(frame, "▌ ○ t31") {
-		t.Fatalf("deep in the list, the rule and its position stay on screen\n%s", frame)
+	if !strings.Contains(frame, "PLANS › Big") || !strings.Contains(frame, "tasks 31/40") || !strings.Contains(frame, "↑ more") || !strings.Contains(frame, "▌ ○ t31") {
+		t.Fatalf("deep in the list, the page title and the position stay on screen\n%s", frame)
+	}
+	// The tag joins the status only while it fits: a long title at 80
+	// columns keeps the status alone, never neither.
+	b, _, _ := openDemo(t, `{"title": "Rex visual redesign", "status": "active", "tasks": [`+strings.Join(tasks, ",")+`]}`, 80, 24)
+	press(b, "down", "down", "down")
+	if title := textOf(b.frameRows().Rows[2], 80); title != "  PLANS › Rex visual redesign  active" {
+		t.Fatalf("page title %q", title)
+	}
+	if b.settle(120, 24); !strings.Contains(b.frameRows().Rows[2], "active · tasks 4/40") {
+		t.Fatalf("with room the tag joins it: %q", b.frameRows().Rows[2])
+	}
+	c, _, _ := cujApp(t)
+	c.settle(80, 7)
+	if title := textOf(c.frameRows().Rows[2], 80); !strings.HasPrefix(title, "  PLANS › Send-off demo") || !strings.HasSuffix(title, " active") {
+		t.Fatalf("the CUJ outline at 80×7 scrolls and keeps its status: %q", title)
 	}
 }
 
@@ -648,7 +667,7 @@ func TestOutlineHasNoComposer(t *testing.T) {
 		if f := a.frame(); strings.Contains(f, "│ > ") || strings.Contains(f, " > ") {
 			t.Fatalf("%d rows: no composer\n%s", rows, f)
 		}
-		if got, want := a.layout().bodyH, rows-3; got != want {
+		if got, want := a.layout().bodyH, rows-4; got != want {
 			t.Fatalf("%d rows: body %d, want %d", rows, got, want)
 		}
 	}
@@ -673,7 +692,10 @@ func TestDependingOnAParentWaitsForItsLeaves(t *testing.T) {
 	}
 }
 
-func TestOutlineRuleKeepsProgressWhenNarrow(t *testing.T) {
+// Narrow, progress stays on row 1 whatever the title; the page title's
+// root gives way to the title, which clips, and the title row stays
+// selectable (docs/ux.md §4).
+func TestNarrowOutlineKeepsProgressOnRowOne(t *testing.T) {
 	var tasks []string
 	for i := 1; i <= 40; i++ {
 		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "status": "done"}`, i))
@@ -681,12 +703,13 @@ func TestOutlineRuleKeepsProgressWhenNarrow(t *testing.T) {
 	tasks[39] = `{"id": "t40"}`
 	src := `{"title": "A very long plan title that cannot fit", "status": "active", "tasks": [` + strings.Join(tasks, ",") + `]}`
 	a, _, _ := openDemo(t, src, 80, 24)
-	if frame := a.frame(); !strings.Contains(frame, "active · 39/40") {
-		t.Fatalf("the narrow rule keeps the status and progress\n%s", frame)
+	rows := a.frameRows().Rows
+	if !strings.HasSuffix(strings.TrimRight(rows[1], " "), "39/40") || !strings.Contains(rows[2], "  … › A very long plan title that can…") {
+		t.Fatalf("row 1 keeps the progress, row 2 the title\n%s", a.frame())
 	}
 	press(a, "home")
-	if frame := a.frame(); !strings.Contains(frame, "active · 39/40") || !strings.Contains(frame, "tasks 0/40") || !strings.Contains(frame, "✓ t01") {
-		t.Fatalf("scrolled, it still does\n%s", frame)
+	if frame := a.frame(); !strings.Contains(frame, "39/40") || !strings.Contains(frame, "▌ … › A very") || !strings.Contains(frame, "✓ t01") {
+		t.Fatalf("scrolled to the top, it still does\n%s", frame)
 	}
 }
 
@@ -734,16 +757,16 @@ func TestFilledPlanSelectsItsPin(t *testing.T) {
 	}
 }
 
-func TestNarrowRuleKeepsProgress(t *testing.T) {
+func TestNarrowPageTitleClipsTheTitle(t *testing.T) {
 	a, _, _ := openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "A very long plan title that cannot fit"`, 1), 80, 24)
-	rule := a.frameRows().Rows[2]
-	if !strings.Contains(rule, "── A very") || !strings.Contains(rule, "· active · 1/3") {
-		t.Fatalf("%q", rule)
+	title := a.frameRows().Rows[2]
+	if !strings.Contains(title, "  … › A very long plan title that can…") || cellLen(title) != 80 || !strings.Contains(a.frameRows().Rows[1], "Selected plan…") {
+		t.Fatalf("%q", title)
 	}
 	// a tab is painted as spaces, so it is measured as spaces
 	a, _, _ = openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Tabs\t\t\t\tin a long title"`, 1), 80, 24)
-	if rule := a.frameRows().Rows[2]; !strings.Contains(rule, "── Tabs") || !strings.Contains(rule, "· active · 1/3") {
-		t.Fatalf("%q", rule)
+	if title := a.frameRows().Rows[2]; !strings.Contains(title, "  … › Tabs ") || cellLen(title) != 80 || strings.Contains(title, "\t") {
+		t.Fatalf("%q", title)
 	}
 }
 

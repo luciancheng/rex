@@ -214,7 +214,7 @@ func TestABatchThatMovesThePinIsJudgedAgainstTheNewPin(t *testing.T) {
 	}
 	later(a, c)
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") || got != "▸ load-outline  Outline view (active)" {
+	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") || got != "▸ load-outline  Outline view" {
 		t.Fatalf("row 1: %q", got)
 	}
 	if view := viewText(BuildLogView(a.log, 78)); strings.Contains(view, "── drift") {
@@ -294,7 +294,7 @@ func TestAskingTheAgentToSwitchTasksIsNotDrift(t *testing.T) {
 	a.ingest([]watch.Event{at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Started recovery."})})
 	later(a, c)
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; got != "▸ recovery  Recovery codes (active)" {
+	if got := a.statusLine().Text; got != "▸ recovery  Recovery codes" {
 		t.Fatalf("row 1 %q", got)
 	}
 	if tape := viewText(BuildLogView(a.log, 100)); strings.Contains(tape, "── drift") {

@@ -22,7 +22,7 @@ const (
 	InputRows       = 3
 	FooterRows      = 1
 	MaxLog          = 400
-	maxPromptRows   = 6 // a pasted wall of text must not push the tape away
+	maxPromptRows   = 6 // a pasted wall of text must not push the stream away
 )
 
 var kindColor = map[string]string{
@@ -116,6 +116,43 @@ func hardWrap(text string, width int) []string {
 		text = text[len(part):]
 	}
 	return out
+}
+
+// wrapPath is wrap for text that names a path (docs/ux.md §11): a path
+// too long for its row starts a row of its own and breaks after a "/",
+// never inside a name, and a name still too long keeps its tail behind
+// "…".
+func wrapPath(text string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	var lines []string
+	cur := ""
+	for _, word := range strings.Fields(text) {
+		if cur != "" && cellLen(cur+" "+word) <= width {
+			cur += " " + word
+			continue
+		}
+		if cur != "" {
+			lines, cur = append(lines, cur), ""
+		}
+		for _, part := range strings.SplitAfter(word, "/") {
+			switch {
+			case part == "":
+			case cellLen(cur+part) <= width:
+				cur += part
+			default:
+				if cur != "" {
+					lines = append(lines, cur)
+				}
+				cur = part
+				if cellLen(part) > width {
+					cur = "…" + tailCells(part, width-1)
+				}
+			}
+		}
+	}
+	return append(lines, cur)
 }
 
 func asLogEntry(event watch.Event) (string, string) {
@@ -224,8 +261,9 @@ type LogLine struct {
 	Kind     string
 	Text     string
 	Fill     string
-	Selected bool // part of the selected row; the plan pane keeps it in view
-	Head     bool // leads a plan screen and stays put while the rest scrolls
+	Spans    []Span // styled runs, when the line has more than one style; Text is their join
+	Selected bool   // part of the selected row; the plan pane keeps it in view
+	Head     bool   // leads a plan screen and stays put while the rest scrolls
 }
 
 // headOf is how many lines at the top of body are Head lines.
@@ -382,9 +420,14 @@ func statusForTurn(turn Turn, lastKind string) string {
 	}
 }
 
-// PaneBodyHeight is the tape's body height: it has no composer.
+// PaneBodyHeight is AGENT's body height: it has no composer, and a page
+// title only from agentTitleRows rows.
 func PaneBodyHeight(termLines int) int {
-	return layoutFor(TextOnlyBelow, termLines).bare().bodyH
+	l := layoutFor(TextOnlyBelow, termLines).bare()
+	if termLines < agentTitleRows {
+		l = l.untitled()
+	}
+	return l.bodyH
 }
 
 func PaneTextWidth(columns int) int {
@@ -454,7 +497,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		}
 		return out
 	}
-	bodyTop := 2
+	bodyTop := 2 + l.page
 	bodyBottom := height - FooterRows - l.composer
 	bodyH := max(0, bodyBottom-bodyTop)
 	var body, pinned []LogLine
@@ -465,7 +508,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
 		fromTop = true
 	} else if opt.Pane == PanePlans && opt.PlanView != nil {
-		// The outline's rule, its top lines and warnings stay put; the
+		// The outline's top lines and warnings stay put; the
 		// tasks under them scroll.
 		head := headOf(opt.PlanView)
 		pinned = planHead(opt.PlanView[:head], len(opt.PlanView), bodyH)
@@ -475,8 +518,8 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		scroll = min(opt.PlanScroll, max(0, len(body)-bodyH))
 		fromTop = true
 	} else if opt.Pane == PanePlans && opt.Plans != nil {
-		// The Library's title, folder, notice and error stay put; only the
-		// list under them scrolls.
+		// The plan list's folder, notice and error stay put; only the list
+		// under them scrolls.
 		all := BuildPlanView(opt.Plans, width)
 		head := min(len(all), opt.Plans.headLen())
 		pinned = planHead(all[:head], len(all), bodyH)
@@ -521,9 +564,12 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	}
 	enabled := opt.Enabled
 	rows := make([]string, height)
-	rows[0] = headerRow(width, placeWord(opt.Pane), opt.Status, opt.Follow, opt.PlanRel, enabled)
+	rows[0] = paintLine(headerRow(width, opt.Pane, opt.Cue, opt.Status, opt.Follow, opt.PlanRel), width, enabled)
 	if height > 1 {
 		rows[1] = statusRow(opt.Line, width, enabled)
+	}
+	if l.page > 0 && opt.Page != nil {
+		rows[2] = paintLine(pageLine(*opt.Page, width), width, enabled)
 	}
 	for offset, line := range pinned {
 		rows[bodyTop-len(pinned)+offset] = paintLine(line, width, enabled)
@@ -548,9 +594,9 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 			segs, kind = opt.Overlay.Footer, "muted"
 		}
 		if !l.typing && opt.Composer {
-			segs = shortList(segs, opt.Draft)
+			segs = withoutEnter(segs, opt.Draft)
 		}
-		rows[len(rows)-1] = mascot.Paint(clip(fitFooter(segs, width), width), mascot.UI[kind], enabled)
+		rows[len(rows)-1] = paintLine(footerLine(segs, width, kind), width, enabled)
 	}
 	return rows
 }
@@ -562,7 +608,22 @@ type StatusLine struct {
 	Short string                 // used instead of Text when Text doesn't fit
 	Fit   func(width int) string // instead of Short: Text fitted to width cells
 	Kind  string
+	// Spans styles the text as it is drawn, fitted or not: keys bold, the
+	// pin's mark. Nil draws it all in Kind.
+	Spans func(text string) []Span
+	// Right is the open plan's progress, "1/3" ("1/3 done" from
+	// progressWide cells), right-aligned while the left keeps statusMin
+	// cells and every word it shows without it.
+	Right string
+	// Clip says Fit only clips the pin's title (to its id at the least),
+	// which progress may cost (docs/ux.md §4).
+	Clip bool
 }
+
+const (
+	progressWide = 60
+	statusMin    = 12
+)
 
 func statusRow(s StatusLine, width int, enabled bool) string {
 	if strings.TrimSpace(s.Text) == "" {
@@ -572,20 +633,56 @@ func statusRow(s StatusLine, width int, enabled bool) string {
 	if _, ok := mascot.UI[kind]; !ok {
 		kind = "muted"
 	}
-	text := s.Text
-	switch {
-	case cellLen(text) <= width:
-	case s.Fit != nil:
-		text = s.Fit(width)
-	case s.Short != "":
-		text = s.Short
+	fit := func(room int) string {
+		switch {
+		case cellLen(s.Text) <= room:
+		case s.Fit != nil:
+			return s.Fit(room)
+		case s.Short != "":
+			return s.Short
+		}
+		return s.Text
 	}
-	return mascot.Paint(clip(text, width), mascot.UI[kind], enabled)
+	room, text, right := width, fit(width), ""
+	// Progress never costs the line its words (docs/ux.md §4): it sits
+	// beside the line only where the line reads just as it does across the
+	// whole width, or where only a pin's title clips for it; "1/3 done"
+	// from progressWide cells, else "1/3", and keeps statusMin cells on
+	// its left.
+	var forms []string
+	if s.Right != "" && width >= progressWide {
+		forms = append(forms, s.Right+" done")
+	}
+	if s.Right != "" {
+		forms = append(forms, s.Right)
+	}
+	for _, p := range forms {
+		r := width - cellLen(p) - 2
+		if t := fit(r); r >= statusMin && cellLen(t) <= r && (t == text || s.Clip) {
+			room, text, right = r, t, p
+			break
+		}
+	}
+	var spans []Span
+	if s.Spans != nil {
+		spans = s.Spans(text)
+	}
+	if spans == nil {
+		spans = []Span{{Text: text}}
+	}
+	row := paintSpans(spans, kind, "", room, enabled)
+	if right != "" {
+		row += "  " + mascot.Paint(right, mascot.UI["muted"], enabled)
+	}
+	return row
 }
 
 func paintLine(line LogLine, width int, enabled bool) string {
 	if line.Kind == "gap" {
 		return strings.Repeat(" ", width)
+	}
+	if len(line.Spans) > 0 {
+		return paintSpans(line.Spans, line.Kind, line.Fill, width, enabled)
 	}
 	rgb, ok := mascot.UI[line.Kind]
 	if !ok {
@@ -611,19 +708,21 @@ type ComposeOptions struct {
 	Log         []watch.Event
 	QuitPending bool
 	Status      string
+	Cue         string // the other place's news on the tab bar: "", "•" or "!"
 	Scroll      int
 	Pane        PaneKind
 	Plans       *PlanBrowser
-	LogView     []LogLine // laid-out tape, when the caller already has it
+	LogView     []LogLine // laid-out AGENT stream, when the caller already has it
 	PlanRel     string    // open plan, repo-relative, for the header
 	Follow      string    // "following" or "latched" while a plan is open
 	Line        StatusLine
+	Page        *Page // row 2's page title; nil on AGENT under agentTitleRows rows
 	Overlay     *Overlay
-	Placeholder string    // dim hint in an empty composer
-	Preview     string    // what ⏎ will do with the draft, shown in the footer
-	PlanView    []LogLine // the open plan's screen, when PLAN shows it
-	PlanScroll  int       // its first visible line
-	PlanFooter  []string
+	Placeholder string      // dim hint in an empty composer
+	Preview     string      // what enter will do with the draft, shown in the footer
+	PlanView    []LogLine   // the open plan's screen, when PLAN shows it
+	PlanScroll  int         // its first visible line
+	Footer      []FooterSeg // the screen's footer, when the caller has it
 }
 
 // Frame is one screen: full-width rows plus where the cursor goes.
@@ -651,9 +750,12 @@ func composeRows(spriteName, color string, opt ComposeOptions) Frame {
 	if !opt.Composer {
 		l = l.bare()
 	}
+	if opt.Page == nil {
+		l = l.untitled()
+	}
 	if l.locked {
 		rows := make([]string, lines)
-		rows[0] = mascot.Paint(clip(fitFooter([]string{fmt.Sprintf("widen to %d cols", MinTextCols)}, columns), columns), mascot.UI["title"], opt.Enabled)
+		rows[0] = mascot.Paint(clip(fmt.Sprintf("widen to %d cols", MinTextCols), columns), mascot.UI["title"], opt.Enabled)
 		if msg := fmt.Sprintf("REX · widen to %d cols", MinTextCols); cellLen(msg) <= columns {
 			rows[0] = mascot.Paint(clip(msg, columns), mascot.UI["title"], opt.Enabled)
 		}

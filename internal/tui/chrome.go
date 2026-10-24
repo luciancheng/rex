@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/luciancheng/rex/internal/mascot"
-	"github.com/luciancheng/rex/internal/watch"
 )
 
 // TextOnlyBelow is the width under which the mascot is hidden so the text
@@ -17,6 +16,7 @@ type layout struct {
 	mascotCols int // 0 in text-only mode
 	gutter     int
 	textW      int // 0 when the text column would be too narrow
+	page       int // 1 when row 2 is the page title (docs/ux.md §4)
 	composer   int // 3 = boxed, 1 = one bare row, 0 = none
 	bodyH      int
 	locked     bool // too narrow: only Ctrl+C (and Ctrl+L) do anything
@@ -42,8 +42,11 @@ func layoutFor(columns, lines int) layout {
 	case lines >= 7:
 		l.composer = 1
 	}
+	if lines > 3 {
+		l.page = 1 // never on the footer's row
+	}
 	l.typing = l.composer > 0 && !l.locked
-	l.bodyH = max(0, lines-2-FooterRows-l.composer)
+	l.bodyH = max(0, lines-2-l.page-FooterRows-l.composer)
 	return l
 }
 
@@ -55,139 +58,139 @@ func (l layout) bare() layout {
 	return l
 }
 
-// placeWord names the Tab place in the header.
-func placeWord(pane PaneKind) string {
-	if pane == PanePlans {
-		return "plan"
-	}
-	return "tape"
+// untitled is l on a screen without a page title: AGENT under
+// agentTitleRows rows, where the body takes row 2 too.
+func (l layout) untitled() layout {
+	l.bodyH += l.page
+	l.page = 0
+	return l
 }
 
-// headerRow is row 0: "REX plan|tape", then the colored turn state, the
-// follow word ("following" or "latched") and the open plan's path,
-// shortened to fit (docs/ux.md §4): drop "rex/plans/", then ".rex.json",
-// then clip from the left down to a few cells, and only then drop the
-// word, which never gives its room back to ".rex.json".
-func headerRow(width int, place, state, follow, planRel string, enabled bool) string {
-	left := "REX " + place
-	state = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(state), "\n", " "))
+// agentTitleRows is the height from which AGENT has a page title; PLAN
+// screens and Help always do (docs/ux.md §4).
+const agentTitleRows = 12
+
+// brandFrom is the text width from which row 0 starts with REX; narrower,
+// the mascot (or nothing) is the brand.
+const brandFrom = 42
+
+// tabWords are the two places, in the order row 0 always shows them.
+var tabWords = [2]string{PaneChat: "AGENT", PanePlans: "PLAN"}
+
+// tabBlock is the cells the tabs and their cue take: "[PLAN]•AGENT" and
+// "PLAN•[AGENT]" alike.
+const tabBlock = 12
+
+// headerRow is row 0, the tab bar (docs/ux.md §4): REX from brandFrom
+// cells; both places, the one on screen a pill, with the cue cell between
+// them (a 12-cell block, so the turn word never moves); the turn word;
+// and on the right the follow word ("following" or "latched") and the
+// open plan's path, shortened to fit. The word stays while it fits beside
+// min(5, stem) cells of path, judged against the longest turn word and
+// the longer follow word, so it doesn't come and go with the turn; a
+// dropped word never gives ".rex.json" its room back.
+func headerRow(width int, pane PaneKind, cue, state, follow, planRel string) LogLine {
+	state = strings.TrimSpace(flat(state))
 	if state == "" {
 		state = "idle"
 	}
-	if width < cellLen(left)+2 {
-		return mascot.Paint(clip("REX", width), mascot.UI["title"], enabled)
+	var spans []Span
+	brand := 0
+	if width >= brandFrom {
+		spans = append(spans, Span{Text: "REX", Role: "title", Bold: true}, Span{Text: " "})
+		brand = cellLen("REX ")
 	}
-	room := width - cellLen(left) - 2
-	path := ""
-	if planRel = strings.TrimSpace(strings.ReplaceAll(watch.CleanText(planRel), "\n", " ")); planRel != "" {
-		stem := strings.TrimSuffix(strings.TrimPrefix(planRel, "rex/plans/"), ".rex.json")
-		// Judged against the longest turn state and the longer word, so the
-		// word doesn't come and go with the turn, and following and latched
-		// come and go together: below 38 cells (66-79 columns with the
-		// mascot) the word yields before the path.
-		keep := room - max(cellLen(state), cellLen("thinking")) - cellLen("following") - 6
-		switch {
-		case follow == "":
-			path = shortPlanPath(planRel, room-cellLen(state)-3)
-		case keep >= min(headPathMin, cellLen(stem)):
-			path = shortPlanPath(planRel, room-cellLen(state)-cellLen(follow)-6)
-		default:
-			follow = ""
-			path = shortPlanPath(stem, room-cellLen(state)-3)
-		}
+	mark := Span{Text: " "}
+	switch cue {
+	case "•":
+		mark = Span{Text: "•", Role: "accent", Bold: true}
+	case "!":
+		mark = Span{Text: "!", Role: "error", Bold: true}
+	}
+	if pane == PanePlans {
+		spans = append(append(spans, pill(tabWords[PanePlans], "pickbg", "text")...), mark, Span{Text: tabWords[PaneChat], Role: "muted"})
 	} else {
-		follow = ""
+		spans = append(append(spans, Span{Text: tabWords[PanePlans], Role: "muted"}, mark), pill(tabWords[PaneChat], "pickbg", "text")...)
 	}
-	meta := state
-	if follow != "" {
-		meta += " · " + follow
-	}
-	if path != "" {
-		meta += " · " + path
-	}
-	if cellLen(meta) > room {
-		meta = cutCells(state, room)
-		path = ""
-	}
-	gap := width - cellLen(left) - cellLen(meta)
-	stateColor := mascot.UI["muted"]
+	turn := Span{Text: state, Role: "muted"}
 	switch state {
 	case "thinking", "running":
-		stateColor = mascot.UI["accent"]
+		turn.Role = "accent"
 	case "ask", "error":
-		stateColor = mascot.UI["error"]
+		turn.Role, turn.Bold = "error", true
 	}
-	out := mascot.Paint("REX", mascot.UI["title"], enabled) + mascot.Paint(" "+place, mascot.UI["muted"], enabled) +
-		strings.Repeat(" ", gap) + mascot.Paint(cutCells(meta, cellLen(state)), stateColor, enabled)
-	if rest := meta[len(cutCells(meta, cellLen(state))):]; rest != "" {
-		out += mascot.Paint(rest, mascot.UI["muted"], enabled)
+	spans = append(spans, Span{Text: " "}, turn)
+	left := cellLen(spanText(spans))
+	var right []Span
+	if planRel = strings.TrimSpace(flat(planRel)); planRel != "" {
+		stem := strings.TrimSuffix(strings.TrimPrefix(planRel, "rex/plans/"), ".rex.json")
+		room := width - left - 2
+		keep := width - brand - tabBlock - 1 - max(cellLen(state), cellLen("thinking")) - 2 - cellLen("following ")
+		switch {
+		case follow == "":
+			if path := shortPlanPath(planRel, room); path != "" {
+				right = append(right, Span{Text: path, Role: "muted"})
+			}
+		case keep >= min(headPathMin, cellLen(stem)):
+			role := "muted"
+			if follow == "latched" {
+				role = "text"
+			}
+			right = append(right, Span{Text: follow, Role: role})
+			if path := shortPlanPath(planRel, room-cellLen(follow)-1); path != "" {
+				right = append(right, Span{Text: " " + path, Role: "muted"})
+			}
+		default:
+			if path := shortPlanPath(stem, room); path != "" {
+				right = append(right, Span{Text: path, Role: "muted"})
+			}
+		}
 	}
-	return out
+	if len(right) > 0 {
+		spans = append(spans, Span{Text: strings.Repeat(" ", max(2, width-left-cellLen(spanText(right))))})
+		spans = append(spans, right...)
+	}
+	return spanLine("muted", spans...)
 }
 
-// headPathMin is the fewest cells of the plan's path the header keeps
-// next to the follow word: "…demo".
+// headPathMin is the fewest cells of the plan's path row 0 keeps: "…demo".
 const headPathMin = 5
 
 // shortPlanPath fits a repo-relative plan path into room cells: the whole
 // path when it fits, then without "rex/plans/", then without ".rex.json",
-// then clipped from the left.
+// then "…/" and its last segment, then "…" and its tail, down to
+// headPathMin cells; under that it is dropped.
 func shortPlanPath(path string, room int) string {
-	if room <= 0 {
-		return ""
-	}
-	if cellLen(path) <= room {
-		return path
-	}
-	path = strings.TrimPrefix(path, "rex/plans/")
-	if cellLen(path) <= room {
-		return path
-	}
-	path = strings.TrimSuffix(path, ".rex.json")
-	if cellLen(path) <= room {
-		return path
-	}
-	if room == 1 {
-		return "…"
-	}
-	return "…" + tailCells(path, room-1)
-}
-
-// fitFooter joins ranked segments with " · ", dropping whole segments from
-// the lowest rank until the line fits. Words are never cut, except the
-// first segment on a terminal too narrow even for it.
-func fitFooter(segments []string, width int) string {
-	for n := len(segments); n > 0; n-- {
-		line := strings.Join(segments[:n], " · ")
-		if cellLen(line) <= width {
-			return line
+	stem := strings.TrimSuffix(strings.TrimPrefix(path, "rex/plans/"), ".rex.json")
+	for _, p := range []string{path, strings.TrimPrefix(path, "rex/plans/"), stem} {
+		if cellLen(p) <= room {
+			return p
 		}
 	}
-	if len(segments) == 0 {
+	if i := strings.LastIndex(stem, "/"); i >= 0 {
+		if p := "…/" + stem[i+1:]; cellLen(p) <= room {
+			return p
+		}
+	}
+	if room < headPathMin {
 		return ""
 	}
-	return clip(segments[0], width)
+	return "…" + tailCells(stem, room-1)
 }
 
-// homeCreates reports that ⏎ on Library Home creates a plan: the cursor
-// is on Create. It reads the rows, not the disk.
-func homeCreates(b *PlanBrowser) bool {
-	return b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowNew
-}
-
-// shortList is the plan list's footer when the screen is too short to
+// withoutEnter is the plan list's footer when the screen is too short to
 // show its composer (docs/ux.md §12). Typing is ignored there, so "type
-// to …" goes; ⏎ never submits a draft blind, so every ⏎ goes but "⏎ open"
-// on an empty draft, which opens the selected row; and with a hidden
-// draft, ? would be text, so "? help" goes too. Screens without a
+// to …" goes; enter never submits a draft blind, so every enter goes but
+// "enter open" on an empty draft, which opens the selected row; and with
+// a hidden draft ? would be text, so "? help" goes too. Screens without a
 // composer keep their footers, since their keys act at once.
-func shortList(segs []string, draft string) []string {
-	var out []string
+func withoutEnter(segs []FooterSeg, draft string) []FooterSeg {
+	var out []FooterSeg
 	for _, s := range segs {
 		switch {
-		case strings.HasPrefix(s, "type to "):
-		case strings.Contains(s, "⏎") && (s != "⏎ open" || draft != ""):
-		case s == "? help" && draft != "":
+		case strings.HasPrefix(s.Text, "type to "):
+		case strings.HasPrefix(s.Text, "enter ") && (s.Text != "enter open" || draft != ""):
+		case s == helpSeg && draft != "":
 		default:
 			out = append(out, s)
 		}
@@ -196,14 +199,23 @@ func shortList(segs []string, draft string) []string {
 }
 
 // footerSegments is the footer for the current screen, highest rank first
-// (docs/ux.md §4): where you can go, not what you can type.
-func footerSegments(opt ComposeOptions, scroll int) ([]string, string) {
-	segs, kind := placeFooter(opt, scroll)
-	if n := runeLen(opt.Draft); n >= draftCap-16 && kind != "error" && len(segs) > 0 && opt.Composer {
-		// The cap is not silent: near it, the count is a must-have.
-		segs = append([]string{segs[0], fmt.Sprintf("%d/%d", n, draftCap)}, segs[1:]...)
+// (docs/ux.md §4): keys only, navigation first.
+func footerSegments(opt ComposeOptions, scroll int) ([]FooterSeg, string) {
+	if opt.QuitPending {
+		return segs("ctrl+c again to quit"), "error"
 	}
-	return segs, kind
+	if opt.Footer != nil {
+		return opt.Footer, "muted"
+	}
+	if opt.Pane == PanePlans && opt.Plans != nil {
+		out := listFooter(opt.Plans, opt.Draft, opt.Preview)
+		if n := runeLen(opt.Draft); n >= draftCap-16 && len(out) > 0 && opt.Composer {
+			// The cap is not silent: near it, the count is a must-have.
+			out = append([]FooterSeg{out[0], {Text: fmt.Sprintf("%d/%d", n, draftCap)}}, out[1:]...)
+		}
+		return out, "muted"
+	}
+	return agentFooter(scroll, false, false), "muted"
 }
 
 // hintText is how a placeholder reads: dim when there is color, in
@@ -215,44 +227,62 @@ func hintText(placeholder string, enabled bool) string {
 	return "(" + placeholder + ")"
 }
 
-func placeFooter(opt ComposeOptions, scroll int) ([]string, string) {
-	if opt.QuitPending {
-		return []string{"ctrl+c again to quit"}, "error"
+// listFooter is the plan list's footer (docs/ux.md §4): what enter does
+// on the selected row, where esc goes, tab, then ? help while ? opens
+// Help (on an empty draft), then the rest.
+func listFooter(b *PlanBrowser, draft, preview string) []FooterSeg {
+	if preview != "" {
+		return segs(preview, "esc clear", "tab agent")
 	}
-	if opt.Pane == PanePlans && opt.PlanFooter != nil {
-		return opt.PlanFooter, "muted"
-	}
-	if opt.Pane == PanePlans && opt.Plans != nil && opt.Preview != "" {
-		word := map[PlanScreen]string{ScreenCreate: "new plan", ScreenFolder: "new folder", ScreenBrowse: "open"}[opt.Plans.Screen]
-		if word == "" {
-			word = "plans"
+	enter := "enter open"
+	if b.Cursor < len(b.Rows) {
+		switch b.Rows[b.Cursor].Kind {
+		case PlanRowNew, PlanRowMkdir, PlanRowCreateNamed:
+			enter = "enter create" // short enough that ? help fits at 38 cells in Browse too
 		}
-		return []string{word, opt.Preview}, "muted"
 	}
-	if opt.Pane == PanePlans && opt.Plans != nil {
-		switch opt.Plans.Screen {
-		case ScreenCreate:
-			return []string{"new plan", "⏎ create", "esc cancel", "tab tape"}, "muted"
-		case ScreenFolder:
-			return []string{"new folder", "⏎ create", "esc cancel", "tab tape"}, "muted"
-		case ScreenBrowse:
-			return []string{"open", "⏎ open", "esc back", "tab tape", "type to filter", "? help"}, "muted"
+	switch {
+	case b.Prompting() && draft == "":
+		return []FooterSeg{{Text: "enter create"}, {Text: "esc cancel"}, {Text: "tab agent"}, helpSeg}
+	case b.Prompting():
+		return segs("enter create", "esc clear", "tab agent")
+	case draft != "":
+		return segs(enter, "esc clear", "tab agent", "↑↓ move")
+	case b.Browsing():
+		esc := "esc up"
+		if b.Dir == b.Root {
+			esc = "esc plans"
 		}
-		if b := opt.Plans; b.Find != "" {
-			if b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowCreateNamed {
-				return []string{"find", "⏎ create", "esc clear", "tab tape"}, "muted"
-			}
-			return []string{"find", "⏎ open", "esc clear", "tab tape"}, "muted"
-		}
-		if homeCreates(opt.Plans) {
-			return []string{"plans", "⏎ create", "tab tape", "type to find", "? help", "ctrl+c×2 quit"}, "muted"
-		}
-		return []string{"plans", "⏎ open", "tab tape", "type to find", "? help", "ctrl+c×2 quit"}, "muted"
+		return []FooterSeg{{Text: enter}, {Text: esc}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}, {Text: "type to filter"}}
+	case b.Current == "":
+		// With no plan open, Esc goes back to the Wait screen (docs/ux.md
+		// §3); "esc wait" keeps ? at 38 cells beside "enter create".
+		return []FooterSeg{{Text: enter}, {Text: "esc wait"}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}, {Text: "type to find"}}
 	}
-	if scroll > 0 {
-		return []string{"tape", fmt.Sprintf("%d↑", scroll), "end live", "tab plan"}, "muted"
+	return []FooterSeg{{Text: enter}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}, {Text: "type to find"}}
+}
+
+// agentFooter is AGENT's footer (docs/ux.md §4). Scrolled, end live leads,
+// and under agentTitleRows the scroll count leads it, since there is no
+// page title to carry it; offer is row 1's new plan that enter takes, and
+// it takes end live's place, since ↑↓ still reach live. ? help ranks over
+// ↑↓ scroll, so it is on every AGENT footer at 38 cells.
+func agentFooter(scroll int, titled, offer bool) []FooterSeg {
+	var out []FooterSeg
+	if scroll > 0 && !titled {
+		out = append(out, FooterSeg{Text: fmt.Sprintf("%d↑", scroll)})
 	}
-	return []string{"tape", "tab plan", "↑↓ scroll", "? help", "ctrl+c×2 quit"}, "muted"
+	switch {
+	case offer:
+		out = append(out, FooterSeg{Text: "enter switch"})
+	case scroll > 0:
+		out = append(out, FooterSeg{Text: "end live"})
+	}
+	out = append(out, FooterSeg{Text: "tab plan"}, helpSeg, FooterSeg{Text: "↑↓ scroll"})
+	if scroll == 0 && !offer {
+		out = append(out, segs("home oldest", "ctrl+c ×2 quit")...)
+	}
+	return out
 }
 
 // composerRows draws the composer: a box when there is room, a bare row on

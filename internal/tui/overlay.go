@@ -46,11 +46,13 @@ var pageKeys = map[string][]helpKey{
 		{name: "esc ←", what: "back to the outline"},
 	},
 	"plans": {
-		{name: "enter", what: "open the selected plan, or create one"},
+		{name: "enter", what: "open the selected plan or folder, or create one"},
+		{name: "→", what: "into the selected folder"},
 		{name: "↑↓", what: "move · pgup pgdn a page"},
 		{name: "home end", what: "first / last (also ctrl+a ctrl+e)"},
 		{name: "type", what: "find a plan across rex/plans"},
 		{name: "esc ←", what: "with no plan open, back to waiting"},
+		{what: "the selected plan opens in place: its goal, pin, what's next and what's done"},
 	},
 	"folder": {
 		{name: "enter", what: "open the plan, or go into the folder"},
@@ -58,7 +60,7 @@ var pageKeys = map[string][]helpKey{
 		{name: "↑↓", what: "move · pgup pgdn a page"},
 		{name: "home end", what: "first / last (also ctrl+a ctrl+e)"},
 		{name: "type", what: "filter this folder"},
-		{name: "esc ←", what: "up a folder; at the top, back to PLANS"},
+		{name: "esc ← ../", what: "up a folder; from a top folder, back to PLANS"},
 	},
 	"new plan": {
 		{name: "enter", what: "create it and open its outline"},

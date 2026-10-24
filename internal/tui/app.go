@@ -93,6 +93,7 @@ type logViewCache struct {
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
 	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
 		now: time.Now, statePath: plan.StatePath(), follow: true}
+	plans.now = func() time.Time { return a.now() } // the accordion's "changed 2m ago"
 	if plans.Current == "" {
 		a.land()
 	}
@@ -284,8 +285,8 @@ func (a *app) docPage() Page {
 }
 
 // libraryPage is the plan list's page title: PLANS, then find, the folder
-// being browsed (rex/plans/ and each folder under it), or the Name
-// prompt, with how many plans the list holds as meta.
+// being browsed (each folder from rex/plans down), or the Name prompt,
+// with how many plans the list holds as meta.
 func libraryPage(b *PlanBrowser) Page {
 	crumbs := []string{"PLANS"}
 	if b.Browsing() || (b.Prompting() && b.From == ScreenBrowse) {
@@ -304,10 +305,10 @@ func libraryPage(b *PlanBrowser) Page {
 	return Page{Crumbs: crumbs, Meta: plural(b.total, "%d plan", "%d plans")}
 }
 
-// folderCrumbs is the folder being browsed as crumbs: "rex/plans/", then
-// each folder under it.
+// folderCrumbs is the folder being browsed as crumbs, one per folder
+// under rex/plans: PLANS is its root (docs/ux.md §4).
 func folderCrumbs(b *PlanBrowser) []string {
-	crumbs := []string{"rex/plans/"}
+	var crumbs []string
 	if rel, err := filepath.Rel(b.Root, b.Dir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
 		for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
 			crumbs = append(crumbs, part+"/")
@@ -689,7 +690,7 @@ const (
 
 // handleKey applies one key. It sets a.quit on the second Ctrl+C.
 func (a *app) handleKey(key string) bool {
-	// A Library error stays only until the next key, whatever that key
+	// A plan list error stays only until the next key, whatever that key
 	// does (docs/ux.md §11); the key may set a new one.
 	cleared := a.plans.Err != ""
 	a.plans.Err = ""
@@ -920,7 +921,8 @@ func (a *app) planKey(key string) bool {
 		}
 		return a.planBack()
 	case "right":
-		if b.Browsing() && b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowDir {
+		// Into a folder, under FOLDERS or in Browse (docs/ux.md §3).
+		if !b.Prompting() && b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowDir {
 			b.Activate()
 			a.draft = ""
 			return true
@@ -940,8 +942,9 @@ func (a *app) planKey(key string) bool {
 }
 
 // planBack goes up one level inside PLAN: cancel a name prompt, leave a
-// folder, leave Browse for Home, and from Home with no plan open go back
-// to the Wait screen (docs/ux.md §3). Otherwise Home is the top.
+// folder (a top one for the plan list), and from the list with no plan
+// open go back to the Wait screen (docs/ux.md §3). Otherwise the list is
+// the top.
 func (a *app) planBack() bool {
 	b := a.plans
 	switch {
@@ -990,12 +993,10 @@ func (a *app) planEnter() bool {
 	case PlanStartFolder:
 		b.Screen = ScreenFolder
 		a.draft = ""
-	case PlanStartBrowse:
-		a.draft = ""
 	case PlanOpenChat:
 		a.openedPlan()
 		if !samePlan(b.Current, was) {
-			a.latch() // you picked it: latched (docs/ux.md §11); Continue picks nothing new
+			a.latch() // you picked it: latched (docs/ux.md §11); the open plan picks nothing new
 		}
 		a.offerHeld(held)
 	}
@@ -1013,9 +1014,11 @@ func (a *app) openedPlan() {
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
 	}
-	// Continue on the plan already open keeps its last good copy, its
-	// debounce and its selection. The plan list's find text is done with
-	// (an attach never comes while it holds any, docs/ux.md §11).
+	a.plans.showDoc(a.doc)
+	// Reopening the plan already open (its row under OPEN) keeps its last
+	// good copy, its debounce and its selection. The plan list's find text
+	// is done with (an attach never comes while it holds any, docs/ux.md
+	// §11).
 	a.draft = ""
 	a.at = atOutline
 	a.offer, a.pending = "", "" // any open settles which plan is shown
@@ -1103,8 +1106,8 @@ func (a *app) openDetail() bool {
 	return true
 }
 
-// toLibrary leaves the open plan for Library Home, cursor on Continue. The
-// plan stays open: row 0 and AGENT keep it.
+// toLibrary leaves the open plan for the plan list, the cursor on it under
+// OPEN (docs/ux.md §11). The plan stays open: row 0 and AGENT keep it.
 func (a *app) toLibrary() bool {
 	b := a.plans
 	a.at = atLibrary
@@ -1131,6 +1134,10 @@ func (a *app) pollDoc() bool {
 	changed, news := a.doc.poll(a.now())
 	if !changed {
 		return false
+	}
+	a.plans.showDoc(a.doc)
+	if a.at == atLibrary {
+		a.plans.Rebuild() // the open plan's row and accordion follow what the outline shows
 	}
 	if _, bad := docStatus(a.doc); bad {
 		a.light(PanePlans, "!") // the file is gone or doesn't parse

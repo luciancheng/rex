@@ -250,8 +250,8 @@ func listFooter(b *PlanBrowser, draft, preview string) []FooterSeg {
 		return segs(enter, "esc clear", "tab agent", "↑↓ move")
 	case b.Browsing():
 		esc := "esc up"
-		if b.Dir == b.Root {
-			esc = "esc plans"
+		if b.topFolder() {
+			esc = "esc plans" // from a top folder Esc is the plan list (docs/ux.md §11)
 		}
 		return []FooterSeg{{Text: enter}, {Text: esc}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}, {Text: "type to filter"}}
 	case b.Current == "":

@@ -222,15 +222,18 @@ func TestCUJWholeLoop(t *testing.T) {
 		t.Fatal("F. Tab returns to the outline")
 	}
 
-	// G. The plan list: create a plan there, then open one by name. Picking
-	// a plan there latches it.
+	// G. The plan list: create a plan there, then open one by name and
+	// one from RECENT. Picking a plan there latches it.
 	k.press("esc")
-	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowContinue || !strings.Contains(a.frame(), "╭") {
-		t.Fatal("G. Esc climbs to the plan list, on Continue, where the composer is")
+	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Group != groupOpen || !strings.Contains(a.frame(), "╭") {
+		t.Fatalf("G. Esc climbs to the plan list, on OPEN, where the composer is\n%s", a.frame())
+	}
+	if frame := a.frame(); !strings.Contains(frame, "OPEN ─") || !strings.Contains(frame, "─ following") || !strings.Contains(frame, "▌   done    ✓ card-highlight  the selection bar") {
+		t.Fatalf("G. the open plan opens in place under OPEN\n%s", frame)
 	}
 	k.press("\r")
 	if !a.follow || a.at != atOutline {
-		t.Fatal("G. enter on Continue keeps following")
+		t.Fatal("G. enter on the open plan keeps following")
 	}
 	k.n = 0
 	k.press("esc")
@@ -247,6 +250,15 @@ func TestCUJWholeLoop(t *testing.T) {
 	k.spent(t, 1+len("sendoff-demo")+1, "open by name (Esc, name, enter)")
 	if a.plans.Current != path || a.at != atOutline || a.follow || a.outline.sel != "load-outline" {
 		t.Fatalf("G. the plan opens on its pin, latched: sel=%q\n%s", a.outline.sel, a.frame())
+	}
+	// The newest other plan is the first under RECENT: Esc ↓ enter goes
+	// there and back.
+	for _, want := range []string{"scratch.rex.json", "sendoff-demo.rex.json"} {
+		k.press("esc", "down", "\r")
+		k.spent(t, 3, "open a recent plan (Esc ↓ enter)")
+		if filepath.Base(a.plans.Current) != want || a.at != atOutline || a.follow {
+			t.Fatalf("G. ↓ enter on RECENT opens %s, latched: %q follow=%v", want, a.plans.Current, a.follow)
+		}
 	}
 
 	// H. Quit.
@@ -292,7 +304,7 @@ func matrixScreens(t *testing.T) []matrixScreen {
 	over := func(o overlayKind) func(a *app) bool { return func(a *app) bool { return a.overlay[a.pane] == o } }
 	browse := func(a *app) {
 		list(a)
-		a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, a.plans.Root, true
+		a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, filepath.Join(a.plans.Root, "cuj"), true
 		a.plans.Rebuild()
 	}
 	pick := func(a *app, kind PlanRowKind) {
@@ -321,14 +333,27 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			os.WriteFile(filepath.Join(a.plans.Repo, "rex"), []byte("x"), 0o644)
 			a.plans.Rebuild()
 		}, func(a *app) bool { return a.at == atWait && a.plans.Notice == rexFileNotice }},
-		{"home no plans", true, list, func(a *app) bool { return lib(ScreenHome)(a) && len(a.plans.Rows) == 1 }},
-		{"home", false, list, lib(ScreenHome)},
+		{"home no plans", true, list, func(a *app) bool { return lib(ScreenHome)(a) && a.plans.total == 0 }},
+		{"home", false, list, func(a *app) bool { return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Group == groupOpen }},
+		// Every kind of row: a recent, a finished, an empty and an
+		// unreadable plan, folders and root plans, the accordion on a
+		// recent one (docs/ux.md §11).
+		{"home, every kind of plan", false, func(a *app) { seedKinds(t, a); list(a); press(a, "down", "down", "down", "down") }, func(a *app) bool {
+			return lib(ScreenHome)(a) && strings.HasPrefix(a.plans.Rows[a.plans.Cursor].Name, "ux/") && len(a.plans.Rows) > 8
+		}},
+		{"home, an unreadable plan", false, func(a *app) { seedKinds(t, a); list(a); press(a, "down") }, func(a *app) bool {
+			return lib(ScreenHome)(a) && a.plans.sums[a.plans.Rows[a.plans.Cursor].Path].err != ""
+		}},
+		{"home, on a folder", false, func(a *app) { seedKinds(t, a); list(a); pick(a, PlanRowDir) }, func(a *app) bool {
+			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowDir
+		}},
 		{"find", false, func(a *app) { list(a); typeText(a, "send") }, func(a *app) bool {
 			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan
 		}},
-		{"browse", false, browse, lib(ScreenBrowse)},
+		{"browse", false, browse, func(a *app) bool { return lib(ScreenBrowse)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan }},
 		{"create", false, func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
 		{"new folder", false, func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r"); typeText(a, "notes") }, lib(ScreenFolder)},
+		{"new plan, empty", false, func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r") }, lib(ScreenCreate)},
 		{"outline", false, func(a *app) {}, at(atOutline)},
 		{"outline, title row", false, func(a *app) { press(a, "home") }, func(a *app) bool { return at(atOutline)(a) && a.outline.sel == "" }},
 		{"outline, a reply waiting", false, func(a *app) {
@@ -406,6 +431,22 @@ func matrixScreens(t *testing.T) []matrixScreen {
 	}
 }
 
+// seedKinds adds a plan of every kind to the CUJ repo (docs/ux.md §11):
+// more root plans than RECENT holds, written first, so FOLDERS lists
+// some; then the newest, which lead RECENT under the open CUJ plan.
+// writePlan's clock stamps each a second after the last.
+func seedKinds(t *testing.T, a *app) {
+	repo := a.plans.Repo
+	for i := 0; i < 4; i++ {
+		writePlan(t, repo, fmt.Sprintf("old-%d.rex.json", i), `{"version": 1, "title": "An older plan", "tasks": [{"id": "x"}]}`)
+	}
+	writePlan(t, repo, "ux/redesign.rex.json", `{"version": 1, "title": "Rex visual redesign 中文 ⚠️", "goal": "One look \u001b[2J everywhere", "status": "active", "tasks": [{"id": "tabs", "status": "done", "accomplished": ["tabs \u001b[31m on row 0"]}, {"id": "stream", "title": "Agent stream", "status": "active"}, {"id": "list", "title": "Plan list", "depends_on": ["stream"]}, {"id": "outline"}]}`)
+	writePlan(t, repo, "done.rex.json", `{"version": 1, "title": "Shipped", "status": "done", "tasks": [{"id": "a", "status": "done"}, {"id": "b", "status": "skipped"}]}`)
+	writePlan(t, repo, "empty.rex.json", `{"version": 1, "title": "Nothing yet", "tasks": []}`)
+	writePlan(t, repo, "broken.rex.json", `{"version": 1, "tasks": [`)
+	a.plans.walk = planWalk{}
+}
+
 // agentTurn is a realistic turn on the CUJ plan (docs/ux.md §10): a
 // prompt, a run of thoughts, more commands than a run shows, a failed step,
 // an edit off the pin, the turn's error, an ask and a reply.
@@ -470,7 +511,7 @@ func TestFrameMatrix(t *testing.T) {
 				// Rex has no verbs, and keys are words: no footer,
 				// placeholder or copy offers a verb, an icon for a key, or
 				// the old name for AGENT (docs/ux.md §4, §6).
-				for _, never := range []string{"⏎", "↔", "tape", "brief", "send-off", "clipboard"} {
+				for _, never := range []string{"⏎", "↔", "tape", "brief", "send-off", "clipboard", "[ + "} {
 					if strings.Contains(row, never) {
 						t.Errorf("%s: row %d has %q: %q", name, i, never, row)
 					}

@@ -128,19 +128,15 @@ func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
 		}
 	}
 	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[0].Text != "enter create" {
-		t.Fatalf("on Create: %q", segs)
+		t.Fatalf("on + New plan: %q", segs)
 	}
-	open := false
 	for i, row := range b.Rows {
-		if row.Kind == PlanRowOpen {
-			b.Cursor, open = i, true
+		if row.Kind == PlanRowPlan {
+			b.Cursor = i
 		}
 	}
-	if !open {
-		t.Fatal("with a plan, Home has an Open card")
-	}
 	if segs, _ := footerSegments(ComposeOptions{Pane: PanePlans, Plans: b}, 0); segs[0].Text != "enter open" {
-		t.Fatalf("on Open a plan: %q", segs)
+		t.Fatalf("on a plan: %q", segs)
 	}
 }
 
@@ -176,7 +172,7 @@ func TestShortTerminalFooterOffersNoEnter(t *testing.T) {
 
 // docs/ux.md §12: under 7 rows typing is ignored in the plan list, so its
 // footer drops "type to find"; enter on an empty draft still opens the
-// selected card, so "enter open" stays until a hidden draft would make
+// selected row, so "enter open" stays until a hidden draft would make
 // enter a blind submit.
 func TestShortPlanListFooterSaysWhatWorks(t *testing.T) {
 	a, _, _ := cujApp(t)
@@ -190,7 +186,7 @@ func TestShortPlanListFooterSaysWhatWorks(t *testing.T) {
 		t.Fatalf("typing is ignored, and the footer doesn't offer it: %q %q", a.draft, footer())
 	}
 	if press(a, "\r"); a.at != atOutline {
-		t.Fatalf("enter opens Continue, as the footer says: at=%d", a.at)
+		t.Fatalf("enter opens the open plan, as the footer says: at=%d", a.at)
 	}
 
 	press(a, "esc")
@@ -201,7 +197,7 @@ func TestShortPlanListFooterSaysWhatWorks(t *testing.T) {
 		t.Fatalf("a hidden find: enter and ? would act on it blind: %q", f)
 	}
 	a.settle(120, 32)
-	press(a, "esc", "home", "down", "down", "\r") // the find cleared, then Open a plan
+	press(a, "esc", "home", "down", "\r") // the find cleared, then the cuj/ folder
 	if a.plans.Screen != ScreenBrowse {
 		t.Fatalf("browse: %d", a.plans.Screen)
 	}
@@ -612,29 +608,32 @@ func TestPageTitleFromApp(t *testing.T) {
 	press(a, "\r")
 	check("name from home", "  PLANS › new plan", "", "new plan")
 	press(a, "esc")
-
-	to(PlanRowOpen)
-	press(a, "\r")
-	check("browse", "  PLANS › rex/plans/", "4 plans", "folder")
-	// A filter counts the plans under the rows it leaves: a folder counts
-	// every plan in it and below.
-	filter("browse", "c", "  PLANS › rex/plans/", "3 plans")
-	filter("browse", "top", "  PLANS › rex/plans/", "1 plan")
-	filter("browse", "zzz", "  PLANS › rex/plans/", "0 plans")
 	to(PlanRowMkdir)
 	press(a, "\r")
-	check("name from browse", "  PLANS › rex/plans/ › new folder", "", "new folder")
+	check("folder from home", "  PLANS › new folder", "", "new folder")
+	press(a, "esc")
+
+	// FOLDERS is Browse's root: a top folder's crumbs start under PLANS.
+	to(PlanRowDir)
+	press(a, "\r")
+	check("browse", "  PLANS › cuj/", "3 plans", "folder")
+	// A filter counts the plans under the rows it leaves: a folder counts
+	// every plan in it and below.
+	filter("browse", "s", "  PLANS › cuj/", "3 plans")
+	filter("browse", "sub", "  PLANS › cuj/", "1 plan")
+	filter("browse", "sec", "  PLANS › cuj/", "1 plan")
+	filter("browse", "zzz", "  PLANS › cuj/", "0 plans")
+	to(PlanRowMkdir)
+	press(a, "\r")
+	check("name from browse", "  PLANS › cuj/ › new folder", "", "new folder")
 	press(a, "esc")
 
 	to(PlanRowDir)
 	press(a, "\r")
-	check("deeper", "  PLANS › rex/plans/ › cuj/", "3 plans", "folder")
-	filter("deeper", "s", "  PLANS › rex/plans/ › cuj/", "3 plans")
-	filter("deeper", "sub", "  PLANS › rex/plans/ › cuj/", "1 plan")
-	filter("deeper", "sec", "  PLANS › rex/plans/ › cuj/", "1 plan")
+	check("deeper", "  PLANS › cuj/ › sub/", "1 plan", "folder")
 	to(PlanRowNew)
 	press(a, "\r")
-	check("name from deeper", "  PLANS › rex/plans/ › cuj/ › new plan", "", "new plan")
+	check("name from deeper", "  PLANS › cuj/ › sub/ › new plan", "", "new plan")
 	press(a, "esc")
 
 	press(a, "\t")
@@ -957,6 +956,7 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 	}
 	start := func() *app {
 		a, _, _ := cujApp(t)
+		writePlan(t, a.plans.Repo, "cuj/sub/deep.rex.json", demoPlan) // a folder to go deeper into
 		a.settle(80, 24)
 		return a
 	}
@@ -976,22 +976,24 @@ func TestFootersKeepMustHavesAt38Cells(t *testing.T) {
 		want  string
 	}{
 		{"plan list", func(a *app) { press(a, "esc") }, "enter open  tab agent  ? help  ↑↓ move"},
-		{"plan list on Create", func(a *app) { press(a, "esc"); pick(a, PlanRowNew) }, "enter create  tab agent  ? help"},
+		{"plan list on a folder", func(a *app) { press(a, "esc"); pick(a, PlanRowDir) }, "enter open  tab agent  ? help  ↑↓ move"},
+		{"plan list on + New plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew) }, "enter create  tab agent  ? help"},
+		{"plan list on + New folder", func(a *app) { press(a, "esc"); pick(a, PlanRowMkdir) }, "enter create  tab agent  ? help"},
 		{"find", func(a *app) { press(a, "esc"); typeText(a, "send") }, "enter open  esc clear  tab agent"},
 		{"find on + Create", func(a *app) { press(a, "esc"); typeText(a, "zz-new") }, "enter create  esc clear  tab agent"},
-		{"browse, top", func(a *app) { press(a, "esc"); pick(a, PlanRowOpen); press(a, "\r") }, "enter open  esc plans  tab agent  ?"},
+		{"browse, a top folder", func(a *app) { press(a, "esc"); pick(a, PlanRowDir); press(a, "\r") }, "enter open  esc plans  tab agent  ?"},
 		{"browse, deeper", func(a *app) {
 			press(a, "esc")
-			pick(a, PlanRowOpen)
+			pick(a, PlanRowDir)
 			press(a, "\r")
 			pick(a, PlanRowDir)
 			press(a, "\r")
 		}, "enter open  esc up  tab agent  ? help"},
-		{"browse, top, on New folder", func(a *app) { press(a, "esc"); pick(a, PlanRowOpen); press(a, "\r"); pick(a, PlanRowMkdir) }, "enter create  esc plans  tab agent  ?"},
-		{"browse, top, on New plan", func(a *app) { press(a, "esc"); pick(a, PlanRowOpen); press(a, "\r"); pick(a, PlanRowNew) }, "enter create  esc plans  tab agent  ?"},
-		{"browse, deeper, on New plan", func(a *app) {
+		{"browse, a top folder, on + New folder", func(a *app) { press(a, "esc"); pick(a, PlanRowDir); press(a, "\r"); pick(a, PlanRowMkdir) }, "enter create  esc plans  tab agent  ?"},
+		{"browse, a top folder, on + New plan", func(a *app) { press(a, "esc"); pick(a, PlanRowDir); press(a, "\r"); pick(a, PlanRowNew) }, "enter create  esc plans  tab agent  ?"},
+		{"browse, deeper, on + New plan", func(a *app) {
 			press(a, "esc")
-			pick(a, PlanRowOpen)
+			pick(a, PlanRowDir)
 			press(a, "\r")
 			pick(a, PlanRowDir)
 			press(a, "\r")

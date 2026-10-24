@@ -404,7 +404,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	bodyH := max(0, bodyBottom-bodyTop)
 	var body, pinned []LogLine
 	scroll := opt.Scroll
-	fromTop := false
+	fromTop, list := false, false
 	if opt.Overlay != nil {
 		body = opt.Overlay.Lines
 		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
@@ -420,16 +420,16 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		scroll = min(opt.PlanScroll, max(0, len(body)-bodyH))
 		fromTop = true
 	} else if opt.Pane == PanePlans && opt.Plans != nil {
-		// The plan list's folder, notice and error stay put; only the list
-		// under them scrolls.
-		all := BuildPlanView(opt.Plans, width)
-		head := min(len(all), opt.Plans.headLen())
+		// The plan list's notice and error stay put; only the list under
+		// them scrolls.
+		all := planList(opt.Plans, width, listFit{body: bodyH, tall: height >= 16, follow: opt.Follow})
+		head := headOf(all)
 		pinned = planHead(all[:head], len(all), bodyH)
 		body = all[head:]
 		bodyTop += len(pinned)
 		bodyH -= len(pinned)
 		scroll = opt.Plans.window(body, bodyH)
-		fromTop = true
+		fromTop, list = true, true
 	} else {
 		body = opt.LogView
 		if body == nil {
@@ -464,7 +464,10 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 			start = end
 		}
 		visible = append([]LogLine(nil), body[start:end]...)
-		if fromTop && len(visible) > 2 {
+		switch {
+		case fromTop && len(visible) > 2 && list:
+			visible = listMore(visible, body[:start], end < len(body))
+		case fromTop && len(visible) > 2:
 			// Say when the list goes on past the window, without covering the selection.
 			if start > 0 && !visible[0].Selected {
 				visible[0] = LogLine{Kind: "idle", Text: "  ↑ more"}

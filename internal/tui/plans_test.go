@@ -229,7 +229,7 @@ func seedPlans(t *testing.T, repo string, names ...string) string {
 	return root
 }
 
-func TestPlanHomeShowsActions(t *testing.T) {
+func TestPlanHomeShowsTheGroups(t *testing.T) {
 	repo := t.TempDir()
 	seedPlans(t, repo, "alpha.rex.json")
 	b := NewPlanBrowser(repo)
@@ -237,51 +237,26 @@ func TestPlanHomeShowsActions(t *testing.T) {
 		t.Fatal("home first")
 	}
 	view := viewText(BuildPlanView(b, 48))
-	for _, needle := range []string{"Create a plan", "Open a plan", "Open latest", "rex/plans"} {
+	for _, needle := range []string{"RECENT ─", "FOLDERS ─", "rex/plans/", "alpha", "+ New plan", "+ New folder"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("missing %q in\n%s", needle, view)
 		}
 	}
-	if b.Rows[b.Cursor].Kind != PlanRowLatest {
-		t.Fatal("with plans, the cursor starts on Open latest")
+	if b.Rows[b.Cursor].Group != groupRecent {
+		t.Fatal("with plans and none open, the cursor starts on the newest")
 	}
 }
 
-func TestFirstRunShowsOnlyCreate(t *testing.T) {
+func TestFirstRunShowsTheActions(t *testing.T) {
 	b := NewPlanBrowser(t.TempDir())
-	if len(b.Rows) != 1 || b.Rows[0].Kind != PlanRowNew {
+	if len(b.Rows) != 2 || b.Rows[0].Kind != PlanRowNew || b.Rows[1].Kind != PlanRowMkdir || b.Cursor != 0 {
 		t.Fatalf("rows %#v", b.Rows)
 	}
 	if _, err := os.Stat(b.Root); !os.IsNotExist(err) {
 		t.Fatalf("start must not create the plans dir: %v", err)
 	}
-	if !strings.Contains(viewText(BuildPlanView(b, 60)), "plans are JSON in rex/plans/") {
-		t.Fatal("first-run hint")
-	}
-}
-
-func TestPlanCardSelectionSpansBox(t *testing.T) {
-	repo := t.TempDir()
-	seedPlans(t, repo, "alpha.rex.json")
-	b := NewPlanBrowser(repo)
-	b.Cursor = 2
-	view := BuildPlanView(b, 48)
-	var selected []LogLine
-	for _, line := range view {
-		if strings.HasPrefix(strings.TrimLeft(line.Text, " "), "▌") || strings.HasPrefix(line.Text, "▌") {
-			selected = append(selected, line)
-		}
-	}
-	if len(selected) != 3 {
-		t.Fatalf("want 3 highlighted card rows, got %d\n%s", len(selected), viewText(view))
-	}
-	for _, line := range selected {
-		if line.Kind != "pick" || line.Fill != "pickbg" || !line.Selected {
-			t.Fatalf("incomplete highlight %#v", line)
-		}
-		if !strings.HasPrefix(line.Text, "▌ ") {
-			t.Fatalf("bar missing %q", line.Text)
-		}
+	if !strings.Contains(viewText(BuildPlanView(b, 60)), "No plans in rex/plans/ yet") {
+		t.Fatal("first-run sentence")
 	}
 }
 
@@ -327,39 +302,38 @@ func TestPlanCreateWritesTheV1Stub(t *testing.T) {
 func TestPlanBrowseFoldersAndCreateFolder(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, "rex", "plans")
-	if err := os.MkdirAll(filepath.Join(root, "archive"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "archive", "old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "sprint.rex.json"), []byte("{}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "archive", "sprint.rex.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "archive", "notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	b := NewPlanBrowser(repo)
-	b.Cursor = 1 // Open a plan
-	if b.Activate() != PlanStartBrowse || b.Screen != ScreenBrowse {
-		t.Fatal("open should browse")
+	for i, row := range b.Rows {
+		if row.Kind == PlanRowDir {
+			b.Cursor = i
+		}
+	}
+	if b.Activate() != PlanStay || b.Screen != ScreenBrowse || b.Dir != filepath.Join(root, "archive") {
+		t.Fatal("a folder under FOLDERS opens in Browse")
 	}
 	view := viewText(BuildPlanView(b, 48))
-	if !strings.Contains(view, "[ + New folder ]") || !strings.Contains(view, "[ + New plan ]") {
-		t.Fatalf("actions\n%s", view)
+	for _, want := range []string{"  ../", "▌ old/ ", "  sprint ", "  notes.txt", "  + New plan", "  + New folder"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q\n%s", want, view)
+		}
 	}
-	if !strings.Contains(view, "archive/") || !strings.Contains(view, "sprint.rex.json") {
-		t.Fatalf("%s", view)
+	if strings.Contains(view, "[ + ") {
+		t.Fatalf("actions have no brackets\n%s", view)
 	}
-	if !strings.Contains(view, "notes.txt") {
-		t.Fatal("other files")
-	}
-	if strings.Contains(view, "folder  archive") || strings.Contains(view, "plan    sprint") {
-		t.Fatalf("old glyphs\n%s", view)
-	}
-	draft := "team"
-	b.Screen = ScreenFolder
-	if b.CommitFolder(draft) != PlanStay {
+	b.Screen, b.From = ScreenFolder, ScreenBrowse // as + New folder in Browse does
+	if b.CommitFolder("team") != PlanStay {
 		t.Fatal("mkdir")
 	}
-	if b.Dir != filepath.Join(root, "team") {
+	if b.Dir != filepath.Join(root, "archive", "team") {
 		t.Fatalf("dir %q", b.Dir)
 	}
 	if _, err := os.Stat(b.Dir); err != nil {
@@ -367,7 +341,7 @@ func TestPlanBrowseFoldersAndCreateFolder(t *testing.T) {
 	}
 }
 
-func TestPlanOpenLatestAndRecents(t *testing.T) {
+func TestPlanRecentIsNewestFirst(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, "rex", "plans")
 	nested := filepath.Join(root, "archive")
@@ -388,10 +362,13 @@ func TestPlanOpenLatestAndRecents(t *testing.T) {
 		t.Fatalf("newest first: %+v", plans)
 	}
 	view := viewText(BuildPlanView(b, 48))
-	if !strings.Contains(view, "recents") || !strings.Contains(view, "archive/fresh.rex.json") {
+	if !strings.Contains(view, "RECENT ─") || !strings.Contains(view, "archive/fresh") {
 		t.Fatalf("%s", view)
 	}
-	b.Cursor = 2
+	if b.Rows[0].Path != fresh || b.Rows[1].Path != old {
+		t.Fatalf("rows %+v", b.Rows)
+	}
+	b.Cursor = 0
 	if act := b.Activate(); act != PlanOpenChat || b.Current != fresh {
 		t.Fatalf("act=%d current=%q", act, b.Current)
 	}
@@ -403,7 +380,7 @@ func TestPlanOpenLatestAndRecents(t *testing.T) {
 func TestPlanBrowseDoesNotLeaveRoot(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, "rex", "plans")
-	nested := filepath.Join(root, "archive")
+	nested := filepath.Join(root, "archive", "deep")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -411,11 +388,21 @@ func TestPlanBrowseDoesNotLeaveRoot(t *testing.T) {
 	b.Screen = ScreenBrowse
 	b.Dir = nested
 	b.Rebuild()
-	if !b.Up() || b.Dir != b.Root {
-		t.Fatal("up to root")
+	if !b.Up() || b.Dir != filepath.Join(root, "archive") || !b.Browsing() {
+		t.Fatal("up a folder")
 	}
-	if !b.Up() || b.Screen != ScreenHome {
-		t.Fatal("up from root goes home")
+	if !b.Up() || b.Screen != ScreenHome || b.Dir != root {
+		t.Fatal("up from a top folder is the plan list")
+	}
+	b.Screen, b.Dir = ScreenBrowse, root
+	b.Rebuild()
+	if b.Screen != ScreenHome {
+		t.Fatal("there is no Browse root: FOLDERS is it")
+	}
+	b.Screen, b.Dir = ScreenBrowse, filepath.Dir(root)
+	b.Rebuild()
+	if b.Dir != root || b.Screen != ScreenHome {
+		t.Fatalf("Browse never leaves rex/plans: %q", b.Dir)
 	}
 }
 
@@ -427,7 +414,7 @@ func TestComposeFramePlansPane(t *testing.T) {
 		Enabled: false, Columns: 80, Lines: 24,
 		Pane: PanePlans, Plans: b, Composer: true, Page: &page,
 	})
-	if !strings.Contains(frame, "  PLANS                       0 plans") || !strings.Contains(frame, "Create a plan") {
+	if !strings.Contains(frame, "  PLANS                       0 plans") || !strings.Contains(frame, "▌ + New plan") {
 		t.Fatalf("%s", frame)
 	}
 }

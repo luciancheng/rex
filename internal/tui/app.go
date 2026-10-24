@@ -1030,16 +1030,18 @@ func (a *app) docKey(key string) bool {
 	step := max(1, a.layout().bodyH-2)
 	if a.at == atOutline {
 		switch key {
-		case "up", "down", "pageup", "pagedown":
+		case "up", "down":
 			if p == nil {
 				return false
 			}
-			if key == "pageup" || key == "pagedown" {
-				l := a.layout()
-				step = outlinePage(a.doc, *v, l.textW, l.bodyH)
+			v.move(p, map[string]int{"up": -1, "down": 1}[key])
+			return true
+		case "pageup", "pagedown":
+			if p == nil {
+				return false
 			}
-			delta := map[string]int{"up": -1, "down": 1, "pageup": -step, "pagedown": step}[key]
-			v.move(p, delta)
+			l := a.layout()
+			v.sel = outlinePage(p, *v, l.textW, l.bodyH, key == "pagedown")
 			return true
 		case "home", "end":
 			if p == nil {

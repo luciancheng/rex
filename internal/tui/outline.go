@@ -318,13 +318,17 @@ func blurb(t *plan.Task) string {
 	return t.Description
 }
 
-// rowBlurb is a task's blurb on its outline row: what a done task
-// accomplished, else what it does (docs/ux.md §6).
-func rowBlurb(t *plan.Task) string {
-	if t.Status == plan.Done && len(t.Accomplished) > 0 {
-		return strings.Join(t.Accomplished, " · ")
+// rowBlurb is a task's blurb on its outline row, flat and cut to cells:
+// what a done task accomplished, else what it does (docs/ux.md §6). It
+// reads only as much of the task as a row shows.
+func rowBlurb(t *plan.Task, cells int) string {
+	switch {
+	case t.Status == plan.Done && len(t.Accomplished) > 0:
+		return flatJoin(t.Accomplished, cells)
+	case len(t.Does) > 0:
+		return flatJoin(t.Does, cells)
 	}
-	return blurb(t)
+	return flatHead(t.Description, cells)
 }
 
 // doneWhat is what a done task says it accomplished, else its title.
@@ -372,34 +376,56 @@ func doneRef(t *plan.Task) string {
 
 // filesLine is the pin's files on one row of room cells (docs/ux.md §6):
 // the paths when they all fit, else their names, as many as fit, then +N;
-// a first name too long for the row is cut so the +N still shows.
+// a first name too long for the row is cut so the +N still shows. Each is
+// one pass that stops where the row does, so a pin listing 100k files
+// reads only the files a row can show.
 func filesLine(files []string, room int) string {
-	paths := make([]string, len(files))
-	names := make([]string, len(files))
-	for i, f := range files {
-		paths[i] = flat(f)
-		names[i] = paths[i]
-		if base := filepath.Base(paths[i]); !strings.ContainsAny(base, "*?[") {
-			names[i] = base // a glob keeps its folders: "**" alone says nothing
+	var paths []string
+	n := -2 // the cells so far; the first file has no "  " before it
+	for _, f := range files {
+		p := flat(f)
+		if n += 2 + cellLen(p); n > room {
+			break
+		}
+		paths = append(paths, p)
+	}
+	if len(paths) == len(files) {
+		return strings.Join(paths, "  ")
+	}
+	name := func(f string) string {
+		p := flat(f)
+		if base := filepath.Base(p); !strings.ContainsAny(base, "*?[") {
+			return base // a glob keeps its folders: "**" alone says nothing
+		}
+		return p
+	}
+	more := func(k int) string {
+		if k == len(files) {
+			return ""
+		}
+		return fmt.Sprintf("  +%d", len(files)-k)
+	}
+	// A prefix fits only where its names alone do: the pass stops at the
+	// first name past the row, and k is the most names that fit beside
+	// their +N.
+	var names []string
+	k, n := 0, -2
+	for _, f := range files {
+		nm := name(f)
+		if n += 2 + cellLen(nm); n > room {
+			break
+		}
+		if names = append(names, nm); n+cellLen(more(len(names))) <= room {
+			k = len(names)
 		}
 	}
-	if s := strings.Join(paths, "  "); cellLen(s) <= room {
-		return s
+	if k > 0 {
+		return strings.Join(names[:k], "  ") + more(k)
 	}
-	for k := len(names); k > 0; k-- {
-		s := strings.Join(names[:k], "  ")
-		if k < len(names) {
-			s += fmt.Sprintf("  +%d", len(names)-k)
-		}
-		if cellLen(s) <= room {
-			return s
-		}
+	if len(files) == 1 {
+		return name(files[0])
 	}
-	if len(names) == 1 {
-		return names[0]
-	}
-	more := fmt.Sprintf("  +%d", len(names)-1)
-	return ellipsis(names[0], room-cellLen(more)) + more
+	return ellipsis(name(files[0]), room-cellLen(more(1))) + more(1)
 }
 
 // outlineTall is the outline's body at 16 terminal rows: from there it
@@ -425,7 +451,7 @@ const (
 // (docs/ux.md §6).
 type outlineFit struct {
 	done, needs, second bool // the card's done and needs rows; the second rows of does and verify
-	blanks, goal        bool // the blank rows under the goal and before TASKS; the goal line
+	blanks, goal        bool // the blank rows above the card and TASKS; the goal line
 	card                cardTier
 	tasks               bool // the TASKS H2
 	problems, readOnly  bool // the red warnings
@@ -523,22 +549,37 @@ func outlineScreen(d *planDoc, v *outlineView, width, rows int) []LogLine {
 // selected the list starts at its top and ↓ more takes its last row: no
 // cursor is there to keep in view.
 func outlineWindow(list []LogLine, room, want int, v *outlineView) []LogLine {
+	from, to, up, down := windowRange(list, room, want, v)
 	more := func(text string) LogLine { return LogLine{Kind: "idle", Text: "  " + text} }
+	var shown []LogLine
+	if up {
+		shown = append(shown, more("↑ more"))
+	}
+	shown = append(shown, list[from:to]...)
+	if down {
+		shown = append(shown, more("↓ more"))
+	}
+	return shown
+}
+
+// windowRange is the part of the list outlineWindow shows, list[from:to],
+// and whether ↑ more and ↓ more go above and under it.
+func windowRange(list []LogLine, room, want int, v *outlineView) (from, to int, up, down bool) {
 	switch {
 	case len(list) <= room:
 		v.view = 0
-		return list
+		return 0, len(list), false, false
 	case v.sel == "":
 		v.view = 0
 		if room < 2 {
-			return list[:room]
+			return 0, room, false, false
 		}
-		return append(slices.Clone(list[:room-1]), more("↓ more"))
+		return 0, room - 1, false, true
 	}
 	marks := min(2, room-want-(len(list)-taskRows(list)))
 	if marks <= 0 {
 		v.view = windowStart(list, room, v.view)
-		return list[v.view : v.view+room]
+		return v.view, v.view + room, false, false
 	}
 	// The window is laid out in the rows the markers leave; a marker the
 	// list doesn't need gives its row back. v.view keeps where that window
@@ -547,32 +588,30 @@ func outlineWindow(list []LogLine, room, want int, v *outlineView) []LogLine {
 	v.view = s
 	switch {
 	case s+room-marks >= len(list): // the end is in view: only ↑ more
-		return append([]LogLine{more("↑ more")}, list[len(list)-room+1:]...)
+		return len(list) - room + 1, len(list), true, false
 	case marks == 2 && s > 0:
-		return append(append([]LogLine{more("↑ more")}, list[s:s+room-2]...), more("↓ more"))
+		return s, s + room - 2, true, true
 	}
 	// The top is in view, or only one marker fits: ↓ more.
-	return append(slices.Clone(list[s:s+room-1]), more("↓ more"))
+	return s, s + room - 1, false, true
 }
 
-// outlinePage is how many rows PgUp and PgDn move the selection: the task
-// rows the outline's window shows under the head the ladder kept, so a
-// page lands on the first task past the window and never skips one the
-// window didn't show; from the title row, above the window, one more
-// (docs/ux.md §3, §6).
-func outlinePage(d *planDoc, v outlineView, width, rows int) int {
-	lines := outlineScreen(d, &v, width, rows)
-	var shown []LogLine
-	for _, l := range lines[headOf(lines):] {
-		if l.Kind != "idle" { // ↑ more, ↓ more
-			shown = append(shown, l)
-		}
+// outlinePage is the row PgUp or PgDn selects (docs/ux.md §3, §6): the
+// task just past the last one the outline's window shows, or just before
+// its first, so a page never skips a task the window didn't show. From
+// the title row, above the window, PgDn lands on the first task under it.
+func outlinePage(p *plan.Plan, v outlineView, width, rows int, down bool) string {
+	keys := outlineRows(p)
+	at := max(0, slices.Index(keys, v.sel))
+	head, list, _ := outlineLayout(p, &v, width, rows)
+	from, to, _, _ := windowRange(list, max(0, rows-len(head)), wantRows(rows, len(keys)-1), &v)
+	// The list's task rows are the tasks in outlineRows' order, so the
+	// task rows above a line say which task it is.
+	next := max(at+1, taskRows(list[:to])+1)
+	if !down {
+		next = min(at-1, taskRows(list[:from]))
 	}
-	n := max(1, taskRows(shown))
-	if v.sel == "" {
-		n++
-	}
-	return n
+	return keys[max(0, min(len(keys)-1, next))]
 }
 
 // taskRows counts the task rows in lines: not the blank rows, nor the
@@ -604,10 +643,12 @@ func outlineLayout(p *plan.Plan, v *outlineView, width, rows int) (head, list []
 	f := o.fitFor(on)
 	head = head[:min(len(head), max(0, rows))]
 	room := rows - len(head)
-	cardDoes := f.card <= cardCompact
+	// The list is drawn once, with its blank rows and the selection's
+	// blurb row; the layout keeps what fits of them.
+	all := o.tasks(sel, f.card <= cardCompact)
 	gaps := true
-	if list = o.tasks(sel, cardDoes, false, true); len(list) > room {
-		gaps, list = false, o.tasks(sel, cardDoes, false, false)
+	if list = listOf(all, true, false); len(list) > room {
+		gaps, list = false, listOf(all, false, false)
 	}
 	scrolls := len(list) > room
 	spare := room - len(list)
@@ -615,7 +656,7 @@ func outlineLayout(p *plan.Plan, v *outlineView, width, rows int) (head, list []
 		spare = room - want - 2
 	}
 	if spare > 0 {
-		list = o.tasks(sel, cardDoes, true, gaps)
+		list = listOf(all, gaps, true)
 	}
 	h2 := false
 	for i := range head {
@@ -677,7 +718,8 @@ func (o *outline) collapse(rows, want int) ([]bool, []LogLine) {
 
 // head is the outline's head for f: the goal line, the warnings, the
 // PINNED card (or what stands in for it) and the TASKS H2, with blank rows
-// under the goal and before TASKS.
+// above the card and TASKS. With no goal the card's blank row is the one
+// under the page title, as About and task detail have.
 func (o *outline) head(f outlineFit) []LogLine {
 	var head []LogLine
 	if f.goal {
@@ -690,12 +732,12 @@ func (o *outline) head(f outlineFit) []LogLine {
 		head = append(head, o.problems...)
 	}
 	card := o.card(f)
-	if f.blanks && len(head) > 0 && len(card) > 0 {
+	if f.blanks && len(card) > 0 {
 		head = append(head, LogLine{Kind: "gap"})
 	}
 	head = append(head, card...)
 	if f.tasks {
-		if f.blanks && len(head) > 0 {
+		if f.blanks {
 			head = append(head, LogLine{Kind: "gap"})
 		}
 		head = append(head, o.tasksH2("", false))
@@ -880,10 +922,10 @@ func boxed(l LogLine, width int) LogLine {
 // parents are bold with a muted rollup; done rows are quiet, with what
 // they accomplished as their blurb from 60 cells. The selection gets ▌
 // and the fill and keeps the pin's yellow; under 60 cells it gets its
-// blurb on a row of its own where blurbRow allows, except the pin while
-// the card shows what it does. gaps puts a blank row between top-level
-// groups.
-func (o *outline) tasks(sel string, cardDoes, blurbRow, gaps bool) []LogLine {
+// blurb on a row of its own, except the pin while the card shows what it
+// does. A blank row goes between top-level groups. listOf takes the blank
+// rows and the blurb row out where the layout has no room for them.
+func (o *outline) tasks(sel string, cardDoes bool) []LogLine {
 	p, g, pin := o.p, o.g, o.pin
 	inner := max(1, o.width-2)
 	idW := 0
@@ -896,41 +938,46 @@ func (o *outline) tasks(sel string, cardDoes, blurbRow, gaps bool) []LogLine {
 		gap = " "
 	}
 	idW = min(idW, 16, max(6, inner-14)) // leave the title at least ~10 cells
-	indentOf := func(t *plan.Task) string {
-		depth := g.Depth(t)
-		indent := strings.Repeat("  ", min(depth, 2))
-		if depth > 2 {
-			indent += "↳ "
-		}
-		return indent
-	}
 	// Titles line up across indent levels.
+	depths := make([]int, len(p.Tasks))
+	indents := make([]string, len(p.Tasks))
 	headW := 0
 	for i := range p.Tasks {
 		t := &p.Tasks[i]
-		headW = max(headW, cellLen(indentOf(t))+2+min(cellLen(taskKey(t)), idW))
+		depths[i] = g.Depth(t)
+		indents[i] = strings.Repeat("  ", min(depths[i], 2))
+		if depths[i] > 2 {
+			indents[i] += "↳ "
+		}
+		headW = max(headW, cellLen(indents[i])+2+min(cellLen(taskKey(t)), idW))
 	}
 	var lines []LogLine
 	first, group := true, false
+	seen := map[string]bool{}
 	for i := range p.Tasks {
 		t := &p.Tasks[i]
 		key := taskKey(t)
-		if findTask(p, key) != t {
+		if seen[key] {
 			continue // a repeated id: only the first is reachable
 		}
+		seen[key] = true
 		parent := !g.Leaf(t)
-		if g.Depth(t) == 0 {
-			if gaps && !first && (parent || group) {
+		if depths[i] == 0 {
+			if !first && (parent || group) {
 				lines = append(lines, LogLine{Kind: "gap"})
 			}
 			first, group = false, parent
 		}
-		indent := indentOf(t)
+		indent := indents[i]
 		mark, tag, tagKind := glyph(t, g, pin)
 		if !wide && tagKind != "error" && !parent {
 			tag = "" // narrow rows keep the title; the glyph still says it, and a parent keeps its rollup
 		}
-		name := flat(t.Title)
+		// A row shows at most inner cells of its title and blurb: one cell
+		// more is enough for cutSpans and ellipsis to cut them as they would
+		// the whole text.
+		name := flatHead(t.Title, inner+1)
+		b := rowBlurb(t, inner+1)
 		if name == "" {
 			name = "(untitled)"
 		}
@@ -952,7 +999,7 @@ func (o *outline) tasks(sel string, cardDoes, blurbRow, gaps bool) []LogLine {
 			kind = "error"
 		}
 		left := []Span{{Text: indent}, head, {Text: strings.Repeat(" ", max(0, headW-cellLen(indent)-cellLen(head.Text))) + gap}, {Text: name, Bold: parent}}
-		if b := flat(rowBlurb(t)); wide && b != "" {
+		if wide && b != "" {
 			left = append(left, Span{Text: " · " + b})
 		}
 		row := cutSpans(left, inner)
@@ -972,11 +1019,26 @@ func (o *outline) tasks(sel string, cardDoes, blurbRow, gaps bool) []LogLine {
 			line.Fill = "pickbg"
 		}
 		lines = append(lines, line)
-		if b := flat(rowBlurb(t)); selected && !wide && blurbRow && b != "" && !(t == pin && cardDoes) {
+		if selected && !wide && b != "" && !(t == pin && cardDoes) {
 			lines = append(lines, LogLine{Kind: "pick", Fill: "pickbg", Selected: true, Text: "▌ " + ellipsis(indent+"    "+b, inner)})
 		}
 	}
 	return lines
+}
+
+// listOf is the outline's list from what tasks drew: with its blank rows
+// only where gaps, and the selection's blurb row only where blurb.
+func listOf(lines []LogLine, gaps, blurb bool) []LogLine {
+	out := make([]LogLine, 0, len(lines))
+	for i, l := range lines {
+		switch {
+		case l.Kind == "gap" && !gaps:
+		case l.Selected && i > 0 && lines[i-1].Selected && !blurb:
+		default:
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // detailBody lays out a detail screen (docs/ux.md §6): lines on top, then

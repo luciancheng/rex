@@ -301,7 +301,7 @@ Near the draft cap the count is a must-have too: `enter open  250/256  esc clear
 2. **Each color has one meaning.** Yellow is the pin in PLAN (`▸` and its id on row 1, the PINNED card and its edge, the outline's pinned row, which is its only yellow row, and the `▸ <id>` in the plan list's accordion) and live agent work on AGENT and in the turn word (`thinking`, `running`, commands, soft drift); cyan is you (the cursor, your prompts); red needs you; green creates something; orange is a folder. Yellow is also the `REX` brand (the mascot's color) and news: the `•` cue and row 1's toasts and new-plan offer. Titles, rules and parents are never yellow.
 3. **Three header levels, three devices.** H1 is the page title, a full-width slate bar on row 2. H2 is a bold label in capitals at column 0, a slate rule to the edge and optional muted meta (`HOW IT GOES ───`, `FEED ───`); from 16 rows a blank row goes above it (on the plan list, only where the selected plan keeps its lines with it, §12; on the outline, its collapse ladder decides, §6); what it heads is indented 2. H3 is a muted lowercase label in an 8-cell column with its value beside it.
 4. **Color never changes the characters.** Color and bold only add emphasis: a color frame stripped of its SGR is the NO_COLOR frame (a test checks every screen), except that the composer's placeholder takes parentheses without color (§2).
-5. **One left edge in PLAN.** Column 0 is the selection gutter and content starts at column 2; H2 labels are outdented to column 0. Rows 0 and 1, the footer and AGENT start at column 0.
+5. **One left edge in PLAN.** Column 0 is the selection gutter and content starts at column 2; H2 labels and the outline's PINNED card (its box, and the strip that stands in for it, §6) are outdented to column 0. Rows 0 and 1, the footer and AGENT start at column 0.
 
 Rules:
 - No glyph is an emoji, and the set avoids emoji-capable code points such as `▶`, `📌`, `⏎` and `↔`. Keys are words (§3).
@@ -433,7 +433,7 @@ There is no composer: the rows a box would take go to the outline (§2). Under N
 From the top, under rows 0 and 1:
 1. **The page title**, `PLANS › <title>`, with the plan's status as its meta (its progress is on row 1, §4). It is the **title row**: ↑ from the first task, or Home, selects it (`▌` and the selection's fill), and enter opens Plan detail.
 2. **The goal**, one muted row, clipped. Under it, in red, a `read-only: <reason>` line (conflict markers, a newer `version`) and `! 2 problems · enter on the title lists them`, each wrapped to at most two rows: a warning for whoever edits the file.
-3. **The PINNED card** (below), or the line that stands in for it.
+3. **The PINNED card** (below), or the line that stands in for it. While the ladder keeps the blank rows, one goes above it, so with no goal the row under the page title is blank.
 4. **`TASKS`**, an H2 (§5) with the plan's progress as its meta, `1/3 done` (`1/3` under 30 cells). While the list scrolls it shows where the cursor is instead, `3 of 8` (on the title row it keeps the progress). Once the ladder drops `TASKS`, the page title's meta says where the cursor is (§4).
 5. **The task rows**, in file order.
 
@@ -466,7 +466,7 @@ One function lays the outline out for its body rows (`outlineLayout`), and the s
 1. the card's `done` row;
 2. its `needs` row;
 3. the second rows of `does` and `verify`;
-4. the blank rows under the goal and before `TASKS`;
+4. the blank rows above the card (or the line that stands in for it) and above `TASKS`; with no goal, the card's blank row is the one under the page title, as on About and task detail;
 5. the goal;
 6. the card, for its **compact** form: the top edge, the title row (unless the title is on the edge), one row and the bottom edge, 4 rows, or 3 with the title on the edge. The row is the first `does` row; with no `does`, the first row of its first other field (`needs`, `verify`, `files`, `done`); with none, the muted row above;
 7. the compact card, for the **strip**: one row, `[PINNED] <id>  <title>`, no box (the title only where 8 cells are left for it). Under 30 cells the card is always the strip;
@@ -489,7 +489,7 @@ The list holds still as the cursor moves. Whether it has a blank row between top
 - **Parents** are bold text, with no glyph and their rollup (`1/3`) muted on the right.
 - **Other rows.** `✓` and `–` rows are muted (`–` tagged `skipped`); `○` and `·` rows are text, `·` tagged `after <id>`; `!` rows are red, tagged `blocked`; a bad reference (`after ?T9`) or a cycle (`cycle`, never the pin) is red too. Under 60 cells only the red tags show; they show at every width, the id and title clipping first.
 - **Blurbs** (issue #7). From 60 cells each row is `title · blurb`, clipped: a done task's blurb is what it `accomplished`, the others' what it `does` (else its `description`). Under 60 cells rows are title-only and the selected row gets its blurb on a row of its own, filled, where the list leaves a row for it (above), except the pin while the card shows its `does`. A blurb under every row would double the list's height at 38×18.
-- **Scrolling.** The list keeps a two-row margin around the selection (one in a 3-row window). PgUp and PgDn move the selection by the task rows the window shows under the head, so a page lands just past the window and never skips a task the window didn't show; from the title row, above the window, PgDn lands on the first task under it.
+- **Scrolling.** The list keeps a two-row margin around the selection (one in a 3-row window). PgDn selects the task just past the last one the window shows under the head, and PgUp the task just before its first, so a page never skips a task the window didn't show, wherever the cursor was in it and whatever blurb row or marker the next window takes; from the title row, above the window, PgDn lands on the first task under it.
 
 ### Details
 

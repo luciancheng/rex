@@ -35,6 +35,39 @@ func flat(s string) string {
 	return strings.ReplaceAll(watch.CleanText(s), "\n", " ")
 }
 
+// flatHead is flat(s) cut to at most cells cells. It reads only as much of
+// s as that takes, so a 600-byte title on a row costs the row's cells.
+func flatHead(s string, cells int) string {
+	for n := max(1, cells+1); n < len(s); n *= 2 {
+		// A prefix cleans to a prefix of the whole: a sequence or a rune it
+		// cuts is dropped at its end.
+		if f := flat(s[:n]); cellLen(f) > cells {
+			return cutCells(f, cells)
+		}
+	}
+	return cutCells(flat(s), cells)
+}
+
+// flatJoin is items joined with " · " as flat text, cut to at most cells
+// cells: it reads only the items, and as much of each, as that takes.
+func flatJoin(items []string, cells int) string {
+	var b strings.Builder
+	n := 0
+	for i, s := range items {
+		if n > cells {
+			break
+		}
+		if i > 0 {
+			b.WriteString(" · ")
+			n += 3
+		}
+		s = flatHead(s, max(0, cells-n)+1)
+		b.WriteString(s)
+		n += cellLen(s)
+	}
+	return cutCells(b.String(), cells)
+}
+
 // roleRGB is a role's color: mascot.UI, then an AGENT block kind's, else
 // text.
 func roleRGB(role string) mascot.RGB {

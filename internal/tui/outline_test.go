@@ -534,9 +534,10 @@ func TestOutlineStates(t *testing.T) {
 	if frame := f.frame(); !strings.Contains(frame, "1/2") || f.outline.sel != "y" || !strings.Contains(frame, "[NEXT UP]─ y") {
 		t.Fatalf("a parent shows a rollup and is never the pin (sel %q)\n%s", f.outline.sel, frame)
 	}
-	// An empty plan: one line, no TASKS, the title row selected.
+	// An empty plan: one line, under the page title's blank row, no TASKS,
+	// the title row selected.
 	g, _, _ := openDemo(t, string(plan.Stub("demo")), 80, 24)
-	if frame := planBody(g); !strings.HasPrefix(frame, "  No tasks yet · your agent fills this\n  file\n") || strings.Contains(frame, "TASKS") || g.outline.sel != "" {
+	if frame := planBody(g); !strings.HasPrefix(frame, "\n  No tasks yet · your agent fills this\n  file\n") || strings.Contains(frame, "TASKS") || g.outline.sel != "" {
 		t.Fatalf("%s", frame)
 	}
 }
@@ -1065,14 +1066,14 @@ TASKS ────────────────────────�
 TASKS ─────────────────────── 0/2 done
 ▌ ▸ a First thing
   · b Second thing`},
-		{untitled, 80, 12, `╭─[PINNED]─ a ───────────────────────╮
+		{untitled, 80, 12, `
+╭─[PINNED]─ a ───────────────────────╮
 │ no does, verify or files yet       │
 ╰────────────────────────────────────╯
 
 TASKS ─────────────────────── 0/2 done
 ▌ ▸ a (untitled)
-  ○ b B
-`},
+  ○ b B`},
 		{verifyOnly, 80, 12, `╭─[PINNED]─ card-highlight ──────────╮
 │ Selected plan card is one block    │
 │ verify  go test ./internal/tu…  +1 │
@@ -1097,6 +1098,25 @@ TASKS ────────────────────────�
 	// 30 text cells leave the box 26 inside: the hint shrinks, never cut.
 	if n, _, _ := openDemo(t, untitled, 72, 12); !strings.Contains(planBody(n), "│ no details yet ") || strings.Contains(planBody(n), "y…") {
 		t.Errorf("72×12:\n%s", planBody(n))
+	}
+}
+
+// docs/ux.md §6: a plan with no goal, as Rex's own stub and many agents'
+// first saves have, still gets a blank row between the page title and the
+// card, as About and task detail do; it is one of the blank rows the
+// collapse ladder drops on a short screen.
+func TestNoGoalKeepsTheTitlesBlankRow(t *testing.T) {
+	src := `{"title": "Cursor-made plan", "status": "active", "tasks": [{"id": "one", "title": "One", "status": "active", "does": ["the work"]}, {"id": "b", "title": "B"}, {"id": "c", "title": "C"}]}`
+	a, _, _ := openDemo(t, src, 120, 32)
+	if body := planBody(a); !strings.HasPrefix(body, "\n╭─[PINNED]─ one · One ─") || !strings.Contains(body, "╯\n\nTASKS ─") {
+		t.Errorf("120×32: a blank row under the page title, then the card\n%s", a.frame())
+	}
+	if a.settle(80, 12); !strings.HasPrefix(planBody(a), "╭─[PINNED]─ one ─") {
+		t.Errorf("80×12: the ladder drops the blank rows for the task rows\n%s", a.frame())
+	}
+	none, _, _ := openDemo(t, `{"title": "All done", "tasks": [{"id": "a", "title": "A", "status": "done"}]}`, 80, 24)
+	if body := planBody(none); !strings.HasPrefix(body, "\n  ✓ all tasks done\n\nTASKS ─") {
+		t.Errorf("80×24: the line that stands in for the card gets it too\n%s", body)
 	}
 }
 
@@ -1443,6 +1463,65 @@ func TestOutlinePagesByItsWindow(t *testing.T) {
 			t.Errorf("%d×%d: PgDn from the title row lands on %s, the window held %v", size[0], size[1], a.outline.sel, win)
 		}
 	}
+	// From the middle of the window, under 60 cells, where a selection gets
+	// a blurb row: PgDn from t09 lands on t12, just under the window's last
+	// task, t11, where a step of the window's size went past it.
+	mid := []string{`{"id": "t00", "title": "Task 0"}`}
+	for i := 1; i < 43; i++ {
+		switch {
+		case i == 8:
+			mid = append(mid, `{"id": "t08", "title": "Task 8", "status": "active", "verify": ["go test ./a", "go test ./b"]}`)
+		case i%9 == 8:
+			mid = append(mid, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d", "does": ["do it"]}`, i, i))
+		case i%7 == 0:
+			mid = append(mid, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d", "status": "done", "accomplished": ["did it"]}`, i, i))
+		default:
+			mid = append(mid, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d"}`, i, i))
+		}
+	}
+	src = `{"title": "Paging", "tasks": [` + strings.Join(mid, ",") + `]}`
+	a, _, _ := openDemo(t, src, 50, 22)
+	press(a, "down")
+	if win := shown(a); a.outline.sel != "t09" || win[len(win)-1] != 12 {
+		t.Fatalf("50×22: the cursor on t09 with t11 last in the window, got %q %v", a.outline.sel, win)
+	}
+	if press(a, "pagedown"); a.outline.sel != "t12" {
+		t.Errorf("50×22: PgDn from t09 lands on t12, just under the window, not %s", a.outline.sel)
+	}
+	// A bounded walk: from every row, reached with ↓ from the top and with
+	// ↑ from the bottom (each frame drawn, as the live loop draws them),
+	// PgDn lands just past the window's last task and PgUp just before its
+	// first, so neither skips a task the window didn't show.
+	for _, size := range [][2]int{{50, 22}, {34, 34}, {50, 12}, {40, 16}, {58, 24}} {
+		a, _, _ := openDemo(t, src, size[0], size[1])
+		rows := outlineRows(a.doc.plan)
+		check := func() {
+			win := shown(a)
+			at := a.outline
+			first, last := win[0], win[len(win)-1]
+			press(a, "pagedown")
+			if next := shown(a); a.outline.sel != rows[min(len(rows)-1, last+1)] || next[0] > last+1 {
+				t.Fatalf("%v: PgDn from %q with %v in the window lands on %q, showing %v", size, at.sel, win, a.outline.sel, next)
+			}
+			a.outline = at
+			shown(a)
+			press(a, "pageup")
+			if next := shown(a); a.outline.sel != rows[max(0, first-1)] || first > 1 && next[len(next)-1] < first-1 {
+				t.Fatalf("%v: PgUp from %q with %v in the window lands on %q, showing %v", size, at.sel, win, a.outline.sel, next)
+			}
+			a.outline = at
+			shown(a)
+		}
+		press(a, "home")
+		for range rows {
+			check()
+			press(a, "down")
+		}
+		for range rows {
+			check()
+			press(a, "up")
+		}
+	}
 }
 
 // docs/ux.md §6: a value keeps the file's line breaks, so a description's
@@ -1711,6 +1790,123 @@ func TestLongPlanTextLaysOutFast(t *testing.T) {
 	}
 	if rows := wrapMost(long, 26, 3); len(rows) != 3 || rows[0] != "word word word word word" || !strings.HasSuffix(rows[2], "…") {
 		t.Errorf("wrapMost held to 3 rows: %q", rows)
+	}
+}
+
+// docs/ux.md §6: an outline frame costs the rows it shows, not the text
+// behind them, and the live loop draws one on every sprite change. The
+// PINNED card's files row reads only the files it can show, so a pin
+// listing 100k of them draws at once; 1200 tasks with 600-byte titles and
+// descriptions lay out and page in a few milliseconds here, held to a
+// bound loose enough for a slow CI runner.
+func TestBigPlansLayOutFast(t *testing.T) {
+	frame := func(a *app) time.Duration {
+		best := time.Hour
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			a.frameRows()
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	var files []string
+	for i := 0; i < 100_000; i++ {
+		files = append(files, fmt.Sprintf("internal/pkg%d/file_%d.go", i%50, i))
+	}
+	src, _ := json.Marshal(map[string]any{"title": "P", "tasks": []any{map[string]any{"id": "a", "title": "A", "status": "active", "files": files}}})
+	a, _, _ := openDemo(t, string(src), 120, 40)
+	if took, body := frame(a), planBody(a); took > 250*time.Millisecond || !strings.Contains(body, "│ files   file_0.go  file_1.go  ") || !strings.Contains(body, "  +999") {
+		t.Errorf("a pin listing 100k files: a frame takes %v\n%s", took, body)
+	}
+	long := func(i, n int) string {
+		w := fmt.Sprintf("word%d ", i)
+		return strings.Repeat(w, n/len(w)+1)[:n]
+	}
+	var tasks []any
+	for i := 0; i < 1200; i++ {
+		tasks = append(tasks, map[string]any{"id": fmt.Sprintf("t%04d", i), "title": long(i, 600), "description": long(i, 600)})
+	}
+	src, _ = json.Marshal(map[string]any{"title": "Big", "goal": "a goal", "tasks": tasks})
+	for _, size := range [][2]int{{200, 60}, {50, 24}} {
+		a, _, _ := openDemo(t, string(src), size[0], size[1])
+		press(a, "down")
+		if took := frame(a); took > 500*time.Millisecond {
+			t.Errorf("%v: 1200 long tasks, a frame takes %v", size, took)
+		}
+		start := time.Now()
+		press(a, "pagedown")
+		a.frameRows()
+		if took := time.Since(start); took > time.Second || a.outline.sel == "t0001" {
+			t.Errorf("%v: 1200 long tasks, PgDn to %s and its frame take %v", size, a.outline.sel, took)
+		}
+	}
+}
+
+// flatHead and flatJoin read only the head of a text, and cut it as cutting
+// the whole flat text would: escapes, wide and joined glyphs, and a rune
+// or a sequence the read cuts in two all come out the same.
+func TestFlatHeadCutsAsTheWhole(t *testing.T) {
+	for _, s := range []string{
+		"", "plain words here and more", "wide 漢字漢字漢字 text", "ééé combining",
+		"esc \x1b[31mred\x1b[0m and \x1b]8;;http://x/y\x07link\x1b]8;;\x07 done", "tab\there", "line\nbreak",
+		"👍🏽 ok ⚠️ 1️⃣ 👨‍💻 end", "bad \xff utf8 \x07 bell", strings.Repeat("漢", 300),
+	} {
+		for _, cells := range []int{0, 1, 2, 3, 5, 8, 13, 40, 400} {
+			if got, want := flatHead(s, cells), cutCells(flat(s), cells); got != want {
+				t.Errorf("flatHead(%q, %d) = %q, want %q", s, cells, got, want)
+			}
+		}
+	}
+	items := []string{"one thing", "漢字 two", "three \x1b[1mbold\x1b[0m", "", "👍🏽 four"}
+	for cells := 0; cells < 50; cells++ {
+		if got, want := flatJoin(items, cells), cutCells(flat(strings.Join(items, " · ")), cells); got != want {
+			t.Errorf("flatJoin(%d) = %q, want %q", cells, got, want)
+		}
+	}
+}
+
+// filesLine's one pass picks what trying every count of names would: the
+// paths when they all fit, else the most names that fit beside their +N.
+func TestFilesLineIsTheLongestThatFits(t *testing.T) {
+	every := func(files []string, room int) string {
+		var paths, names []string
+		for _, f := range files {
+			paths = append(paths, flat(f))
+			name := filepath.Base(flat(f))
+			if strings.ContainsAny(name, "*?[") {
+				name = flat(f)
+			}
+			names = append(names, name)
+		}
+		if s := strings.Join(paths, "  "); cellLen(s) <= room {
+			return s
+		}
+		for k := len(names); k > 0; k-- {
+			s := strings.Join(names[:k], "  ")
+			if k < len(names) {
+				s += fmt.Sprintf("  +%d", len(names)-k)
+			}
+			if cellLen(s) <= room {
+				return s
+			}
+		}
+		if len(names) == 1 {
+			return names[0]
+		}
+		more := fmt.Sprintf("  +%d", len(names)-1)
+		return ellipsis(names[0], room-cellLen(more)) + more
+	}
+	var files []string
+	for i := 0; i < 14; i++ {
+		files = append(files, fmt.Sprintf("dir%d/%s.go", i, strings.Repeat("n", i%5+1)))
+	}
+	files = append(files, "internal/**/*.go", "a.go", "b", "漢字/漢.go")
+	for n := 1; n <= len(files); n++ {
+		for room := 1; room < 80; room++ {
+			if got, want := filesLine(files[:n], room), every(files[:n], room); got != want {
+				t.Errorf("filesLine(%d files, %d) = %q, want %q", n, room, got, want)
+			}
+		}
 	}
 }
 

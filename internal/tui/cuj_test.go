@@ -336,12 +336,12 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			return pin != nil && string(pin.Status) == status
 		}
 	}
-	nextUp := strings.Replace(string(cujFixture(t)), `"status": "active",
+	nextUp := mustReplace(t, string(cujFixture(t)), `"status": "active",
       "depends_on"`, `"status": "pending",
-      "depends_on"`, 1)
-	allDone := strings.NewReplacer(`"status": "active",
+      "depends_on"`)
+	allDone := mustReplace(t, mustReplace(t, string(cujFixture(t)), `"status": "active",
       "depends_on"`, `"status": "done",
-      "depends_on"`, `"status": "pending"`, `"status": "skipped"`).Replace(string(cujFixture(t)))
+      "depends_on"`), `"status": "pending"`, `"status": "skipped"`)
 	write := func(a *app) {
 		other := filepath.Join(a.plans.Root, "cuj", "a-much-longer-plan-name-from-the-agent.rex.json")
 		os.WriteFile(other, []byte(`{"version": 1, "tasks": []}`), 0o644)

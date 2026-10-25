@@ -8,6 +8,11 @@ import (
 // TestMain points HOME at a throwaway folder so no test can touch the
 // real ~/.cursor, ~/.claude, ~/.codex or ~/.rex.
 func TestMain(m *testing.M) {
+	if os.Getenv("REX_TEST_STUB_DIR") != "" {
+		// TestOpenCodePluginAddsThePin's rex: the plugin, under node, runs
+		// this binary.
+		os.Exit(stubRex())
+	}
 	home, err := os.MkdirTemp("", "rex-watch-home-")
 	if err != nil {
 		panic(err)

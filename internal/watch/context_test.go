@@ -13,11 +13,11 @@ import (
 )
 
 // Only Claude Code's and Codex's prompt hooks, and their SessionStart
-// after a compaction, and Cursor's beforeSubmitPrompt and sessionStart ask
-// for the pin (docs/ux.md §7a); every other event any harness sends, and
-// every other source, is silent.
+// after a compaction, Cursor's beforeSubmitPrompt and sessionStart, and the
+// OpenCode plugin's context request ask for the pin (docs/ux.md §7a);
+// every other event any harness sends, and every other source, is silent.
 func TestContextEventIsAnAllowList(t *testing.T) {
-	names := map[string]bool{}
+	names := map[string]bool{"context": true}
 	for _, set := range []map[string]bool{cursorEvents, claudeEvents, codexEvents, openCodeTypes} {
 		for name := range set {
 			names[name] = true
@@ -44,6 +44,9 @@ func TestContextEventIsAnAllowList(t *testing.T) {
 					}
 				}
 				if source == "cursor" && (name == "beforeSubmitPrompt" || name == "sessionStart") {
+					want = name
+				}
+				if source == "opencode" && name == "context" {
 					want = name
 				}
 				if got := ContextEvent(payload, source); got != want {
@@ -73,6 +76,36 @@ func TestContextEventIsAnAllowList(t *testing.T) {
 			t.Errorf("a subagent's %s: %q", name, got)
 		}
 	}
+	if got := ContextEvent(map[string]any{"type": "context", "agent_id": "sub-1"}, "opencode"); got != "" {
+		t.Errorf("a subagent's context request: %q", got)
+	}
+	// What the note the OpenCode plugin added names is only its prompt's
+	// to say, and only to an explicit --source opencode.
+	const rel = "rex/plans/cuj/sendoff-demo.rex.json"
+	for _, c := range []struct {
+		source  string
+		payload map[string]any
+		want    string
+	}{
+		{"opencode", map[string]any{"type": "chat.message", "text": "go", "pin": "fix · cards", "pin_plan": rel}, "map[pin:fix · cards pin_plan:" + rel + "]"},
+		{"opencode", map[string]any{"type": "chat.message", "text": "go", "pin_plan": rel}, "map[pin_plan:" + rel + "]"},
+		{"opencode", map[string]any{"type": "chat.message", "text": "go", "pin": "", "pin_plan": rel}, "map[pin_plan:" + rel + "]"},
+		{"opencode", map[string]any{"type": "chat.message", "text": "go"}, "map[]"},
+		{"opencode", map[string]any{"type": "chat.message", "pin": "card-highlight"}, "map[]"},
+		{"opencode", map[string]any{"type": "chat.message", "pin_plan": 7}, "map[]"},
+		{"opencode", map[string]any{"type": "chat.message", "pin": 7, "pin_plan": rel}, "map[]"},
+		{"opencode", map[string]any{"type": "chat.message", "pin": strings.Repeat("x", 8192), "pin_plan": rel}, "map[]"},
+		{"opencode", map[string]any{"type": "chat.message", "note": "Rex note: x"}, "map[]"},
+		{"opencode", map[string]any{"type": "chat.message", "pin_plan": rel, "agent_id": "sub-1"}, "map[]"},
+		{"opencode", map[string]any{"type": "context", "pin_plan": rel}, "map[]"},
+		{"opencode", map[string]any{"type": "session.idle", "pin_plan": rel}, "map[]"},
+		{"auto", map[string]any{"type": "chat.message", "pin_plan": rel}, "map[]"},
+		{"claude", map[string]any{"hook_event_name": "UserPromptSubmit", "type": "chat.message", "pin_plan": rel}, "map[]"},
+	} {
+		if got := fmt.Sprint(SentPin(c.payload, c.source)); got != c.want {
+			t.Errorf("%s %v: %s, want %s", c.source, c.payload, got, c.want)
+		}
+	}
 	if !IsSessionStart("SessionStart") || !IsSessionStart("sessionStart") || IsSessionStart("beforeSubmitPrompt") || IsSessionStart("UserPromptSubmit") {
 		t.Fatal("only a session start's note is worded for the session")
 	}
@@ -97,6 +130,7 @@ func TestContextFolders(t *testing.T) {
 		{"cursor", map[string]any{"cwd": a, "workspace_roots": []any{b, "relative", 7, a}}, []string{b, a, env}},
 		{"cursor", map[string]any{"cwd": a}, []string{env}},
 		{"cursor", map[string]any{"workspace_roots": "not a list"}, []string{env}},
+		{"opencode", map[string]any{"type": "context", "cwd": a, "sessionID": "s"}, []string{a}},
 	} {
 		if got := ContextFolders(c.payload, c.source); fmt.Sprint(got) != fmt.Sprint(c.want) {
 			t.Errorf("%s %v: %v, want %v", c.source, c.payload, got, c.want)
@@ -111,11 +145,14 @@ func TestContextFolders(t *testing.T) {
 }
 
 // The reply shapes (docs/ux.md §7a): Claude Code gets exactly one JSON
-// object, Codex the note as text that never starts like JSON.
+// object, Codex the note as text that never starts like JSON, and the
+// OpenCode plugin, only for its context request, one JSON object with the
+// note and the task and plan it names, as the file spells them, within
+// the plugin's 8 KB (else without the names).
 func TestContextReplyShapes(t *testing.T) {
 	note := "Rex note: \"quoted\" <b> ‹x› line one\nline two"
 	for _, event := range []string{"UserPromptSubmit", "SessionStart"} {
-		out := ContextReply("claude", event, note)
+		out := ContextReply("claude", event, note, nil)
 		if !bytes.HasSuffix(out, []byte("}\n")) || bytes.Count(out, []byte("\n")) != 1 {
 			t.Fatalf("one line of JSON: %q", out)
 		}
@@ -138,17 +175,55 @@ func TestContextReplyShapes(t *testing.T) {
 			t.Fatalf("nothing else in it: %s", out)
 		}
 	}
-	if got := string(ContextReply("codex", "UserPromptSubmit", note)); got != note+"\n" {
+	if got := string(ContextReply("codex", "UserPromptSubmit", note, nil)); got != note+"\n" {
 		t.Fatalf("codex: %q", got)
 	}
 	for _, bad := range []string{"{\"a\":1}", " [1]", "", "  \n"} {
-		if got := ContextReply("codex", "UserPromptSubmit", bad); got != nil {
+		if got := ContextReply("codex", "UserPromptSubmit", bad, nil); got != nil {
 			t.Errorf("codex %q: %q", bad, got)
 		}
 	}
+	opencode := func(carried map[string]any) (map[string]any, []byte) {
+		t.Helper()
+		out := ContextReply("opencode", "context", note, carried)
+		dec := json.NewDecoder(bytes.NewReader(out))
+		var got map[string]any
+		if err := dec.Decode(&got); err != nil || !bytes.HasSuffix(out, []byte("}\n")) || bytes.Count(out, []byte("\n")) != 1 {
+			t.Fatalf("one line of JSON: %v %q", err, out)
+		}
+		if _, err := dec.Token(); err != io.EOF || len(out) > 8192 {
+			t.Fatalf("exactly one object, within 8 KB: %q", out)
+		}
+		return got, out
+	}
+	got, out := opencode(map[string]any{"pin": "fix · cards", "pin_plan": "rex/plans/a.rex.json", "cwd": "/repo"})
+	if fmt.Sprint(got) != fmt.Sprint(map[string]any{"note": note, "pin": "fix · cards", "pin_plan": "rex/plans/a.rex.json"}) || !bytes.Contains(out, []byte("<b> ‹x›")) {
+		t.Fatalf("opencode: the note and what it names, unescaped: %s", out)
+	}
+	if got, _ := opencode(map[string]any{"pin_plan": "rex/plans/a.rex.json"}); fmt.Sprint(got) != fmt.Sprint(map[string]any{"note": note, "pin_plan": "rex/plans/a.rex.json"}) {
+		t.Fatalf("opencode, a new plan: %v", got)
+	}
+	if got, _ := opencode(nil); fmt.Sprint(got) != fmt.Sprint(map[string]any{"note": note}) {
+		t.Fatalf("opencode, nothing named: %v", got)
+	}
+	if got, _ := opencode(map[string]any{"pin": strings.Repeat("x", 8192), "pin_plan": "rex/plans/a.rex.json"}); len(got) != 1 || got["note"] != note {
+		t.Fatalf("opencode, names past 8 KB go: %d fields", len(got))
+	}
+	for _, empty := range []string{"", "  \n"} {
+		if got := ContextReply("opencode", "context", empty, map[string]any{"pin_plan": "rex/plans/a.rex.json"}); got != nil {
+			t.Errorf("opencode %q: %q", empty, got)
+		}
+	}
 	for _, source := range []string{"opencode", "auto", ""} {
-		if got := ContextReply(source, "UserPromptSubmit", note); got != nil {
-			t.Errorf("%s: %q", source, got)
+		for _, event := range []string{"UserPromptSubmit", "chat.message"} {
+			if got := ContextReply(source, event, note, nil); got != nil {
+				t.Errorf("%s %s: %q", source, event, got)
+			}
+		}
+	}
+	for _, source := range []string{"cursor", "auto", ""} {
+		if got := ContextReply(source, "context", note, nil); got != nil {
+			t.Errorf("%s context: %q", source, got)
 		}
 	}
 }
@@ -164,7 +239,7 @@ func TestCursorContextReply(t *testing.T) {
 		"beforeSubmitPrompt": {"additional_context", "continue"},
 		"sessionStart":       {"additional_context"},
 	} {
-		out := ContextReply("cursor", event, note)
+		out := ContextReply("cursor", event, note, nil)
 		if !bytes.HasSuffix(out, []byte("}\n")) || bytes.Count(out, []byte("\n")) != 1 {
 			t.Fatalf("%s: one line of JSON: %q", event, out)
 		}
@@ -193,16 +268,16 @@ func TestCursorContextReply(t *testing.T) {
 			t.Fatalf("%s: never blocks: %v", event, got)
 		}
 	}
-	if got := string(ContextReply("cursor", "sessionStart", "a·🦖")); got != `{"additional_context":"a\u00b7\ud83e\udd96"}`+"\n" {
+	if got := string(ContextReply("cursor", "sessionStart", "a·🦖", nil)); got != `{"additional_context":"a\u00b7\ud83e\udd96"}`+"\n" {
 		t.Fatalf("escapes: %q", got)
 	}
 	for _, event := range []string{"UserPromptSubmit", "SessionStart", "stop", "afterAgentResponse", ""} {
-		if got := ContextReply("cursor", event, note); got != nil {
+		if got := ContextReply("cursor", event, note, nil); got != nil {
 			t.Errorf("%s: %q", event, got)
 		}
 	}
 	for _, empty := range []string{"", "  \n"} {
-		if got := ContextReply("cursor", "beforeSubmitPrompt", empty); got != nil {
+		if got := ContextReply("cursor", "beforeSubmitPrompt", empty, nil); got != nil {
 			t.Errorf("%q: %q", empty, got)
 		}
 	}

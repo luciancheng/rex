@@ -2,9 +2,7 @@ package plan
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -17,95 +15,50 @@ import (
 // reply for each harness, and nothing here writes anything.
 
 // Pinned is what a prompt hook hands the agent: the explicitly pinned task
-// of a repo's plan, or, with nothing pinned anywhere, the repo's current
-// plan while it has no tasks yet (Task is nil).
+// of the plan Rex last opened in a repo, or that plan alone while it has
+// no tasks yet (Task is nil).
 type Pinned struct {
 	Rel  string // the plan file from the repo root, slash-separated
 	Plan *Plan
 	Task *Task
 }
 
-// The lookup's walk of rex/plans: hidden folders skipped, and bounded, so
-// a huge tree costs a hook only its deadline.
-var pinWalk = Limit{Files: 256, Depth: 4, Hidden: true}
-
 // PinFor is what the prompt hooks hand an agent working in cwd (the
 // payload's, never the hook's own folder), or nil to send nothing. The
-// repo is the folder holding .git above cwd, else cwd. Its plan is the one
-// state.json last opened for it (through the path jail) if that has an
-// active leaf, else the one plan under rex/plans with an active leaf;
-// none, or several, send nothing. A computed next up is never sent, a
-// read-only plan sends nothing, and neither does a plan that can't be read,
-// the current one or any in the walk (it may be mid-save or mid-merge with
-// a pin inside, and another plan's pin is no guess to make), nor does one
-// whose path the note can't name as it is. With nothing pinned in a walk
-// read to its end, a current plan with no tasks yet is named instead.
+// repo is the folder holding .git above cwd, else cwd. Its plan is only
+// the one state.json says Rex last opened there, through the path jail:
+// what the person sees in Rex is what the agent gets, so a plan Rex never
+// opened there, committed with an active task or not, sends nothing. That
+// plan's explicit pin is sent, or, with no tasks yet, the plan is named. A
+// computed next up is never sent, and neither is anything from a read-only
+// plan, a plan that can't be read (it may be mid-save or mid-merge), or
+// one whose path the note can't name as it is.
 func PinFor(cwd, statePath string) *Pinned {
 	if !filepath.IsAbs(cwd) {
 		return nil
 	}
 	repo, _ := FindRepo(cwd)
-	scope := watch.NewScope(repo)
-	found := func(path string, p *Plan, t *Task) *Pinned {
-		if p.ReadOnly != "" {
-			return nil
-		}
-		rel, err := filepath.Rel(repo, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if noteText(rel, noteItem) != rel {
-			return nil // the note would fold or cut it and name no file
-		}
-		return &Pinned{Rel: rel, Plan: p, Task: t}
+	last := Jail(watch.NewScope(repo), repo, LoadState(statePath).Last(repo), "")
+	if last == "" {
+		return nil
 	}
-	var cur *Plan
-	var seen []os.FileInfo // each file once: a link or a hard link to a plan is that plan
-	last := Jail(scope, repo, LoadState(statePath).Last(repo), "")
-	if last != "" {
-		p, err := Load(last)
-		if err != nil {
-			return nil
-		}
-		if t := activePin(p); t != nil {
-			return found(last, p, t)
-		}
-		cur = p
-		if info, err := os.Stat(last); err == nil {
-			seen = append(seen, info)
-		}
+	p, err := Load(last)
+	if err != nil || p.ReadOnly != "" {
+		return nil
 	}
-	files, more := Files(Dir(repo), pinWalk)
-	var one *Pinned
-	n := 0
-	for _, f := range files {
-		if slices.ContainsFunc(seen, func(info os.FileInfo) bool { return os.SameFile(info, f.Info) }) {
-			continue
-		}
-		seen = append(seen, f.Info)
-		path := Jail(scope, repo, f.Path, "")
-		if path == "" {
-			continue // a link that leads out of rex/plans
-		}
-		p, err := Load(path)
-		if err != nil {
-			return nil
-		}
-		if t := activePin(p); t != nil {
-			n++
-			one = found(path, p, t)
-		}
+	t := activePin(p)
+	if t == nil && len(p.Tasks) > 0 {
+		return nil // tasks, and nothing pinned
 	}
-	switch {
-	case n == 1 && !more:
-		return one
-	case n > 0 || more:
-		return nil // several, or some past the walk's bound: no guessing
-	case cur != nil && len(cur.Tasks) == 0:
-		return found(last, cur, nil)
+	rel, err := filepath.Rel(repo, last)
+	if err != nil {
+		return nil
 	}
-	return nil
+	rel = filepath.ToSlash(rel)
+	if noteText(rel, noteItem) != rel {
+		return nil // the note would fold or cut it and name no file
+	}
+	return &Pinned{Rel: rel, Plan: p, Task: t}
 }
 
 // activePin is p's explicit pin: its first active leaf, the one Rex shows

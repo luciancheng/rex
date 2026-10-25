@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,10 +62,10 @@ func cujFixture(t *testing.T) []byte {
 // The note for the CUJ fixture, word for word (docs/ux.md §7a).
 func TestPinNoteForTheCUJFixture(t *testing.T) {
 	repo, state := pinRepo(t)
-	putPlan(t, repo, "cuj/sendoff-demo.rex.json", string(cujFixture(t)))
+	lastOpened(t, state, repo, putPlan(t, repo, "cuj/sendoff-demo.rex.json", string(cujFixture(t))))
 	pin := PinFor(filepath.Join(repo, "internal"), state)
 	if pin == nil || pin.Task == nil || pin.Task.ID != "card-highlight" || pin.Rel != "rex/plans/cuj/sendoff-demo.rex.json" {
-		t.Fatalf("the one plan with an active leaf: %+v", pin)
+		t.Fatalf("the plan Rex last opened: %+v", pin)
 	}
 	want := strings.Join([]string{
 		"Rex note, as of this prompt: the task pinned in the person's plan, read just now from rex/plans/cuj/sendoff-demo.rex.json. The plan file is the source of truth; earlier Rex notes in this conversation are out of date.",
@@ -93,11 +92,11 @@ func TestPinNoteForTheCUJFixture(t *testing.T) {
 	}
 }
 
-// Which plan (docs/ux.md §7a): the one state.json last opened, if it pins
-// a task; else the one plan with an active leaf; else nothing, unless the
-// current plan has no tasks yet.
+// Which plan (docs/ux.md §7a): only the one state.json says Rex last
+// opened in the repo. Its explicit pin is sent; else nothing, unless it
+// has no tasks yet.
 func TestPinForPicksThePlan(t *testing.T) {
-	t.Run("state's plan wins over the walk", func(t *testing.T) {
+	t.Run("state's plan, never another pinned one", func(t *testing.T) {
 		repo, state := pinRepo(t)
 		putPlan(t, repo, "a.rex.json", pinnedPlan)
 		mine := putPlan(t, repo, "team/b.rex.json", strings.Replace(pinnedPlan, "login", "signup", 1))
@@ -106,76 +105,45 @@ func TestPinForPicksThePlan(t *testing.T) {
 			t.Fatalf("%+v", pin)
 		}
 	})
-	t.Run("state's plan without a pin: the one pinned plan", func(t *testing.T) {
-		repo, state := pinRepo(t)
-		putPlan(t, repo, "a.rex.json", pinnedPlan)
-		lastOpened(t, state, repo, putPlan(t, repo, "b.rex.json", nextUpPlan))
-		if pin := PinFor(repo, state); pin == nil || pin.Task.ID != "login" {
-			t.Fatalf("%+v", pin)
-		}
-	})
 	t.Run("nothing to send", func(t *testing.T) {
-		for name, files := range map[string]map[string]string{
-			"a computed next up only":       {"a.rex.json": nextUpPlan},
-			"two plans with an active leaf": {"a.rex.json": pinnedPlan, "b.rex.json": pinnedPlan},
-			"a read-only plan":              {"a.rex.json": strings.Replace(pinnedPlan, `"version": 1`, `"version": 2`, 1)},
-			"conflict markers":              {"a.rex.json": "<<<<<<< ours\n" + pinnedPlan + "\n=======\n>>>>>>> theirs\n"},
-			"a conflict next to a pin":      {"a.rex.json": "<<<<<<< ours\n" + pinnedPlan + "\n=======\n>>>>>>> theirs\n", "b.rex.json": pinnedPlan},
-			"a plan mid-save next to a pin": {"a.rex.json": `{"tasks": [{"id": "x", "status": "act`, "b.rex.json": pinnedPlan},
-			"an active parent only":         {"a.rex.json": `{"tasks": [{"id": "p", "status": "active"}, {"id": "c", "parent": "p"}]}`},
-			"no plans":                      {},
-			"a plan in a hidden folder":     {".archive/a.rex.json": pinnedPlan},
-			"a plan below the walk's depth": {"a/b/c/d/e.rex.json": pinnedPlan},
-			"not a plan file":               {"a.json": pinnedPlan},
+		for name, body := range map[string]string{
+			"a computed next up only": nextUpPlan,
+			"a read-only plan":        strings.Replace(pinnedPlan, `"version": 1`, `"version": 2`, 1),
+			"conflict markers":        "<<<<<<< ours\n" + pinnedPlan + "\n=======\n>>>>>>> theirs\n",
+			"a plan mid-save":         `{"tasks": [{"id": "x", "status": "act`,
+			"an active parent only":   `{"tasks": [{"id": "p", "status": "active"}, {"id": "c", "parent": "p"}]}`,
 		} {
 			repo, state := pinRepo(t)
-			for rel, body := range files {
-				putPlan(t, repo, rel, body)
-			}
+			lastOpened(t, state, repo, putPlan(t, repo, "a.rex.json", body))
 			if pin := PinFor(repo, state); pin != nil {
 				t.Errorf("%s: sent %+v", name, pin)
 			}
 		}
 	})
-	t.Run("a link to the pinned plan is that plan", func(t *testing.T) {
+	t.Run("a link to a plan is named by its target", func(t *testing.T) {
 		repo, state := pinRepo(t)
 		real := putPlan(t, repo, "real.rex.json", pinnedPlan)
-		if err := os.Symlink(real, filepath.Join(Dir(repo), "alias.rex.json")); err != nil {
+		alias := filepath.Join(Dir(repo), "alias.rex.json")
+		if err := os.Symlink(real, alias); err != nil {
 			t.Skip("no symlinks here:", err)
 		}
-		if err := os.Link(real, filepath.Join(Dir(repo), "hard.rex.json")); err != nil {
-			t.Fatal(err)
-		}
+		lastOpened(t, state, repo, alias)
 		if pin := PinFor(repo, state); pin == nil || pin.Task.ID != "login" || pin.Rel != "rex/plans/real.rex.json" {
-			t.Fatalf("one plan under three names, named by the link's target: %+v", pin)
-		}
-	})
-	t.Run("the walk's depth reaches four parts", func(t *testing.T) {
-		repo, state := pinRepo(t)
-		putPlan(t, repo, "a/b/c/d.rex.json", pinnedPlan)
-		if pin := PinFor(repo, state); pin == nil || pin.Rel != "rex/plans/a/b/c/d.rex.json" {
 			t.Fatalf("%+v", pin)
 		}
 	})
-	t.Run("a current plan that can't be read sends nothing", func(t *testing.T) {
-		repo, state := pinRepo(t)
-		putPlan(t, repo, "a.rex.json", pinnedPlan)
-		lastOpened(t, state, repo, putPlan(t, repo, "b.rex.json", `{"tasks": [`))
-		if pin := PinFor(repo, state); pin != nil {
-			t.Fatalf("mid-save, so no other plan's pin either: %+v", pin)
-		}
-	})
-	t.Run("a read-only current plan with a pin sends nothing", func(t *testing.T) {
-		repo, state := pinRepo(t)
-		putPlan(t, repo, "a.rex.json", pinnedPlan)
-		lastOpened(t, state, repo, putPlan(t, repo, "b.rex.json", strings.Replace(pinnedPlan, `"version": 1`, `"version": 9`, 1)))
-		if pin := PinFor(repo, state); pin != nil {
-			t.Fatalf("%+v", pin)
+	t.Run("any depth, and a hidden folder too", func(t *testing.T) {
+		for _, name := range []string{"a/b/c/d/e/f.rex.json", ".archive/a.rex.json"} {
+			repo, state := pinRepo(t)
+			lastOpened(t, state, repo, putPlan(t, repo, name, pinnedPlan))
+			if pin := PinFor(repo, state); pin == nil || pin.Rel != "rex/plans/"+name {
+				t.Errorf("%s: %+v", name, pin)
+			}
 		}
 	})
 	t.Run("only the payload's folder", func(t *testing.T) {
 		repo, state := pinRepo(t)
-		putPlan(t, repo, "a.rex.json", pinnedPlan)
+		lastOpened(t, state, repo, putPlan(t, repo, "a.rex.json", pinnedPlan))
 		for _, cwd := range []string{"", "relative/dir", filepath.Join(t.TempDir(), "elsewhere")} {
 			if pin := PinFor(cwd, state); pin != nil {
 				t.Errorf("cwd %q: %+v", cwd, pin)
@@ -188,73 +156,85 @@ func TestPinForPicksThePlan(t *testing.T) {
 	t.Run("outside git, the folder itself", func(t *testing.T) {
 		_, state := pinRepo(t)
 		dir := t.TempDir()
-		putPlan(t, dir, "a.rex.json", pinnedPlan)
+		lastOpened(t, state, dir, putPlan(t, dir, "a.rex.json", pinnedPlan))
 		if pin := PinFor(dir, state); pin == nil || pin.Rel != "rex/plans/a.rex.json" {
 			t.Fatalf("%+v", pin)
 		}
 	})
-	t.Run("too many plans to be sure", func(t *testing.T) {
+}
+
+// What the person sees in Rex is what the agent gets: a plan Rex never
+// opened in the repo sends nothing, however pinned. In Rex's own repo the
+// demo plan is committed with card-highlight active; a contributor who
+// never opened it must not have it handed to their agent.
+func TestPinForSendsOnlyTheLastOpenedPlan(t *testing.T) {
+	t.Run("a committed pinned plan, never opened", func(t *testing.T) {
 		repo, state := pinRepo(t)
-		for i := 0; i < pinWalk.Files; i++ {
-			putPlan(t, repo, fmt.Sprintf("p%03d.rex.json", i), nextUpPlan)
-		}
-		putPlan(t, repo, "z.rex.json", pinnedPlan)
+		putPlan(t, repo, "cuj/sendoff-demo.rex.json", string(cujFixture(t)))
 		if pin := PinFor(repo, state); pin != nil {
-			t.Fatalf("past the bound: %+v", pin)
+			t.Fatalf("no state.json entry: sent %+v", pin)
 		}
-		os.Remove(filepath.Join(Dir(repo), "p000.rex.json"))
-		if pin := PinFor(repo, state); pin == nil {
-			t.Fatal("within it, found")
+		other := t.TempDir()
+		lastOpened(t, state, other, putPlan(t, other, "o.rex.json", pinnedPlan))
+		if pin := PinFor(repo, state); pin != nil {
+			t.Fatalf("another repo's entry: sent %+v", pin)
 		}
 	})
-	t.Run("too many plans to be sure, with a new plan open", func(t *testing.T) {
-		repo, state := pinRepo(t)
-		lastOpened(t, state, repo, putPlan(t, repo, "empty.rex.json", emptyPlan))
-		for i := 0; i < pinWalk.Files; i++ {
-			putPlan(t, repo, fmt.Sprintf("p%03d.rex.json", i), nextUpPlan)
-		}
-		putPlan(t, repo, "z.rex.json", pinnedPlan)
-		if pin := PinFor(repo, state); pin != nil {
-			t.Fatalf("a plan past the bound may pin a task: %+v", pin)
-		}
-		os.Remove(filepath.Join(Dir(repo), "z.rex.json"))
-		if pin := PinFor(repo, state); pin != nil {
-			t.Fatalf("still past the bound: %+v", pin)
-		}
-		os.Remove(filepath.Join(Dir(repo), "p000.rex.json"))
-		if pin := PinFor(repo, state); pin == nil || pin.Task != nil || pin.Rel != "rex/plans/empty.rex.json" {
-			t.Fatalf("the whole walk read, nothing pinned: the new plan is named: %+v", pin)
-		}
-	})
+	file := func(body string) func(t *testing.T, repo string) string {
+		return func(t *testing.T, repo string) string { return putPlan(t, repo, "last.rex.json", body) }
+	}
+	for name, last := range map[string]func(t *testing.T, repo string) string{
+		"has tasks and no pin":     file(nextUpPlan),
+		"is mid-save":              file(`{"tasks": [`),
+		"has conflict markers":     file("<<<<<<< ours\n" + pinnedPlan + "\n=======\n>>>>>>> theirs\n"),
+		"is read-only, with a pin": file(strings.Replace(pinnedPlan, `"version": 1`, `"version": 9`, 1)),
+		"is deleted": func(t *testing.T, repo string) string {
+			path := putPlan(t, repo, "gone.rex.json", pinnedPlan)
+			os.Remove(path)
+			return path
+		},
+		"is outside the plans folder": func(t *testing.T, repo string) string {
+			path := filepath.Join(repo, "docs", "d.rex.json")
+			os.MkdirAll(filepath.Dir(path), 0o755)
+			os.WriteFile(path, []byte(pinnedPlan), 0o644)
+			return path
+		},
+	} {
+		t.Run("the last plan "+name+"; another plan pins a task", func(t *testing.T) {
+			repo, state := pinRepo(t)
+			putPlan(t, repo, "pinned.rex.json", strings.Replace(pinnedPlan, "login", "signup", 1))
+			lastOpened(t, state, repo, last(t, repo))
+			if pin := PinFor(repo, state); pin != nil {
+				t.Fatalf("sent %+v", pin)
+			}
+		})
+	}
 }
 
 // The note names the plan by its path as it is: one it would fold (runs
 // of spaces) or cut (over 160 characters) names no file, so it sends
-// nothing, pinned or new, found by state.json or by the walk.
+// nothing, pinned or new.
 func TestPinForNeedsAPathTheNoteCanName(t *testing.T) {
 	long := strings.Repeat("feature-area-", 6) + "/" + strings.Repeat("sub-team-", 6) + "/" + strings.Repeat("the-plan-name-", 5) + "x.rex.json"
 	for _, name := range []string{long, "my  plan.rex.json"} {
 		for _, body := range []string{pinnedPlan, emptyPlan} {
 			repo, state := pinRepo(t)
-			path := putPlan(t, repo, name, body)
+			lastOpened(t, state, repo, putPlan(t, repo, name, body))
 			if pin := PinFor(repo, state); pin != nil {
-				t.Errorf("%q by the walk: sent %q", name, PinNote(pin, false))
-			}
-			lastOpened(t, state, repo, path)
-			if pin := PinFor(repo, state); pin != nil {
-				t.Errorf("%q as the last plan: sent %q", name, PinNote(pin, false))
+				t.Errorf("%q: sent %q", name, PinNote(pin, false))
 			}
 		}
 	}
 	repo, state := pinRepo(t)
-	putPlan(t, repo, "my plan.rex.json", pinnedPlan)
+	lastOpened(t, state, repo, putPlan(t, repo, "my plan.rex.json", pinnedPlan))
 	if pin := PinFor(repo, state); pin == nil || !strings.Contains(PinNote(pin, false), " from rex/plans/my plan.rex.json.") {
 		t.Fatalf("one space is the path as it is: %+v", pin)
 	}
 }
 
 // state.json's path goes through the path jail: a plan outside rex/plans,
-// by "..", by a link out, or in another repo, is never read.
+// by "..", by a link out (a folder or the file itself), in another repo,
+// or a file not named *.rex.json, is never read.
 func TestPinForJailsStatesPath(t *testing.T) {
 	repo, state := pinRepo(t)
 	outside := filepath.Join(t.TempDir(), "o.rex.json")
@@ -263,10 +243,16 @@ func TestPinForJailsStatesPath(t *testing.T) {
 	os.MkdirAll(filepath.Dir(docs), 0o755)
 	os.WriteFile(docs, []byte(pinnedPlan), 0o644)
 	sep := string(filepath.Separator)
-	paths := []string{outside, docs, Dir(repo) + sep + ".." + sep + ".." + sep + "docs" + sep + "d.rex.json"}
-	os.MkdirAll(Dir(repo), 0o755)
+	paths := []string{outside, docs, Dir(repo) + sep + ".." + sep + ".." + sep + "docs" + sep + "d.rex.json", putPlan(t, repo, "a.json", pinnedPlan)}
 	if err := os.Symlink(filepath.Dir(outside), filepath.Join(Dir(repo), "ext")); err == nil {
 		paths = append(paths, filepath.Join(Dir(repo), "ext", "o.rex.json"))
+		for name, target := range map[string]string{"out.rex.json": outside, "docs.rex.json": docs} {
+			link := filepath.Join(Dir(repo), name)
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			paths = append(paths, link)
+		}
 	} else if runtime.GOOS != "windows" {
 		t.Fatal(err)
 	}
@@ -278,43 +264,9 @@ func TestPinForJailsStatesPath(t *testing.T) {
 	}
 }
 
-// The walk goes through the path jail too: a plan file in rex/plans that
-// links out of it, to another repo or elsewhere in this one, is no plan,
-// so it is neither sent nor counted against the one that is.
-func TestPinForJailsTheWalk(t *testing.T) {
-	repo, state := pinRepo(t)
-	outside := filepath.Join(t.TempDir(), "o.rex.json")
-	docs := filepath.Join(repo, "docs", "d.rex.json")
-	os.MkdirAll(filepath.Dir(docs), 0o755)
-	os.MkdirAll(Dir(repo), 0o755)
-	for _, p := range []string{outside, docs} {
-		if err := os.WriteFile(p, []byte(pinnedPlan), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for name, target := range map[string]string{"out.rex.json": outside, "docs.rex.json": docs} {
-		link := filepath.Join(Dir(repo), name)
-		if err := os.Symlink(target, link); err != nil {
-			t.Skip("no symlinks here:", err)
-		}
-		if pin := PinFor(repo, state); pin != nil {
-			t.Errorf("%s leads out of rex/plans: sent %+v", name, pin)
-		}
-		if err := os.Remove(link); err != nil {
-			t.Fatal(err)
-		}
-	}
-	os.Symlink(outside, filepath.Join(Dir(repo), "out.rex.json"))
-	os.Symlink(docs, filepath.Join(Dir(repo), "docs.rex.json"))
-	putPlan(t, repo, "mine.rex.json", strings.Replace(pinnedPlan, "login", "signup", 1))
-	if pin := PinFor(repo, state); pin == nil || pin.Task.ID != "signup" || pin.Rel != "rex/plans/mine.rex.json" {
-		t.Fatalf("the links out are not plans, so the one inside is sent: %+v", pin)
-	}
-}
-
-// A new plan with no tasks yet is named when nothing is pinned, so "plan
-// this" works without its name (docs/ux.md §7a); one with tasks and no pin
-// sends nothing.
+// A new plan with no tasks yet, open in Rex, is named, so "plan this"
+// works without its name (docs/ux.md §7a), whatever other plans pin; once
+// it has tasks and no pin, or is read-only, it sends nothing.
 func TestPinForNamesANewEmptyPlan(t *testing.T) {
 	repo, state := pinRepo(t)
 	empty := putPlan(t, repo, "team/auth.rex.json", emptyPlan)
@@ -329,15 +281,10 @@ func TestPinForNamesANewEmptyPlan(t *testing.T) {
 		}
 	}
 	putPlan(t, repo, "pinned.rex.json", pinnedPlan)
-	if pin := PinFor(repo, state); pin == nil || pin.Task == nil || pin.Task.ID != "login" {
-		t.Fatalf("a pin elsewhere is sent first: %+v", pin)
-	}
-	os.Remove(filepath.Join(Dir(repo), "pinned.rex.json"))
 	putPlan(t, repo, "saving.rex.json", `{"tasks": [{"id": "x", "status": "act`)
-	if pin := PinFor(repo, state); pin != nil {
-		t.Fatalf("a plan that can't be read may pin a task: %+v", pin)
+	if pin := PinFor(repo, state); pin == nil || pin.Task != nil || pin.Rel != "rex/plans/team/auth.rex.json" {
+		t.Fatalf("other plans are not the one open: %+v", pin)
 	}
-	os.Remove(filepath.Join(Dir(repo), "saving.rex.json"))
 	os.WriteFile(empty, []byte(nextUpPlan), 0o644)
 	if pin := PinFor(repo, state); pin != nil {
 		t.Fatalf("tasks but no pin: %+v", pin)
@@ -458,8 +405,8 @@ func TestPinNoteIsCleanedDefusedAndCapped(t *testing.T) {
 	}
 }
 
-// The walk the lookup and the plan list share (Files): plans only, in
-// lexical order, within its bounds.
+// The plan list's walk (Files): plans only, in lexical order, within its
+// bounds.
 func TestFilesWalk(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plans")
 	for _, rel := range []string{"b.rex.json", "a/c.rex.json", ".hidden/d.rex.json", "a/b/c/d/deep.rex.json", "notes.md", "A.REX.JSON"} {

@@ -387,6 +387,32 @@ func (d *Doc) Append(arr *Node, value any) ([]byte, error) {
 	return d.splice(last.End, last.End, ins), nil
 }
 
+// Prepend adds value before the first element of array arr, laid out like
+// its neighbours.
+func (d *Doc) Prepend(arr *Node, value any) ([]byte, error) {
+	if arr == nil || arr.Kind != '[' {
+		return nil, fmt.Errorf("not an array")
+	}
+	if len(arr.Elems) == 0 {
+		return d.Append(arr, value)
+	}
+	st := d.arrayStyle(arr)
+	first := arr.Elems[0]
+	indent := d.lineIndent(first.Start)
+	enc, err := st.encode(value, indent)
+	if err != nil {
+		return nil, err
+	}
+	ins := append(enc, ',')
+	if st.multiline {
+		ins = append(ins, st.newline...)
+		ins = append(ins, indent...)
+	} else {
+		ins = append(ins, ' ')
+	}
+	return d.splice(first.Start, first.Start, ins), nil
+}
+
 func (d *Doc) arrayStyle(arr *Node) style {
 	s := d.styleFor(&Node{Kind: '{', Start: arr.Start, End: arr.End})
 	if len(arr.Elems) > 0 {

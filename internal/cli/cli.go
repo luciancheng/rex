@@ -56,12 +56,13 @@ const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex,o
 append an agent event to the watch feed
 
 When run from a hook, ingest always exits 0, so it cannot block the
-agent, and problems go to stderr. On Claude Code's and Codex's prompt
-hooks it prints one thing: a short note naming the task pinned in this
-repo's Rex plan (with nothing pinned, a new plan that has no tasks yet),
-which the agent adds to its context; else nothing. Otherwise only
--h/--help, --version, --install, --uninstall, --install-cursor-hook and
-the skill flags print to stdout.
+agent, and problems go to stderr. On Claude Code's, Codex's and Cursor's
+prompt hooks, and when a session starts (Claude Code's and Codex's after
+a compaction, Cursor's when a chat starts), it prints one thing: a short
+note naming the task pinned in this repo's Rex plan (with nothing
+pinned, a new plan that has no tasks yet), which the agent adds to its
+context; else nothing. Otherwise only -h/--help, --version, --install,
+--uninstall, --install-cursor-hook and the skill flags print to stdout.
 
 options:
   -h, --help              show this help message and exit
@@ -365,8 +366,7 @@ func ingest(stdin io.Reader, source, events string) ([]byte, error) {
 		if event == "" {
 			continue
 		}
-		cwd, _ := p["cwd"].(string)
-		pin, note, err := lookPin(cwd, event == "SessionStart", pinBy())
+		pin, note, err := lookPin(watch.ContextFolders(p, source), watch.IsSessionStart(event), pinBy())
 		crash = err
 		if reply = watch.ContextReply(source, event, note); reply != nil {
 			at, meta = i, map[string]any{"pin_plan": pin.Rel}
@@ -385,10 +385,10 @@ func ingest(stdin io.Reader, source, events string) ([]byte, error) {
 	return reply, errors.Join(crash, err)
 }
 
-// lookPin finds the pin and words its note, giving up at by: a slow disk
-// costs the agent the note, never its prompt. A crash in the lookup is an
-// error and no note.
-func lookPin(cwd string, session bool, by time.Time) (*plan.Pinned, string, error) {
+// lookPin finds the pin for an agent working in dirs (best first) and
+// words its note, giving up at by: a slow disk costs the agent the note,
+// never its prompt. A crash in the lookup is an error and no note.
+func lookPin(dirs []string, session bool, by time.Time) (*plan.Pinned, string, error) {
 	wait := time.Until(by)
 	if wait <= 0 {
 		return nil, "", nil
@@ -405,7 +405,7 @@ func lookPin(cwd string, session bool, by time.Time) (*plan.Pinned, string, erro
 				got <- found{err: fmt.Errorf("pin lookup crashed: %v", r)}
 			}
 		}()
-		pin := find(cwd, plan.StatePath())
+		pin := find(plan.PinFolder(dirs), plan.StatePath())
 		if pin == nil {
 			got <- found{}
 			return

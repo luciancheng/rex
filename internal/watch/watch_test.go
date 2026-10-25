@@ -23,6 +23,24 @@ func TestCursorUserPrompt(t *testing.T) {
 	}
 }
 
+// Cursor's sessionStart is registered only to hand a new chat the pin
+// (docs/ux.md §7a): it puts nothing in the feed.
+func TestCursorSessionStartRecordsNothing(t *testing.T) {
+	payload := map[string]any{"hook_event_name": "sessionStart", "session_id": "c1", "conversation_id": "c1", "composer_mode": "agent", "workspace_roots": []any{"/repo"}}
+	for _, source := range []string{"cursor", "auto"} {
+		if ev := MapPayload(payload, source); ev != nil {
+			t.Fatalf("%s: %#v", source, ev)
+		}
+	}
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := Record([]map[string]any{payload}, "cursor", feed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(feed); !os.IsNotExist(err) {
+		t.Fatalf("the feed was written: %v", err)
+	}
+}
+
 func TestCursorWriteSkipsFileBody(t *testing.T) {
 	event := MapPayload(map[string]any{
 		"hook_event_name": "preToolUse",

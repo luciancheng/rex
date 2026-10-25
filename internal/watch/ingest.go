@@ -17,8 +17,10 @@ import (
 
 // CursorHookEvents are the Cursor hooks Rex registers. beforeShellExecution
 // is not one of them: preToolUse already reports shell commands, and having
-// both made every command arrive twice.
+// both made every command arrive twice. sessionStart records nothing; it
+// only hands a new chat the pin (docs/ux.md §7a).
 var CursorHookEvents = []string{
+	"sessionStart",
 	"beforeSubmitPrompt",
 	"afterAgentThought",
 	"preToolUse",
@@ -103,6 +105,7 @@ func installCursor(home string, stdout io.Writer) error {
 	} else {
 		fmt.Fprintf(stdout, "cursor hooks already installed at %s\n", path)
 	}
+	fmt.Fprintln(stdout, "cursor: when a chat starts, and before each prompt on Cursor builds that take it, the hook also adds the task pinned in this repo's Rex plan, if one is, to the agent's context")
 	fmt.Fprintf(stdout, "feed: %s\n", DefaultEventPath())
 	return nil
 }
@@ -146,9 +149,16 @@ func mergeCursorHooks(d *jsonedit.Doc, command string) ([]byte, error) {
 	return e.doc.Bytes(), nil
 }
 
+// cursorFirstEvents are the hooks whose reply carries the pin note. Rex's
+// entry goes first in their lists, so the person's own hooks there (a
+// prompt blocker, another tool's context) answer after Rex's: for fields
+// it doesn't merge, Cursor keeps the last answer (docs/ux.md §7a).
+var cursorFirstEvents = map[string]bool{"sessionStart": true, "beforeSubmitPrompt": true}
+
 // mergeHookList edits one event's entry list element by element, so the
 // user's other entries keep their exact bytes. Stale Rex entries are
-// removed; with want, exactly one copy of ours is kept or appended. Fields
+// removed; with want, exactly one copy of ours is kept or added, at the
+// end, or first for cursorFirstEvents (moved there if it isn't). Fields
 // the user added to our entry (a matcher, say) are kept.
 func mergeHookList(e *editor, name string, ours map[string]any, want bool) error {
 	hooks := func(d *jsonedit.Doc) *jsonedit.Node { return d.Root().Member("hooks") }
@@ -202,13 +212,33 @@ func mergeHookList(e *editor, name string, ours map[string]any, want bool) error
 		}
 		node = hooks(e.doc).Member(name)
 	}
-	if want && !kept {
+	if !want {
+		if removed && len(node.Elems) == 0 {
+			return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Remove(hooks(d), name) })
+		}
+		return nil
+	}
+	if !cursorFirstEvents[name] {
+		if kept {
+			return nil
+		}
 		return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Append(hooks(d).Member(name), ours) })
 	}
-	if !want && removed && len(node.Elems) == 0 {
-		return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Remove(hooks(d), name) })
+	for i := 0; kept && i < len(node.Elems); i++ {
+		var entry map[string]any
+		if e.doc.Decode(node.Elems[i], &entry) != nil || entry["command"] != ours["command"] {
+			continue
+		}
+		if i == 0 {
+			return nil
+		}
+		if err := e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.RemoveElem(hooks(d).Member(name), i) }); err != nil {
+			return err
+		}
+		ours = entry
+		break
 	}
-	return nil
+	return e.apply(func(d *jsonedit.Doc) ([]byte, error) { return d.Prepend(hooks(d).Member(name), ours) })
 }
 
 // removeCursorHooks takes every Rex entry out of hooks.json and drops

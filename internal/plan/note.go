@@ -23,6 +23,21 @@ type Pinned struct {
 	Task *Task
 }
 
+// PinFolder is the folder, of the ones an agent works in (best first), to
+// look its pin up from: the first in a git repo, else the first (outside
+// git, the folder itself, as Rex uses it), else "".
+func PinFolder(dirs []string) string {
+	for _, d := range dirs {
+		if _, ok := FindRepo(d); ok {
+			return d
+		}
+	}
+	if len(dirs) > 0 {
+		return dirs[0]
+	}
+	return ""
+}
+
 // PinFor is what the prompt hooks hand an agent working in cwd (the
 // payload's, never the hook's own folder), or nil to send nothing. The
 // repo is the folder holding .git above cwd, else cwd. Its plan is only
@@ -118,8 +133,9 @@ func list(label, sep string, values []string) noteLine {
 // PinNote is the note a prompt hook prints (docs/ux.md §7a): facts read
 // from the plan, never orders, always starting "Rex note" (so Codex never
 // reads it as JSON), at most 1,500 bytes. session words it for the start
-// of a session (after a compaction) rather than for one prompt. A plan
-// with no tasks gets one line.
+// of a session (after a compaction, or when a Cursor chat starts) rather
+// than for one prompt. A plan with no tasks gets the same one line either
+// way.
 func PinNote(pin *Pinned, session bool) string {
 	path := noteText(pin.Rel, noteItem)
 	if pin.Task == nil {

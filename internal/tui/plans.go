@@ -112,40 +112,7 @@ const (
 // maxRecent is how many plans RECENT lists besides the open one.
 const maxRecent = 5
 
-func FindRepoRoot(start string) string {
-	root, _ := findRepo(start)
-	return root
-}
-
-// FindRepo is FindRepoRoot, and whether a repo was found at all.
-func FindRepo(start string) (string, bool) { return findRepo(start) }
-
-// findRepo walks up from start to the directory holding .git. Outside a
-// repo it returns start itself and false.
-func findRepo(start string) (string, bool) {
-	if start == "" {
-		start, _ = os.Getwd()
-	}
-	dir, err := filepath.Abs(start)
-	if err != nil {
-		return start, false
-	}
-	orig := dir
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir, true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return orig, false
-		}
-		dir = parent
-	}
-}
-
-func PlansDir(repo string) string {
-	return filepath.Join(repo, "rex", "plans")
-}
+func PlansDir(repo string) string { return plan.Dir(repo) }
 
 // errRexFile means something that is not a folder sits where the plans
 // folder goes. Rex never deletes it; plans stay off until the human moves it.
@@ -195,15 +162,11 @@ func legacyPlans(repo string) int {
 	}
 	n := 0
 	for _, ent := range ents {
-		if !ent.IsDir() && IsPlanFile(ent.Name()) {
+		if !ent.IsDir() && plan.IsFile(ent.Name()) {
 			n++
 		}
 	}
 	return n
-}
-
-func IsPlanFile(name string) bool {
-	return strings.HasSuffix(strings.ToLower(name), ".rex.json") && len(name) > len(".rex.json")
 }
 
 func PlanFileName(name string) string {
@@ -218,7 +181,7 @@ func PlanFileName(name string) string {
 	}
 	lower := strings.ToLower(name)
 	if strings.HasSuffix(lower, ".rex.json") {
-		if !IsPlanFile(name) {
+		if !plan.IsFile(name) {
 			return ""
 		}
 		return name
@@ -227,7 +190,7 @@ func PlanFileName(name string) string {
 }
 
 func NewPlanBrowser(start string) *PlanBrowser {
-	repo, inGit := findRepo(start)
+	repo, inGit := plan.FindRepo(start)
 	b := &PlanBrowser{Repo: repo, Screen: ScreenHome, inGit: inGit, fresh: true}
 	b.Root, b.Dir = PlansDir(repo), PlansDir(repo)
 	b.Rebuild()
@@ -632,7 +595,7 @@ func writeNew(path string, data []byte) error {
 
 // planStem is a plan file name without .rex.json.
 func planStem(name string) string {
-	if IsPlanFile(name) {
+	if plan.IsFile(name) {
 		return name[:len(name)-len(".rex.json")]
 	}
 	return name
@@ -869,7 +832,7 @@ func cause(err error) string {
 
 // summarize is a plan as the list sums it up: the pin as the outline has
 // it (docs/ux.md §7), the next one or two unfinished leaves after it, and
-// the done task the PINNED card names (buildsOn), so the list and the
+// the done task the PINNED card names (Graph.BuildsOn), so the list and the
 // outline never disagree. A plan with no title (a new stub has only an id,
 // its name) has none here: its name is already on the row.
 func summarize(p *plan.Plan) planSummary {
@@ -895,8 +858,8 @@ func summarize(p *plan.Plan) planSummary {
 			s.next = append(s.next, planItem{mark: mark, id: taskKey(t), title: t.Title})
 		}
 	}
-	if t := buildsOn(p, g, pin); t != nil {
-		s.last = &planItem{id: taskKey(t), title: doneWhat(t)}
+	if t := g.BuildsOn(pin); t != nil {
+		s.last = &planItem{id: taskKey(t), title: t.DoneWhat()}
 	}
 	return s
 }
@@ -927,30 +890,19 @@ type planStat struct {
 	link bool
 }
 
-// walkPlans lists every plan under root, newest first, leaving out
-// hidden folders, as Browse does.
+// walkPlans lists every plan under root, newest first. Hidden folders are
+// walked too: the plan list leaves them out (planSets) but a find and
+// start's newest plan reach them.
 func walkPlans(root string) []planStat {
-	found := []planStat{}
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	files, _ := plan.Files(root, plan.Limit{})
+	found := make([]planStat, 0, len(files))
+	for _, f := range files {
+		rel, err := filepath.Rel(root, f.Path)
 		if err != nil {
-			return nil
+			rel = filepath.Base(f.Path)
 		}
-		if d.IsDir() || !IsPlanFile(d.Name()) {
-			return nil
-		}
-		// Only regular files (or symlinks to one) are plans: a FIFO or a
-		// device named *.rex.json would hang the reads that follow.
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			return nil
-		}
-		rel, rerr := filepath.Rel(root, path)
-		if rerr != nil {
-			rel = d.Name()
-		}
-		found = append(found, planStat{path: path, rel: filepath.ToSlash(rel), mod: info.ModTime(), info: info, link: d.Type()&os.ModeSymlink != 0})
-		return nil
-	})
+		found = append(found, planStat{path: f.Path, rel: filepath.ToSlash(rel), mod: f.Info.ModTime(), info: f.Info, link: f.Link})
+	}
 	sort.SliceStable(found, func(i, j int) bool {
 		if !found[i].mod.Equal(found[j].mod) {
 			return found[i].mod.After(found[j].mod)
@@ -1177,7 +1129,7 @@ func buildBrowseRows(root, dir, filter string) []PlanRow {
 		switch {
 		case ent.IsDir():
 			dirs = append(dirs, PlanRow{Kind: PlanRowDir, Name: name, Path: path})
-		case IsPlanFile(name):
+		case plan.IsFile(name):
 			plans = append(plans, PlanRow{Kind: PlanRowPlan, Name: name, Path: path})
 		default:
 			files = append(files, PlanRow{Kind: PlanRowFile, Name: name, Path: path})

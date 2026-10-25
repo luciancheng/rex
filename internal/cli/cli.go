@@ -1,13 +1,19 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
+	"github.com/luciancheng/rex/internal/boot"
 	"github.com/luciancheng/rex/internal/mascot"
+	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/tui"
 	"github.com/luciancheng/rex/internal/version"
@@ -49,8 +55,11 @@ const ingestHelp = `usage: rex ingest [-h] [--source {auto,cursor,claude,codex,o
 
 append an agent event to the watch feed
 
-When run from a hook, ingest always exits 0 and writes nothing to stdout,
-so it cannot block or steer the agent; problems go to stderr. Only
+When run from a hook, ingest always exits 0, so it cannot block the
+agent, and problems go to stderr. On Claude Code's and Codex's prompt
+hooks it prints one thing: a short note naming the task pinned in this
+repo's Rex plan (with nothing pinned, a new plan that has no tasks yet),
+which the agent adds to its context; else nothing. Otherwise only
 -h/--help, --version, --install, --uninstall, --install-cursor-hook and
 the skill flags print to stdout.
 
@@ -166,7 +175,8 @@ func runStart(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // runIngest exits 0 for anything that is not an install. Agent harnesses
 // read exit code 2 as "block" and some add stdout to the agent's context,
-// so a bad flag or source in a hook must fail open and stay silent.
+// so a bad flag or source in a hook must fail open and stay silent; only
+// the pin note is ever printed from a hook (docs/ux.md §7a).
 func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -208,7 +218,7 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "rex: --install-skill and --uninstall-skill go on their own; nothing changed")
 			return 1
 		}
-		repo, inRepo := tui.FindRepo("")
+		repo, inRepo := plan.FindRepo("")
 		if *project && !inRepo {
 			fmt.Fprintf(stderr, "rex: --project needs a git repo, and %s isn't one; run it from inside the repo\n", repo)
 			return 1
@@ -265,7 +275,7 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if *project {
-		repo := tui.FindRepoRoot("")
+		repo, _ := plan.FindRepo("")
 		var err error
 		if *install != "" {
 			err = watch.InstallClaudeProject(repo, stdout)
@@ -298,24 +308,117 @@ func runIngest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "rex: invalid source '%s', reading as auto\n", *source)
 		*source = "auto"
 	}
-	ingestSafely(stdin, *source, *events, stderr)
+	ingestSafely(stdin, *source, *events, stdout, stderr)
 	return 0
 }
 
-// ingestFn is watch.RunIngest; tests swap it.
-var ingestFn = watch.RunIngest
+// pinBudget is how long after the process starts a prompt hook may still
+// hand the agent the pin (docs/ux.md §7a): Codex runs hooks through
+// $SHELL -lc, and that startup is already spent from its 5 s.
+const pinBudget = 750 * time.Millisecond
 
-// ingestSafely runs one hook payload. A hook's exit code is read by the
-// agent (2 means "block"), and a Go panic exits 2, so even a crash here is
-// reported on stderr and swallowed.
-func ingestSafely(stdin io.Reader, source, events string, stderr io.Writer) {
+var (
+	// pinBy is when the pin lookup gives up; tests move it.
+	pinBy = func() time.Time { return boot.At.Add(pinBudget) }
+	// pinFn finds the pin; tests swap it.
+	pinFn = plan.PinFor
+	// ingestFn is ingest; tests swap it.
+	ingestFn = ingest
+)
+
+// ingestSafely runs one hook payload and prints what it returns in one
+// write, so nothing can leave half a reply. A hook's exit code is read by
+// the agent (2 means "block"), and a Go panic exits 2, so even a crash
+// here is reported on stderr and swallowed, and then nothing is printed.
+// A harness that has closed its end of stdout would kill the process with
+// SIGPIPE (exit 141) on the note's write, so that signal is ignored: the
+// write fails, the note is lost, and the exit is still 0.
+func ingestSafely(stdin io.Reader, source, events string, stdout, stderr io.Writer) {
+	signal.Ignore(syscall.SIGPIPE)
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(stderr, "rex: ingest crashed: %v\n", r)
 		}
 	}()
-	if err := ingestFn(stdin, source, events); err != nil {
+	reply, err := ingestFn(stdin, source, events)
+	if err != nil {
 		fmt.Fprintf(stderr, "rex: %v\n", err)
+	}
+	if len(reply) > 0 {
+		_, _ = stdout.Write(reply)
+	}
+}
+
+// ingest records a hook payload in the feed and returns what the hook
+// prints: the pin note, on a prompt hook that hands it to the agent
+// (watch.ContextEvent), found by the deadline; else nothing. The prompt's
+// event says what it carried (meta pin and pin_plan) only when the note
+// is printed.
+func ingest(stdin io.Reader, source, events string) ([]byte, error) {
+	payloads := watch.PayloadsFromRaw(string(watch.ReadPayload(stdin)))
+	var reply []byte
+	var meta map[string]any
+	var crash error
+	at := -1
+	for i, p := range payloads {
+		event := watch.ContextEvent(p, source)
+		if event == "" {
+			continue
+		}
+		cwd, _ := p["cwd"].(string)
+		pin, note, err := lookPin(cwd, event == "SessionStart", pinBy())
+		crash = err
+		if reply = watch.ContextReply(source, event, note); reply != nil {
+			at, meta = i, map[string]any{"pin_plan": pin.Rel}
+			if pin.Task != nil {
+				meta["pin"] = pin.Task.ID
+			}
+		}
+		break // one note a run
+	}
+	err := watch.Record(payloads, source, events, func(i int) map[string]any {
+		if i == at {
+			return meta
+		}
+		return nil
+	})
+	return reply, errors.Join(crash, err)
+}
+
+// lookPin finds the pin and words its note, giving up at by: a slow disk
+// costs the agent the note, never its prompt. A crash in the lookup is an
+// error and no note.
+func lookPin(cwd string, session bool, by time.Time) (*plan.Pinned, string, error) {
+	wait := time.Until(by)
+	if wait <= 0 {
+		return nil, "", nil
+	}
+	type found struct {
+		pin  *plan.Pinned
+		note string
+		err  error
+	}
+	got, find := make(chan found, 1), pinFn
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				got <- found{err: fmt.Errorf("pin lookup crashed: %v", r)}
+			}
+		}()
+		pin := find(cwd, plan.StatePath())
+		if pin == nil {
+			got <- found{}
+			return
+		}
+		got <- found{pin: pin, note: plan.PinNote(pin, session)}
+	}()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case f := <-got:
+		return f.pin, f.note, f.err
+	case <-timer.C:
+		return nil, "", nil
 	}
 }
 

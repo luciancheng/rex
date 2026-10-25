@@ -78,6 +78,7 @@ func installClaude(path string, out io.Writer) error {
 	} else {
 		fmt.Fprintf(out, "claude code hooks already installed at %s\n", path)
 	}
+	fmt.Fprintln(out, "claude code: before each prompt the hook also adds the task pinned in this repo's Rex plan, if one is, to the agent's context")
 	fmt.Fprintf(out, "feed: %s\n", DefaultEventPath())
 	return nil
 }

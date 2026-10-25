@@ -311,18 +311,34 @@ func PayloadsFromRaw(raw string) []map[string]any {
 	return payloads
 }
 
-// ingest maps raw hook input from source and appends it to the feed at
-// path. It returns what it wrote and the first write error, so a hook can
-// report it on stderr, and it keeps going after an error.
-func ingest(raw, source, path string) ([]Event, error) {
+// Record maps hook payloads from source and appends their events to the
+// feed at path (DefaultEventPath when ""). stamp, when set, adds fields to
+// the meta of payload i's event: the pin a prompt hook just handed over.
+// It returns the first write error, and keeps going after one, so a hook
+// can report it on stderr.
+func Record(payloads []map[string]any, source, path string, stamp func(i int) map[string]any) error {
+	if path == "" {
+		path = DefaultEventPath()
+	}
+	_, err := record(payloads, source, path, stamp)
+	return err
+}
+
+// record is Record, and what it wrote.
+func record(payloads []map[string]any, source, path string, stamp func(i int) map[string]any) ([]Event, error) {
 	var written []Event
 	var first error
-	for _, payload := range PayloadsFromRaw(raw) {
+	for i, payload := range payloads {
 		event := MapPayload(payload, source)
 		if event == nil || strings.TrimSpace(event.Text) == "" {
 			continue
 		}
 		stampOrigin(event, payload)
+		if stamp != nil {
+			for k, v := range stamp(i) {
+				event.Meta[k] = v
+			}
+		}
 		ok, err := AppendEvent(path, *event)
 		if err != nil && first == nil {
 			first = err
@@ -335,17 +351,8 @@ func ingest(raw, source, path string) ([]Event, error) {
 	return written, first
 }
 
-// RunIngest maps one hook payload from stdin into the feed. It runs inside
-// agent hooks, so it must never block or fail the agent: the caller exits 0
-// whatever happens here, and nothing is written to stdout.
-func RunIngest(stdin io.Reader, source string, eventsPath string) error {
-	path := eventsPath
-	if path == "" {
-		path = DefaultEventPath()
-	}
-	_, err := ingest(string(readPayload(stdin, stdinWait)), source, path)
-	return err
-}
+// ReadPayload reads one hook payload from stdin, within stdinWait.
+func ReadPayload(stdin io.Reader) []byte { return readPayload(stdin, stdinWait) }
 
 const (
 	stdinLimit = 16 << 20

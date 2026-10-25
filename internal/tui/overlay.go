@@ -168,7 +168,7 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{name: "/breakdance", what: "one dance"},
 	})
 	section("REX NEVER", "", nil)
-	for _, w := range wrap("runs or approves tools, edits a plan (it only creates an empty one you name in the plan list), sends anything to your agent, or reads transcripts. Your agent pins and finishes tasks in the plan file; Rex shows it.", max(8, width-2)) {
+	for _, w := range wrap("runs or approves tools, edits a plan (it only creates an empty one you name in the plan list), sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet), or reads transcripts. Your agent pins and finishes tasks in the plan file; Rex shows it.", max(8, width-2)) {
 		lines = append(lines, LogLine{Kind: "text", Text: "  " + w})
 	}
 	return lines

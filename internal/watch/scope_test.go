@@ -11,7 +11,7 @@ import (
 func TestIngestStampsOrigin(t *testing.T) {
 	feed := filepath.Join(t.TempDir(), "session.jsonl")
 	raw := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/work/app","session_id":"s1","tool_use_id":"t9"}`
-	got, _ := ingest(raw, "claude", feed)
+	got, _ := record(PayloadsFromRaw(raw), "claude", feed, nil)
 	if len(got) != 1 {
 		t.Fatalf("%#v", got)
 	}
@@ -19,7 +19,7 @@ func TestIngestStampsOrigin(t *testing.T) {
 	if m["cwd"] != "/work/app" || m["session"] != "s1" || m["tool_use_id"] != "t9" {
 		t.Fatalf("%#v", m)
 	}
-	cursor, _ := ingest(`{"hook_event_name":"beforeSubmitPrompt","prompt":"hi","workspace_roots":["/a","/b"],"conversation_id":"c1"}`, "cursor", feed)
+	cursor, _ := record(PayloadsFromRaw(`{"hook_event_name":"beforeSubmitPrompt","prompt":"hi","workspace_roots":["/a","/b"],"conversation_id":"c1"}`), "cursor", feed, nil)
 	if roots, _ := cursor[0].Meta["roots"].([]any); len(roots) != 2 || cursor[0].Meta["session"] != "c1" {
 		t.Fatalf("%#v", cursor[0].Meta)
 	}
@@ -143,6 +143,24 @@ func TestStampOriginTakesStringsOnly(t *testing.T) {
 	}
 	if roots := ev.Meta["roots"].([]any); len(roots) != 1 || roots[0] != "/a" {
 		t.Fatalf("roots %v", roots)
+	}
+}
+
+// A prompt that handed the agent another pin (docs/ux.md §7a) is a new
+// event, however alike the words.
+func TestDedupeKeepsAPromptThatCarriedAnotherPin(t *testing.T) {
+	a := Event{Kind: "user", Text: "continue", TS: 10, Meta: map[string]any{"cwd": "/one", "pin": "a", "pin_plan": "rex/plans/x.rex.json"}}
+	for _, meta := range []map[string]any{
+		{"cwd": "/one", "pin": "b", "pin_plan": "rex/plans/x.rex.json"},
+		{"cwd": "/one", "pin": "a", "pin_plan": "rex/plans/y.rex.json"},
+		{"cwd": "/one"},
+	} {
+		if IsDuplicate(Event{Kind: "user", Text: "continue", TS: 11, Meta: meta}, []Event{a}, 4) {
+			t.Errorf("%v after %v is a duplicate", meta, a.Meta)
+		}
+	}
+	if !IsDuplicate(Event{Kind: "user", Text: "continue", TS: 11, Meta: map[string]any{"cwd": "/one", "pin": "a", "pin_plan": "rex/plans/x.rex.json"}}, []Event{a}, 4) {
+		t.Fatal("the same pin within the window is a duplicate")
 	}
 }
 

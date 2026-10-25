@@ -174,7 +174,7 @@ func TestDedupeKeepsSeparateToolCalls(t *testing.T) {
 		t.Helper()
 		feed := filepath.Join(t.TempDir(), "session.jsonl")
 		for _, raw := range raws {
-			if err := RunIngest(strings.NewReader(raw), source, feed); err != nil {
+			if err := Record(PayloadsFromRaw(raw), source, feed, nil); err != nil {
 				t.Fatal(err)
 			}
 		}

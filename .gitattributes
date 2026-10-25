@@ -5,3 +5,5 @@ internal/skill/rex-plan/SKILL.md text eol=lf
 *.rex.json text eol=lf
 # Shell scripts run under bash, which reads a CRLF line as a syntax error.
 *.sh text eol=lf
+# The generated OpenCode plugin's golden: the same bytes on every OS.
+internal/watch/testdata/*.js text eol=lf

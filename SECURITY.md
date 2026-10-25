@@ -13,7 +13,8 @@ Include what you found, how to reproduce it, how you installed Rex, the output o
 ## What is in scope
 
 - the hook and plugin entries `rex ingest --install …` writes into Cursor, Claude Code, Codex and OpenCode configs, and the rex-plan skill files;
-- `rex ingest` blocking or steering an agent: exiting non-zero when run from a hook, or writing to stdout anything but the pin note on the prompt and session-start hooks docs/ux.md §7a names, in the shapes it names (for Cursor, a reply that blocks the prompt or shows the person a message counts too, as does plan text that escapes the note's cleaning, its `system-reminder` defusing or its 1,500-byte cap);
+- `rex ingest` blocking or steering an agent: exiting non-zero when run from a hook, or writing to stdout anything but the pin note on the prompt and session-start hooks and the OpenCode plugin's request docs/ux.md §7a names, in the shapes it names (for Cursor, a reply that blocks the prompt or shows the person a message counts too, as does plan text that escapes the note's cleaning, its `system-reminder` defusing or its 1,500-byte cap);
+- the OpenCode plugin failing a prompt, holding one up past 1.5 s, adding anything to it but the note, or sending the feed more than its allow-listed fields;
 - `~/.rex/session.jsonl` or `~/.rex/state.json` becoming readable by other users;
 - agent or plan text that paints terminal escape sequences, or reaches a shell command Rex suggests;
 - `scripts/install.sh` and `scripts/install.ps1`.

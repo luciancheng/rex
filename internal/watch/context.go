@@ -19,11 +19,13 @@ import (
 // ContextEvent is the hook event of payload whose stdout the agent adds to
 // its context, or "" for every other: Claude Code's and Codex's
 // UserPromptSubmit, and their SessionStart after a compaction; Cursor's
-// beforeSubmitPrompt and sessionStart. Only an explicit --source counts,
-// since the reply's shape is the harness's. A subagent's hooks (agent_id),
-// any harness's, and Cursor running Claude Code's (cursor_version, which
-// Cursor's own hooks already cover), never ask; Cursor's own payloads all
-// carry cursor_version.
+// beforeSubmitPrompt and sessionStart; the OpenCode plugin's "context"
+// request, which it sends from chat.message before a prompt of its root
+// session's and which is never an event. Only an explicit --source
+// counts, since the reply's shape is the harness's. A subagent's hooks
+// (agent_id), any harness's, and Cursor running Claude Code's
+// (cursor_version, which Cursor's own hooks already cover), never ask;
+// Cursor's own payloads all carry cursor_version.
 func ContextEvent(payload map[string]any, source string) string {
 	if strField(payload, "agent_id") != "" {
 		return ""
@@ -33,6 +35,11 @@ func ContextEvent(payload map[string]any, source string) string {
 	case "cursor":
 		if name == "beforeSubmitPrompt" || name == "sessionStart" {
 			return name
+		}
+		return ""
+	case "opencode":
+		if strField(payload, "type") == "context" {
+			return "context"
 		}
 		return ""
 	case "claude", "codex":
@@ -59,10 +66,10 @@ func IsSessionStart(event string) bool {
 }
 
 // ContextFolders are the folders the agent behind payload works in, best
-// first, to look its pin up from; never the hook's own folder. Claude Code
-// and Codex give the payload's cwd. Cursor's user hooks run in ~/.cursor,
-// so its folders are the payload's workspace roots, then
-// $CURSOR_PROJECT_DIR. Only absolute paths count.
+// first, to look its pin up from; never the hook's own folder. Claude Code,
+// Codex and the OpenCode plugin give the payload's cwd. Cursor's user
+// hooks run in ~/.cursor, so its folders are the payload's workspace
+// roots, then $CURSOR_PROJECT_DIR. Only absolute paths count.
 func ContextFolders(payload map[string]any, source string) []string {
 	var dirs []string
 	add := func(v any) {
@@ -86,10 +93,13 @@ func ContextFolders(payload map[string]any, source string) []string {
 // event (one of ContextEvent's): for Claude Code, one JSON object whose
 // additionalContext it adds unseen; for Codex, the note as plain text,
 // which it adds as developer context; for Cursor, one JSON object that
-// lets the prompt go on and carries the note as additional_context. Codex
-// reads stdout that starts with "{" or "[" as JSON, so such a note is
-// never printed. It ends in a newline.
-func ContextReply(source, event, note string) []byte {
+// lets the prompt go on and carries the note as additional_context; for
+// the OpenCode plugin, one JSON object with the note, which it adds,
+// trimmed, to the prompt as a synthetic text part, and what the note
+// names (carried: pin_plan, and pin), which it copies into the prompt's
+// event (openCodeReply, SentPin). Codex reads stdout that starts with "{"
+// or "[" as JSON, so such a note is never printed. It ends in a newline.
+func ContextReply(source, event, note string, carried map[string]any) []byte {
 	if strings.TrimSpace(note) == "" {
 		return nil
 	}
@@ -112,6 +122,11 @@ func ContextReply(source, event, note string) []byte {
 			return nil
 		}
 		return []byte(note + "\n")
+	case "opencode":
+		if event != "context" {
+			return nil
+		}
+		return openCodeReply(note, carried)
 	case "cursor":
 		// Never "continue": false, which would block the prompt, and never
 		// user_message: the person isn't shown anything. "continue": true

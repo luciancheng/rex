@@ -26,6 +26,10 @@ type Harness struct {
 	Present func(home string) bool
 	// Wired reports whether Rex's hook is in its config.
 	Wired func(home string) bool
+	// Old, if set, reports whether the hook Rex wired is an older one that
+	// never hands the agent the pin (an OpenCode plugin from before plugin
+	// v2); rerunning Install replaces it (docs/ux.md §7a).
+	Old func(home string) bool
 	// WiredHere, if set, reports whether one repo's own config runs Rex
 	// (Claude Code's --project install).
 	WiredHere func(repo string) bool

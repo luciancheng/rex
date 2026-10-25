@@ -57,12 +57,13 @@ append an agent event to the watch feed
 
 When run from a hook, ingest always exits 0, so it cannot block the
 agent, and problems go to stderr. On Claude Code's, Codex's and Cursor's
-prompt hooks, and when a session starts (Claude Code's and Codex's after
-a compaction, Cursor's when a chat starts), it prints one thing: a short
-note naming the task pinned in this repo's Rex plan (with nothing
-pinned, a new plan that has no tasks yet), which the agent adds to its
-context; else nothing. Otherwise only -h/--help, --version, --install,
---uninstall, --install-cursor-hook and the skill flags print to stdout.
+prompt hooks, when a session starts (Claude Code's and Codex's after a
+compaction, Cursor's when a chat starts), and when OpenCode's rex plugin
+asks before a prompt, it prints one thing: a short note naming the task
+pinned in this repo's Rex plan (with nothing pinned, a new plan that has
+no tasks yet), which the agent adds to its context; else nothing.
+Otherwise only -h/--help, --version, --install, --uninstall,
+--install-cursor-hook and the skill flags print to stdout.
 
 options:
   -h, --help              show this help message and exit
@@ -354,7 +355,10 @@ func ingestSafely(stdin io.Reader, source, events string, stdout, stderr io.Writ
 // prints: the pin note, on a prompt hook that hands it to the agent
 // (watch.ContextEvent), found by the deadline; else nothing. The prompt's
 // event says what it carried (meta pin and pin_plan) only when the note
-// is printed.
+// is printed. The OpenCode plugin asks for the note in a run of its own,
+// which records nothing, and gets what the note names with it; the
+// prompt's event it sends next says so (watch.SentPin), with no second
+// lookup.
 func ingest(stdin io.Reader, source, events string) ([]byte, error) {
 	payloads := watch.PayloadsFromRaw(string(watch.ReadPayload(stdin)))
 	var reply []byte
@@ -362,17 +366,25 @@ func ingest(stdin io.Reader, source, events string) ([]byte, error) {
 	var crash error
 	at := -1
 	for i, p := range payloads {
+		if sent := watch.SentPin(p, source); sent != nil {
+			at, meta = i, sent
+			break
+		}
 		event := watch.ContextEvent(p, source)
 		if event == "" {
 			continue
 		}
 		pin, note, err := lookPin(watch.ContextFolders(p, source), watch.IsSessionStart(event), pinBy())
 		crash = err
-		if reply = watch.ContextReply(source, event, note); reply != nil {
-			at, meta = i, map[string]any{"pin_plan": pin.Rel}
+		var carried map[string]any
+		if pin != nil {
+			carried = map[string]any{"pin_plan": pin.Rel}
 			if pin.Task != nil {
-				meta["pin"] = pin.Task.ID
+				carried["pin"] = pin.Task.ID
 			}
+		}
+		if reply = watch.ContextReply(source, event, note, carried); reply != nil {
+			at, meta = i, carried
 		}
 		break // one note a run
 	}

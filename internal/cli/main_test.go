@@ -5,11 +5,19 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestMain points HOME at a throwaway folder so no test can touch the
 // real ~/.cursor, ~/.claude, ~/.codex or ~/.rex.
 func TestMain(m *testing.M) {
+	if os.Getenv("REX_TEST_AS_REX") != "" {
+		// TestOpenCodePluginGetsThePin's rex: the plugin, under node, runs
+		// this binary as rex ingest, with that test's HOME and feed, and
+		// all the time in the world to look the pin up.
+		pinBy = func() time.Time { return time.Now().Add(time.Hour) }
+		os.Exit(Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	home, err := os.MkdirTemp("", "rex-cli-home-")
 	if err != nil {
 		panic(err)

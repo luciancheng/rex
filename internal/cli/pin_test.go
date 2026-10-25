@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -151,8 +154,9 @@ func TestIngestNeverWritesStdout(t *testing.T) {
 	if code := Main([]string{"ingest", "--events", feed}, bytes.NewBufferString(`not json at all`), &stdout, &bytes.Buffer{}); code != 0 || stdout.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q", code, stdout.String())
 	}
-	// The OpenCode plugin's payload types (watch's openCodeTypes).
-	opencode := []string{"chat.message", "message.part.updated", "session.idle", "session.error", "permission.updated", "permission.asked", "question.asked"}
+	// The OpenCode plugin's payload types (watch's openCodeTypes), and its
+	// request for the note.
+	opencode := []string{"chat.message", "message.part.updated", "session.idle", "session.error", "permission.updated", "permission.asked", "question.asked", "context"}
 	events := map[string][]string{"cursor": watch.CursorHookEvents, "claude": watch.ClaudeHookEvents, "codex": watch.CodexHookEvents, "opencode": opencode}
 	for harness, names := range events {
 		for _, source := range []string{harness, "auto"} {
@@ -165,7 +169,8 @@ func TestIngestNeverWritesStdout(t *testing.T) {
 					}
 					allowed := source == harness && (harness == "claude" || harness == "codex") &&
 						(name == "UserPromptSubmit" || name == "SessionStart" && from == "compact") ||
-						source == harness && harness == "cursor" && (name == "beforeSubmitPrompt" || name == "sessionStart")
+						source == harness && harness == "cursor" && (name == "beforeSubmitPrompt" || name == "sessionStart") ||
+						source == harness && harness == "opencode" && name == "context"
 					code, out, _ := hookRun(t, source, feed, payload)
 					if code != 0 || (out != "") != allowed {
 						t.Errorf("%s from %s (--source %s, %s): code %d, stdout %q", name, harness, source, from, code, out)
@@ -261,7 +266,170 @@ func TestPinIsSilentWhereItShouldBe(t *testing.T) {
 					t.Fatalf("meta.pin only when printed: %+v", ev)
 				}
 			}
+			if code, out, _ := hookRun(t, "opencode", feed, openCodeAsk(repo)); code != 0 || out != "" {
+				t.Fatalf("opencode: %d %q", code, out)
+			}
 		})
+	}
+}
+
+// openCodeAsk is the OpenCode plugin's request for the note before a
+// prompt of its session's in dir.
+func openCodeAsk(dir string) map[string]any {
+	return map[string]any{"type": "context", "cwd": dir, "sessionID": "ses_1"}
+}
+
+// openCodeReply is rex's reply to the plugin's context request, as the
+// plugin reads it.
+type openCodeReply struct {
+	Note string `json:"note"`
+	Pin  string `json:"pin"`
+	Plan string `json:"pin_plan"`
+}
+
+// openCodeRead is out, rex's reply to a context request: one JSON object
+// on one line.
+func openCodeRead(t *testing.T, out string) openCodeReply {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(out))
+	var r openCodeReply
+	if err := dec.Decode(&r); err != nil || !strings.HasSuffix(out, "}\n") || strings.Count(out, "\n") != 1 {
+		t.Fatalf("one JSON object on one line: %v %q", err, out)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		t.Fatalf("and nothing after it: %q", out)
+	}
+	return r
+}
+
+// openCodePrompt is the plugin's chat.message for text in dir, with what
+// the note it added names, copied from r, when it added one.
+func openCodePrompt(dir, text string, r openCodeReply) map[string]any {
+	p := map[string]any{"type": "chat.message", "cwd": dir, "sessionID": "ses_1", "text": text}
+	if strings.TrimSpace(r.Note) != "" {
+		if r.Pin != "" {
+			p["pin"] = r.Pin
+		}
+		if r.Plan != "" {
+			p["pin_plan"] = r.Plan
+		}
+	}
+	return p
+}
+
+// feedLen is how many events feed holds.
+func feedLen(feed string) int { return len(watch.LastEvents(feed, 1000)) }
+
+// docs/ux.md §7a: the OpenCode plugin's context request gets one JSON
+// object, the note worded for one prompt and the task and plan it names,
+// and never puts anything in the feed (only an explicit --source opencode
+// answers); with nothing pinned it gets nothing, and a new plan with no
+// tasks is named. The prompt's event the plugin sends next, with what the
+// note it added names, says the prompt carried them; one with none says
+// nothing.
+func TestOpenCodeContextRequest(t *testing.T) {
+	repo, feed := pinnedRepo(t)
+	pin := plan.PinFor(repo, plan.StatePath())
+	code, out, errs := hookRun(t, "opencode", feed, openCodeAsk(filepath.Join(repo, "internal")))
+	if code != 0 || errs != "" {
+		t.Fatalf("%d %q %q", code, out, errs)
+	}
+	r := openCodeRead(t, out)
+	if r.Note != plan.PinNote(pin, false) || !strings.HasPrefix(r.Note, "Rex note, as of this prompt: ") || r.Pin != "card-highlight" || r.Plan != "rex/plans/cuj/sendoff-demo.rex.json" {
+		t.Fatalf("%+v", r)
+	}
+	for _, c := range []struct {
+		source  string
+		payload map[string]any
+	}{
+		{"auto", openCodeAsk(repo)},
+		{"opencode", openCodeAsk("relative/dir")},
+		{"opencode", openCodeAsk("")},
+		{"opencode", map[string]any{"type": "context", "cwd": repo, "agent_id": "sub-1"}},
+		{"claude", openCodeAsk(repo)},
+	} {
+		if code, out, _ := hookRun(t, c.source, feed, c.payload); code != 0 || out != "" {
+			t.Errorf("%s %v: %d %q", c.source, c.payload, code, out)
+		}
+	}
+	if _, err := os.Stat(feed); !os.IsNotExist(err) {
+		t.Fatalf("the request is never in the feed: %v", watch.LastEvents(feed, 10))
+	}
+
+	code, out, _ = hookRun(t, "opencode", feed, openCodePrompt(repo, "carry on", r))
+	if code != 0 || out != "" {
+		t.Fatalf("the prompt's own event prints nothing: %d %q", code, out)
+	}
+	if ev := lastUser(t, feed); ev.Text != "carry on" || ev.Source != "opencode" || ev.Meta["pin"] != "card-highlight" || ev.Meta["pin_plan"] != "rex/plans/cuj/sendoff-demo.rex.json" || ev.Meta["cwd"] != repo || ev.Meta["note"] != nil {
+		t.Fatalf("the prompt says what it carried: %+v", ev)
+	}
+	hookRun(t, "opencode", feed, openCodePrompt(repo, "no note", openCodeReply{}))
+	if ev := lastUser(t, feed); ev.Text != "no note" || ev.Meta["pin"] != nil || ev.Meta["pin_plan"] != nil {
+		t.Fatalf("no note, no pin: %+v", ev)
+	}
+	sent := openCodePrompt(repo, "from auto", r)
+	hookRun(t, "auto", feed, sent)
+	if ev := lastUser(t, feed); ev.Text != "from auto" || ev.Meta["pin"] != nil || ev.Meta["pin_plan"] != nil {
+		t.Fatalf("only an explicit --source opencode: %+v", ev)
+	}
+
+	lastPlan(t, repo, putPlan(t, repo, "team/auth.rex.json", `{"version": 1, "id": "auth", "tasks": []}`))
+	_, out, _ = hookRun(t, "opencode", feed, openCodeAsk(repo))
+	if r := openCodeRead(t, out); r.Note != "Rex note: the person has rex/plans/team/auth.rex.json open in Rex; it has no tasks yet." || r.Pin != "" || r.Plan != "rex/plans/team/auth.rex.json" || strings.Contains(out, `"pin":`) {
+		t.Fatalf("a new plan: %q", out)
+	}
+	lastPlan(t, repo, putPlan(t, repo, "later.rex.json", `{"version": 1, "tasks": [{"id": "later", "status": "pending"}]}`))
+	if _, out, _ := hookRun(t, "opencode", feed, openCodeAsk(repo)); out != "" {
+		t.Fatalf("next up only: %q", out)
+	}
+	if n := feedLen(feed); n != 3 {
+		t.Fatalf("only the prompts are in the feed, %d events", n)
+	}
+}
+
+// The reply names the task and the plan as the file spells them, however
+// the note words them (docs/ux.md §7a): an id with " · " in it, and a
+// path past the note's 160 characters. The prompt's event says what the
+// plugin says the note it added named, with no lookup of its own: an edit
+// between the request and the prompt, even one that moves the pin, or a
+// lookup that would miss its deadline, changes nothing.
+func TestOpenCodePromptCarriesThePinAsItIs(t *testing.T) {
+	repo, feed := pinnedRepo(t)
+	path := putPlan(t, repo, "fix.rex.json", `{"version": 1, "goal": "cards", "tasks": [{"id": "fix · cards", "title": "Cards", "status": "active"}, {"id": "b", "status": "pending"}]}`)
+	lastPlan(t, repo, path)
+	_, out, _ := hookRun(t, "opencode", feed, openCodeAsk(repo))
+	r := openCodeRead(t, out)
+	if !strings.Contains(r.Note, "\nPinned task: fix · cards · Cards (status active)\n") || r.Pin != "fix · cards" || r.Plan != "rex/plans/fix.rex.json" {
+		t.Fatalf("%q", out)
+	}
+	hookRun(t, "opencode", feed, openCodePrompt(repo, "fix it", r))
+	if ev := lastUser(t, feed); ev.Text != "fix it" || ev.Meta["pin"] != "fix · cards" || ev.Meta["pin_plan"] != "rex/plans/fix.rex.json" {
+		t.Fatalf("%+v", ev)
+	}
+
+	old := pinFn
+	defer func() { pinFn = old }()
+	var looks atomic.Int32
+	pinFn = func(cwd, state string) *plan.Pinned { looks.Add(1); return old(cwd, state) }
+	os.WriteFile(path, []byte(`{"version": 1, "goal": "reworded", "tasks": [{"id": "fix · cards", "status": "pending"}, {"id": "b", "status": "active"}]}`), 0o644)
+	roomToLook(t, func() time.Time { return time.Now().Add(-time.Millisecond) })
+	hookRun(t, "opencode", feed, openCodePrompt(repo, "edited since", r))
+	if ev := lastUser(t, feed); ev.Text != "edited since" || ev.Meta["pin"] != "fix · cards" || ev.Meta["pin_plan"] != "rex/plans/fix.rex.json" || looks.Load() != 0 {
+		t.Fatalf("the prompt carried the note it was sent with (%d lookups): %+v", looks.Load(), ev)
+	}
+
+	// PinFor never names a path the note would cut; a lookup that did is
+	// still named as the file is.
+	roomToLook(t, func() time.Time { return time.Now().Add(time.Hour) })
+	p, err := plan.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := "rex/plans/" + strings.Repeat("deep/", 33) + "fix.rex.json"
+	pinFn = func(string, string) *plan.Pinned { return &plan.Pinned{Rel: long, Plan: p, Task: &p.Tasks[1]} }
+	_, out, _ = hookRun(t, "opencode", feed, openCodeAsk(repo))
+	if r := openCodeRead(t, out); strings.Contains(r.Note, long) || !strings.Contains(r.Note, "…") || r.Pin != "b" || r.Plan != long {
+		t.Fatalf("the note cuts the path, the reply names it: %q", out)
 	}
 }
 
@@ -359,6 +527,16 @@ func TestPinDeadline(t *testing.T) {
 	}
 	if code, out, errs := hookRun(t, "cursor", feed, cursorStart(repo)); code != 0 || out != "" || errs != "" {
 		t.Fatalf("Cursor's sessionStart: %d %q %q", code, out, errs)
+	}
+	before := feedLen(feed)
+	if code, out, errs := hookRun(t, "opencode", feed, openCodeAsk(repo)); code != 0 || out != "" || errs != "" || feedLen(feed) != before {
+		t.Fatalf("OpenCode's request: %d %q %q", code, out, errs)
+	}
+	if code, out, errs := hookRun(t, "opencode", feed, openCodePrompt(repo, "slow opencode", openCodeReply{})); code != 0 || out != "" || errs != "" {
+		t.Fatalf("OpenCode's prompt: %d %q %q", code, out, errs)
+	}
+	if ev := lastUser(t, feed); ev.Text != "slow opencode" || ev.Meta["pin"] != nil || ev.Meta["pin_plan"] != nil {
+		t.Fatalf("%+v", ev)
 	}
 }
 
@@ -562,5 +740,102 @@ func TestANewEmptyPlanAtSessionStart(t *testing.T) {
 	}
 	if _, out, _ := hookRun(t, "cursor", feed, cursorStart(repo)); out != `{"additional_context":"`+line+`"}`+"\n" {
 		t.Errorf("cursor: %q", out)
+	}
+}
+
+// The whole OpenCode path (docs/ux.md §7a), on every OS: the plugin
+// --install opencode writes, run under node, asks this rex (the test
+// binary, which TestMain runs as rex) for the note before a prompt, adds
+// the note to the prompt as one synthetic text part, and sends the
+// prompt's event with what the note names, which the feed records as the
+// pin it carried. The request itself never reaches the feed.
+func TestOpenCodePluginGetsThePin(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("needs node")
+	}
+	repo, feed := pinnedRepo(t)
+	home := os.Getenv("HOME")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0o755)
+	if err := watch.InstallHarness("opencode", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "plugins", "rex.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A go test binary isn't a stable path, so the plugin names a rex on
+	// PATH; the copy this test runs names the test binary itself. And this
+	// test is about the request, the note and the event, not the clock: a
+	// go test binary built with -race takes about a second to start, so
+	// the copy gives rex a minute, not 1.5 s for the note and 5 s for an
+	// event (the watch package's test holds the plugin to 1.5 s).
+	q, _ := json.Marshal(self)
+	exe := regexp.MustCompile(`(?m)^const REX = .*$`)
+	if n := len(exe.FindAll(src, -1)); n != 1 {
+		t.Fatalf("the plugin names rex %d times", n)
+	}
+	src = exe.ReplaceAllLiteral(src, append([]byte("const REX = "), q...))
+	for _, w := range [][2]string{{"const WAIT = 1500", "const WAIT = 60000"}, {"}, 5000)", "}, 60000)"}} {
+		if bytes.Count(src, []byte(w[0])) != 1 {
+			t.Fatalf("the plugin has no one %q", w[0])
+		}
+		src = bytes.Replace(src, []byte(w[0]), []byte(w[1]), 1)
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "rex.mjs"), src, 0o644)
+	os.WriteFile(filepath.Join(dir, "driver.mjs"), []byte(`import { readFileSync } from "node:fs"
+import { RexPlugin } from "./rex.mjs"
+const h = await RexPlugin({ directory: process.env.REPO })
+const parts = [{ id: "prt_000000000001AAAAAAAAAAAAAA", type: "text", text: process.env.PROMPT }]
+await h["chat.message"]({ sessionID: "ses_1" }, { message: { id: "msg_1", sessionID: "ses_1" }, parts })
+for (let i = 0; i < 200; i++) {
+  let feed = ""
+  try { feed = readFileSync(process.env.REX_EVENTS, "utf8") } catch {}
+  if (feed.includes(JSON.stringify(process.env.PROMPT))) break
+  await new Promise((r) => setTimeout(r, 25))
+}
+console.log(JSON.stringify(parts))
+`), 0o644)
+	prompt := func(text string) []map[string]any {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, node, filepath.Join(dir, "driver.mjs"))
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "REX_TEST_AS_REX=1", "REX_EVENTS="+feed, "REPO="+repo, "PROMPT="+text)
+		out, err := cmd.Output()
+		var parts []map[string]any
+		if err != nil || json.Unmarshal(out, &parts) != nil {
+			t.Fatalf("node: %v\n%s", err, out)
+		}
+		return parts
+	}
+
+	pin := plan.PinFor(repo, plan.StatePath())
+	parts := prompt("carry on")
+	if len(parts) != 2 || parts[1]["text"] != plan.PinNote(pin, false) || parts[1]["synthetic"] != true || parts[1]["type"] != "text" || parts[1]["messageID"] != "msg_1" || parts[1]["sessionID"] != "ses_1" {
+		t.Fatalf("the note, as one synthetic part after the prompt's: %v", parts)
+	}
+	ev := lastUser(t, feed)
+	if ev.Text != "carry on" || ev.Source != "opencode" || ev.Meta["pin"] != "card-highlight" || ev.Meta["pin_plan"] != "rex/plans/cuj/sendoff-demo.rex.json" || ev.Meta["cwd"] != repo {
+		t.Fatalf("the prompt says what it carried: %+v", ev)
+	}
+
+	lastPlan(t, repo, putPlan(t, repo, "team/auth.rex.json", `{"version": 1, "id": "auth", "tasks": []}`))
+	parts = prompt("plan this")
+	if len(parts) != 2 || parts[1]["text"] != "Rex note: the person has rex/plans/team/auth.rex.json open in Rex; it has no tasks yet." {
+		t.Fatalf("a new plan is named: %v", parts)
+	}
+	if ev := lastUser(t, feed); ev.Text != "plan this" || ev.Meta["pin"] != nil || ev.Meta["pin_plan"] != "rex/plans/team/auth.rex.json" {
+		t.Fatalf("%+v", ev)
+	}
+	if n := feedLen(feed); n != 2 {
+		t.Fatalf("only the two prompts are in the feed: %d events", n)
 	}
 }

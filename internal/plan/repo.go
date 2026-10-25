@@ -71,13 +71,6 @@ func Jail(scope watch.Scope, repo, p, cwd string) string {
 	return full
 }
 
-// Limit bounds a walk of a plans folder. Its zero value bounds nothing.
-type Limit struct {
-	Files  int  // the most plans it returns
-	Depth  int  // the most path parts a plan may have under the root (1: the root's own)
-	Hidden bool // skip folders whose names start with "."
-}
-
 // File is a plan file a walk found.
 type File struct {
 	Path string
@@ -85,38 +78,20 @@ type File struct {
 	Link bool        // the name is a symlink
 }
 
-// Files lists the plan files under root in lexical order, within lim; more
-// says it stopped with plans left. Only regular files (or symlinks to one)
-// are plans: a FIFO or a device named *.rex.json would hang the reads that
-// follow.
-func Files(root string, lim Limit) (files []File, more bool) {
+// Files lists the plan files under root in lexical order. Only regular
+// files (or symlinks to one) are plans: a FIFO or a device named
+// *.rex.json would hang the reads that follow.
+func Files(root string) (files []File) {
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		depth := 0
-		if rel, err := filepath.Rel(root, p); err == nil && rel != "." {
-			depth = strings.Count(filepath.ToSlash(rel), "/") + 1
-		}
-		if d.IsDir() {
-			if p != root && (lim.Hidden && strings.HasPrefix(d.Name(), ".") || lim.Depth > 0 && depth >= lim.Depth) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !IsFile(d.Name()) || lim.Depth > 0 && depth > lim.Depth {
+		if err != nil || d.IsDir() || !IsFile(d.Name()) {
 			return nil
 		}
 		info, err := os.Stat(p)
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		if lim.Files > 0 && len(files) == lim.Files {
-			more = true
-			return fs.SkipAll
-		}
 		files = append(files, File{Path: p, Info: info, Link: d.Type()&fs.ModeSymlink != 0})
 		return nil
 	})
-	return files, more
+	return files
 }

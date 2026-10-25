@@ -894,7 +894,7 @@ type planStat struct {
 // walked too: the plan list leaves them out (planSets) but a find and
 // start's newest plan reach them.
 func walkPlans(root string) []planStat {
-	files, _ := plan.Files(root, plan.Limit{})
+	files := plan.Files(root)
 	found := make([]planStat, 0, len(files))
 	for _, f := range files {
 		rel, err := filepath.Rel(root, f.Path)

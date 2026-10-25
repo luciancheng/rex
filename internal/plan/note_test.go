@@ -423,17 +423,8 @@ func TestFilesWalk(t *testing.T) {
 		}
 		return strings.Join(out, " ")
 	}
-	if got, more := Files(root, Limit{}); names(got) != ".hidden/d.rex.json A.REX.JSON a/b/c/d/deep.rex.json a/c.rex.json b.rex.json" || more {
-		t.Fatalf("unbounded: %s %v", names(got), more)
-	}
-	if got, _ := Files(root, Limit{Depth: 4, Hidden: true}); names(got) != "A.REX.JSON a/c.rex.json b.rex.json" {
-		t.Fatalf("bounded: %s", names(got))
-	}
-	if got, more := Files(root, Limit{Files: 2}); names(got) != ".hidden/d.rex.json A.REX.JSON" || !more {
-		t.Fatalf("capped: %s %v", names(got), more)
-	}
-	if got, more := Files(root, Limit{Files: 5}); len(got) != 5 || more {
-		t.Fatalf("exactly at the cap is not more: %d %v", len(got), more)
+	if got := Files(root); names(got) != ".hidden/d.rex.json A.REX.JSON a/b/c/d/deep.rex.json a/c.rex.json b.rex.json" {
+		t.Fatalf("%s", names(got))
 	}
 }
 

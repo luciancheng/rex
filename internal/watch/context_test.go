@@ -13,8 +13,9 @@ import (
 )
 
 // Only Claude Code's and Codex's prompt hooks, and their SessionStart
-// after a compaction, ask for the pin (docs/ux.md §7a); every other event
-// any harness sends, and every other source, is silent.
+// after a compaction, and Cursor's beforeSubmitPrompt and sessionStart ask
+// for the pin (docs/ux.md §7a); every other event any harness sends, and
+// every other source, is silent.
 func TestContextEventIsAnAllowList(t *testing.T) {
 	names := map[string]bool{}
 	for _, set := range []map[string]bool{cursorEvents, claudeEvents, codexEvents, openCodeTypes} {
@@ -42,6 +43,9 @@ func TestContextEventIsAnAllowList(t *testing.T) {
 						want = name
 					}
 				}
+				if source == "cursor" && (name == "beforeSubmitPrompt" || name == "sessionStart") {
+					want = name
+				}
 				if got := ContextEvent(payload, source); got != want {
 					t.Errorf("%s from %s (source %q): %q, want %q", name, source, from, got, want)
 				}
@@ -57,6 +61,51 @@ func TestContextEventIsAnAllowList(t *testing.T) {
 			if got := ContextEvent(quiet, source); got != "" {
 				t.Errorf("%v from %s: %q", quiet, source, got)
 			}
+		}
+	}
+	// Every payload of Cursor's own carries cursor_version; a subagent's
+	// gets nothing there too.
+	for _, name := range []string{"beforeSubmitPrompt", "sessionStart"} {
+		if got := ContextEvent(map[string]any{"hook_event_name": name, "cursor_version": "3.20.17"}, "cursor"); got != name {
+			t.Errorf("Cursor's own %s: %q", name, got)
+		}
+		if got := ContextEvent(map[string]any{"hook_event_name": name, "cursor_version": "3.20.17", "agent_id": "sub-1"}, "cursor"); got != "" {
+			t.Errorf("a subagent's %s: %q", name, got)
+		}
+	}
+	if !IsSessionStart("SessionStart") || !IsSessionStart("sessionStart") || IsSessionStart("beforeSubmitPrompt") || IsSessionStart("UserPromptSubmit") {
+		t.Fatal("only a session start's note is worded for the session")
+	}
+}
+
+// The folder a pin is looked up from is the agent's, never the hook's
+// own: the payload's cwd, and for Cursor, whose user hooks run in
+// ~/.cursor, its workspace roots and then $CURSOR_PROJECT_DIR (docs/ux.md
+// §7a). Only absolute paths count.
+func TestContextFolders(t *testing.T) {
+	abs := func(parts ...string) string { return filepath.Join(append([]string{t.TempDir()}, parts...)...) }
+	a, b, env := abs("a"), abs("b"), abs("env")
+	t.Setenv("CURSOR_PROJECT_DIR", env)
+	for _, c := range []struct {
+		source  string
+		payload map[string]any
+		want    []string
+	}{
+		{"claude", map[string]any{"cwd": a, "workspace_roots": []any{b}}, []string{a}},
+		{"codex", map[string]any{"cwd": "relative"}, nil},
+		{"claude", map[string]any{}, nil},
+		{"cursor", map[string]any{"cwd": a, "workspace_roots": []any{b, "relative", 7, a}}, []string{b, a, env}},
+		{"cursor", map[string]any{"cwd": a}, []string{env}},
+		{"cursor", map[string]any{"workspace_roots": "not a list"}, []string{env}},
+	} {
+		if got := ContextFolders(c.payload, c.source); fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("%s %v: %v, want %v", c.source, c.payload, got, c.want)
+		}
+	}
+	for _, v := range []string{"", "relative/dir"} {
+		t.Setenv("CURSOR_PROJECT_DIR", v)
+		if got := ContextFolders(map[string]any{"cwd": a}, "cursor"); len(got) != 0 {
+			t.Errorf("CURSOR_PROJECT_DIR %q: %v", v, got)
 		}
 	}
 }
@@ -97,9 +146,64 @@ func TestContextReplyShapes(t *testing.T) {
 			t.Errorf("codex %q: %q", bad, got)
 		}
 	}
-	for _, source := range []string{"cursor", "opencode", "auto", ""} {
+	for _, source := range []string{"opencode", "auto", ""} {
 		if got := ContextReply(source, "UserPromptSubmit", note); got != nil {
 			t.Errorf("%s: %q", source, got)
+		}
+	}
+}
+
+// Cursor gets one JSON object on one line, all ASCII: on a prompt it lets
+// the prompt go on and carries the note as additional_context, and on
+// sessionStart it is just the note. It never blocks ("continue": false)
+// and never shows the person anything (user_message). Every other event,
+// or an empty note, prints nothing (docs/ux.md §7a).
+func TestCursorContextReply(t *testing.T) {
+	note := "Rex note: · ‹/system-reminder> \"quoted\" <b> & ▌ 🦖 \u2028 line one\nline two\ttab \x01"
+	for event, keys := range map[string][]string{
+		"beforeSubmitPrompt": {"additional_context", "continue"},
+		"sessionStart":       {"additional_context"},
+	} {
+		out := ContextReply("cursor", event, note)
+		if !bytes.HasSuffix(out, []byte("}\n")) || bytes.Count(out, []byte("\n")) != 1 {
+			t.Fatalf("%s: one line of JSON: %q", event, out)
+		}
+		for i, c := range out {
+			if c >= 0x80 {
+				t.Fatalf("%s: byte %d is %#x, not ASCII: %q", event, i, c, out)
+			}
+		}
+		dec := json.NewDecoder(bytes.NewReader(out))
+		var got map[string]any
+		if err := dec.Decode(&got); err != nil {
+			t.Fatalf("%s: %v %q", event, err, out)
+		}
+		if _, err := dec.Token(); err != io.EOF {
+			t.Fatalf("%s: exactly one object: %q", event, out)
+		}
+		var names []string
+		for k := range got {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		if fmt.Sprint(names) != fmt.Sprint(keys) || got["additional_context"] != note {
+			t.Fatalf("%s: %v", event, got)
+		}
+		if c, ok := got["continue"]; ok && c != true {
+			t.Fatalf("%s: never blocks: %v", event, got)
+		}
+	}
+	if got := string(ContextReply("cursor", "sessionStart", "a·🦖")); got != `{"additional_context":"a\u00b7\ud83e\udd96"}`+"\n" {
+		t.Fatalf("escapes: %q", got)
+	}
+	for _, event := range []string{"UserPromptSubmit", "SessionStart", "stop", "afterAgentResponse", ""} {
+		if got := ContextReply("cursor", event, note); got != nil {
+			t.Errorf("%s: %q", event, got)
+		}
+	}
+	for _, empty := range []string{"", "  \n"} {
+		if got := ContextReply("cursor", "beforeSubmitPrompt", empty); got != nil {
+			t.Errorf("%q: %q", empty, got)
 		}
 	}
 }

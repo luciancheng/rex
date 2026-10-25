@@ -3,6 +3,7 @@ package watch
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -443,5 +444,231 @@ func TestInstallAutoReturnsEachFailure(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "broken") {
 		t.Fatal("the error goes back to the caller (stderr), not to stdout")
+	}
+}
+
+// cursorInstall runs Rex's Cursor installer, or its uninstaller, on the
+// hooks.json at path with a fixed command, as `rex ingest --install
+// cursor` and `--uninstall cursor` do.
+func cursorInstall(t *testing.T, path string, install bool) []byte {
+	t.Helper()
+	cmd := "'/opt/rex/bin/rex' ingest --source cursor"
+	edit := func(d *jsonedit.Doc) ([]byte, error) { return mergeCursorHooks(d, cmd) }
+	if !install {
+		edit = func(d *jsonedit.Doc) ([]byte, error) { return removeCursorHooks(d, cmd) }
+	}
+	if _, err := UpdateJSONFile(path, []byte("{\n  \"version\": 1,\n  \"hooks\": {}\n}\n"), edit); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// A fresh hooks.json, byte for byte: every event Rex registers, sessionStart
+// (the pin when a chat starts, docs/ux.md §7a) among them.
+func TestCursorFreshInstallGolden(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	entry := `[
+      {
+        "command": "'/opt/rex/bin/rex' ingest --source cursor",
+        "timeout": 20
+      }
+    ]`
+	want := "{\n  \"version\": 1,\n  \"hooks\": {\n" +
+		"    \"afterAgentResponse\": " + entry + ",\n" +
+		"    \"afterAgentThought\": " + entry + ",\n" +
+		"    \"afterFileEdit\": " + entry + ",\n" +
+		"    \"beforeSubmitPrompt\": " + entry + ",\n" +
+		"    \"postToolUse\": " + entry + ",\n" +
+		"    \"postToolUseFailure\": " + entry + ",\n" +
+		"    \"preToolUse\": " + entry + ",\n" +
+		"    \"sessionStart\": " + entry + ",\n" +
+		"    \"stop\": " + entry + "\n" +
+		"  }\n}\n"
+	if got := cursorInstall(t, path, true); string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// An install from before sessionStart gains just that entry when
+// `rex ingest --install cursor` runs again: every other byte stays, the
+// old file is the .bak, and a third run changes nothing.
+func TestCursorReinstallAddsSessionStart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hooks.json")
+	var old []string
+	for _, name := range CursorHookEvents {
+		if name != "sessionStart" {
+			old = append(old, name)
+		}
+	}
+	if len(old) != len(CursorHookEvents)-1 {
+		t.Fatalf("sessionStart is registered: %v", CursorHookEvents)
+	}
+	var b strings.Builder
+	b.WriteString("{\n  \"version\": 1,\n  \"hooks\": {\n")
+	for i, name := range old {
+		fmt.Fprintf(&b, "    %q: [{\"command\": \"'/opt/rex/bin/rex' ingest --source cursor\", \"timeout\": 20}]", name)
+		if name == "stop" {
+			b.WriteString(`, "mine": [{"command": "./audit.sh"}]`)
+		}
+		if i < len(old)-1 {
+			b.WriteString(",")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("  }\n}\n")
+	before := b.String()
+	os.WriteFile(path, []byte(before), 0o644)
+	got := cursorInstall(t, path, true)
+	want := strings.Replace(before, "]\n  }\n}\n", "],\n    \"sessionStart\": [\n      {\n        \"command\": \"'/opt/rex/bin/rex' ingest --source cursor\",\n        \"timeout\": 20\n      }\n    ]\n  }\n}\n", 1)
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if bak, _ := os.ReadFile(path + ".bak"); string(bak) != before {
+		t.Fatalf(".bak is the file before:\n%s", bak)
+	}
+	if again := cursorInstall(t, path, true); !bytes.Equal(again, got) {
+		t.Fatalf("a third install changed it:\n%s", again)
+	}
+}
+
+// Installing into a user's own hooks.json, LF or CRLF, keeps their hooks
+// and every byte Rex doesn't own, line endings included, and uninstalling
+// gives back exactly the file they had. (A list Rex's entry leaves empty
+// goes with it, even one they had left empty: Rex can't tell it from one
+// it made, and an empty list runs nothing.)
+func TestCursorInstallUninstallRoundTrip(t *testing.T) {
+	theirs := `{
+  "version": 1,
+  "zzz": {"keep": "me"},
+  "hooks": {
+    "sessionStart": [
+      {"command": "./warm-cache.sh", "timeout": 3}
+    ],
+    "beforeSubmitPrompt": [{"command": "./guard.sh"}],
+    "afterShellExecution": [{"command": "./log.sh"}]
+  }
+}
+`
+	for name, src := range map[string]string{"lf": theirs, "crlf": strings.ReplaceAll(theirs, "\n", "\r\n")} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "hooks.json")
+			os.WriteFile(path, []byte(src), 0o644)
+			got := cursorInstall(t, path, true)
+			for _, keep := range []string{`"zzz": {"keep": "me"}`, `{"command": "./warm-cache.sh", "timeout": 3}`, `, {"command": "./guard.sh"}]`, `"afterShellExecution": [{"command": "./log.sh"}]`} {
+				if !bytes.Contains(got, []byte(keep)) {
+					t.Fatalf("lost %s:\n%s", keep, got)
+				}
+			}
+			if name == "crlf" && bytes.Count(got, []byte("\n")) != bytes.Count(got, []byte("\r\n")) {
+				t.Fatalf("a bare LF in a CRLF file:\n%q", got)
+			}
+			hooks := readHooks(t, path)["hooks"].(map[string]any)
+			for _, event := range CursorHookEvents {
+				list, _ := hooks[event].([]any)
+				var rex int
+				for _, e := range list {
+					if strings.Contains(fmt.Sprint(e.(map[string]any)["command"]), "ingest --source cursor") {
+						rex++
+					}
+				}
+				if rex != 1 {
+					t.Fatalf("%s: %d rex entries: %v", event, rex, list)
+				}
+			}
+			for _, event := range []string{"sessionStart", "beforeSubmitPrompt"} {
+				if list := hooks[event].([]any); len(list) != 2 || list[0].(map[string]any)["command"] != "'/opt/rex/bin/rex' ingest --source cursor" {
+					t.Fatalf("Rex's %s entry comes first, theirs after it: %v", event, list)
+				}
+			}
+			if bak, _ := os.ReadFile(path + ".bak"); string(bak) != src {
+				t.Fatal("the .bak is their file")
+			}
+			if back := cursorInstall(t, path, false); string(back) != src {
+				t.Fatalf("uninstall gave back:\n%q\nwant:\n%q", back, src)
+			}
+		})
+	}
+}
+
+// Rex's sessionStart and beforeSubmitPrompt entries go first, so the
+// person's own hooks there answer after Rex's (Cursor keeps the last
+// answer for what it doesn't merge, docs/ux.md §7a): an install moves an
+// older entry there, keeping fields they added, and every other event's
+// entry stays where it is or goes last.
+func TestCursorInstallPutsThePinHooksFirst(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	src := `{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {"command": "./scan.sh"},
+      {"command": "'/opt/rex/bin/rex' ingest --source cursor", "timeout": 20, "matcher": "x"}
+    ],
+    "stop": [{"command": "./audit.sh"}]
+  }
+}
+`
+	os.WriteFile(path, []byte(src), 0o644)
+	got := cursorInstall(t, path, true)
+	moved := `"beforeSubmitPrompt": [
+      {
+        "command": "'/opt/rex/bin/rex' ingest --source cursor",
+        "matcher": "x",
+        "timeout": 20
+      },
+      {"command": "./scan.sh"}
+    ],`
+	if !bytes.Contains(got, []byte(moved)) {
+		t.Fatalf("Rex's prompt entry first, its matcher kept:\n%s", got)
+	}
+	hooks := readHooks(t, path)["hooks"].(map[string]any)
+	if stop := hooks["stop"].([]any); len(stop) != 2 || stop[0].(map[string]any)["command"] != "./audit.sh" {
+		t.Fatalf("stop keeps theirs first: %v", stop)
+	}
+	if start := hooks["sessionStart"].([]any); len(start) != 1 {
+		t.Fatalf("sessionStart: %v", start)
+	}
+	if again := cursorInstall(t, path, true); !bytes.Equal(again, got) {
+		t.Fatalf("a second install changed it:\n%s", again)
+	}
+	back := cursorInstall(t, path, false)
+	if !bytes.Contains(back, []byte("\"beforeSubmitPrompt\": [\n      {\"command\": \"./scan.sh\"}\n    ],")) || bytes.Contains(back, []byte("rex")) {
+		t.Fatalf("uninstall leaves theirs as it was:\n%s", back)
+	}
+}
+
+// A hooks.json that doesn't parse, or whose sessionStart isn't a list, is
+// refused and left as it was, with no .bak.
+func TestCursorInstallRefusesWhatItCantSplice(t *testing.T) {
+	for _, src := range []string{
+		"{\"version\": 1, \"hooks\": {\"stop\": [],}}",
+		"{\"version\": 1, \"hooks\": {\"sessionStart\": {\"command\": \"./mine.sh\"}}}\n",
+	} {
+		path := filepath.Join(t.TempDir(), "hooks.json")
+		os.WriteFile(path, []byte(src), 0o644)
+		cmd := "'/opt/rex/bin/rex' ingest --source cursor"
+		if _, err := UpdateJSONFile(path, nil, func(d *jsonedit.Doc) ([]byte, error) { return mergeCursorHooks(d, cmd) }); err == nil {
+			t.Fatalf("%s: no error", src)
+		}
+		if got, _ := os.ReadFile(path); string(got) != src {
+			t.Fatalf("changed: %s", got)
+		}
+		if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
+			t.Fatal("no .bak when nothing was written")
+		}
+	}
+}
+
+// Installing says the hook hands Cursor's agent the pin, and how.
+func TestCursorInstallSaysTheHookAddsThePin(t *testing.T) {
+	cursorHome(t)
+	var out bytes.Buffer
+	if err := InstallHarness("cursor", &out); err != nil || !strings.Contains(out.String(), "cursor: when a chat starts, and before each prompt on Cursor builds that take it, the hook also adds the task pinned in this repo's Rex plan") {
+		t.Fatalf("%v %q", err, out.String())
 	}
 }

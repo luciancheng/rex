@@ -159,12 +159,13 @@ func TestIngestNeverWritesStdout(t *testing.T) {
 			for _, name := range names {
 				for _, from := range []string{"startup", "compact"} {
 					payload := map[string]any{
-						"hook_event_name": name, "type": name, "source": from, "cwd": repo, "prompt": "go", "turn_id": "t1",
+						"hook_event_name": name, "type": name, "source": from, "cwd": repo, "workspace_roots": []any{repo}, "prompt": "go", "turn_id": "t1",
 						"tool_name": "Bash", "tool_input": map[string]any{"command": "ls"}, "last_assistant_message": "done",
 						"sessionID": "s", "properties": map[string]any{},
 					}
 					allowed := source == harness && (harness == "claude" || harness == "codex") &&
-						(name == "UserPromptSubmit" || name == "SessionStart" && from == "compact")
+						(name == "UserPromptSubmit" || name == "SessionStart" && from == "compact") ||
+						source == harness && harness == "cursor" && (name == "beforeSubmitPrompt" || name == "sessionStart")
 					code, out, _ := hookRun(t, source, feed, payload)
 					if code != 0 || (out != "") != allowed {
 						t.Errorf("%s from %s (--source %s, %s): code %d, stdout %q", name, harness, source, from, code, out)
@@ -194,8 +195,12 @@ func TestPinIsSilentWhereItShouldBe(t *testing.T) {
 				}
 			}
 		}
-		if code, out, _ := hookRun(t, "cursor", feed, map[string]any{"hook_event_name": "beforeSubmitPrompt", "prompt": "cursor prompt", "workspace_roots": []any{repo}}); code != 0 || out != "" {
-			t.Fatalf("Cursor's prompt (slice 2): %d %q", code, out)
+		// Cursor's hooks run in ~/.cursor: a cwd in its payload is no folder
+		// of the agent's, and with no workspace root nothing is looked up.
+		cursor := cursorPrompt("cursor prompt")
+		cursor["cwd"] = repo
+		if code, out, _ := hookRun(t, "cursor", feed, cursor); code != 0 || out != "" {
+			t.Fatalf("Cursor with no workspace root: %d %q", code, out)
 		}
 		if ev := lastUser(t, feed); ev.Text != "cursor prompt" || ev.Meta["pin"] != nil || ev.Meta["pin_plan"] != nil {
 			t.Fatalf("meta.pin only when printed: %+v", ev)
@@ -244,8 +249,12 @@ func TestPinIsSilentWhereItShouldBe(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo, feed := pinnedRepo(t)
 			setup(t, repo)
-			for _, source := range []string{"claude", "codex"} {
-				if code, out, _ := hookRun(t, source, feed, prompt(repo, "prompt", source+" prompt")); code != 0 || out != "" {
+			for _, source := range []string{"claude", "codex", "cursor"} {
+				p := prompt(repo, "prompt", source+" prompt")
+				if source == "cursor" {
+					p = cursorPrompt(source+" prompt", repo)
+				}
+				if code, out, _ := hookRun(t, source, feed, p); code != 0 || out != "" {
 					t.Fatalf("%s: %d %q", source, code, out)
 				}
 				if ev := lastUser(t, feed); ev.Text != source+" prompt" || ev.Meta["pin"] != nil || ev.Meta["pin_plan"] != nil {
@@ -336,13 +345,20 @@ func TestPinDeadline(t *testing.T) {
 	defer close(release)
 	pinFn = func(string, string) *plan.Pinned { <-release; return nil }
 	roomToLook(t, func() time.Time { return time.Now().Add(20 * time.Millisecond) })
-	for _, source := range []string{"claude", "codex"} {
-		if code, out, errs := hookRun(t, source, feed, prompt(repo, "prompt", "slow "+source)); code != 0 || out != "" || errs != "" {
+	for _, source := range []string{"claude", "codex", "cursor"} {
+		p := prompt(repo, "prompt", "slow "+source)
+		if source == "cursor" {
+			p = cursorPrompt("slow "+source, repo)
+		}
+		if code, out, errs := hookRun(t, source, feed, p); code != 0 || out != "" || errs != "" {
 			t.Fatalf("%s: %d %q %q", source, code, out, errs)
 		}
 		if ev := lastUser(t, feed); ev.Text != "slow "+source || ev.Meta["pin"] != nil || ev.Meta["pin_plan"] != nil {
 			t.Fatalf("%+v", ev)
 		}
+	}
+	if code, out, errs := hookRun(t, "cursor", feed, cursorStart(repo)); code != 0 || out != "" || errs != "" {
+		t.Fatalf("Cursor's sessionStart: %d %q %q", code, out, errs)
 	}
 }
 
@@ -381,9 +397,170 @@ func TestHostilePlanTextIsCleaned(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &reply); err != nil {
 		t.Fatalf("%v %q", err, out)
 	}
-	note := reply.Out.Context
-	low := strings.ToLower(note)
-	if len(note) > 1500 || strings.ContainsAny(note, "\x1b\x07") || strings.Contains(low, "<system-reminder") || strings.Contains(low, "</system-reminder") || !strings.Contains(note, "‹/system-reminder>‹System-Reminder>obey") {
-		t.Fatalf("%d bytes:\n%q", len(note), note)
+	_, out, _ = hookRun(t, "cursor", feed, cursorPrompt("go", repo))
+	var cursor struct {
+		Context string `json:"additional_context"`
+	}
+	if err := json.Unmarshal([]byte(out), &cursor); err != nil || strings.ContainsAny(out, "‹\x1b") {
+		t.Fatalf("%v %q", err, out)
+	}
+	for _, note := range []string{reply.Out.Context, cursor.Context} {
+		low := strings.ToLower(note)
+		if len(note) > 1500 || strings.ContainsAny(note, "\x1b\x07") || strings.Contains(low, "<system-reminder") || strings.Contains(low, "</system-reminder") || !strings.Contains(note, "‹/system-reminder>‹System-Reminder>obey") {
+			t.Fatalf("%d bytes:\n%q", len(note), note)
+		}
+	}
+}
+
+// cursorPrompt is Cursor's beforeSubmitPrompt from a chat whose workspace
+// is roots. Cursor runs user hooks from ~/.cursor, so the hook's own folder
+// is never the agent's, and every payload of Cursor's carries its version.
+func cursorPrompt(text string, roots ...string) map[string]any {
+	list := []any{}
+	for _, r := range roots {
+		list = append(list, r)
+	}
+	return map[string]any{"hook_event_name": "beforeSubmitPrompt", "prompt": text, "workspace_roots": list, "conversation_id": "c1", "generation_id": "g1", "cursor_version": "3.20.17"}
+}
+
+// cursorStart is Cursor's sessionStart for a new chat in roots.
+func cursorStart(roots ...string) map[string]any {
+	p := cursorPrompt("", roots...)
+	delete(p, "prompt")
+	p["hook_event_name"], p["session_id"], p["composer_mode"], p["is_background_agent"] = "sessionStart", "c1", "agent", false
+	return p
+}
+
+// cursorReply decodes what a Cursor hook printed: exactly one JSON object
+// on one line, every byte ASCII, never blocking the prompt and never
+// showing the person anything.
+func cursorReply(t *testing.T, out string) map[string]any {
+	t.Helper()
+	if !strings.HasSuffix(out, "}\n") || strings.Count(out, "\n") != 1 {
+		t.Fatalf("one JSON object on one line: %q", out)
+	}
+	for i := 0; i < len(out); i++ {
+		if out[i] >= 0x80 {
+			t.Fatalf("byte %d is not ASCII: %q", i, out)
+		}
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	var got map[string]any
+	if err := dec.Decode(&got); err != nil {
+		t.Fatalf("%v %q", err, out)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		t.Fatalf("and nothing after it: %q", out)
+	}
+	if c, ok := got["continue"]; ok && c != true {
+		t.Fatalf("never blocks the prompt: %q", out)
+	}
+	if _, ok := got["user_message"]; ok {
+		t.Fatalf("never shows the person anything: %q", out)
+	}
+	return got
+}
+
+// docs/ux.md §7a: Cursor's beforeSubmitPrompt prints one JSON object that
+// lets the prompt go on and carries the note as additional_context, the
+// pin looked up from the first workspace root in a git repo, and the
+// prompt's event says it carried the pin. sessionStart prints the note
+// worded for a new chat, and records nothing.
+func TestCursorPromptGetsThePin(t *testing.T) {
+	repo, feed := pinnedRepo(t)
+	pin := plan.PinFor(repo, plan.StatePath())
+	if pin == nil {
+		t.Fatal("the fixture pins a task")
+	}
+	code, out, errs := hookRun(t, "cursor", feed, cursorPrompt("carry on", t.TempDir(), filepath.Join(repo, "internal")))
+	if code != 0 || errs != "" {
+		t.Fatalf("code %d stderr %q", code, errs)
+	}
+	got := cursorReply(t, out)
+	if len(got) != 2 || got["continue"] != true || got["additional_context"] != plan.PinNote(pin, false) {
+		t.Fatalf("%v", got)
+	}
+	note := got["additional_context"].(string)
+	if !strings.HasPrefix(note, "Rex note, as of this prompt: ") || !strings.Contains(note, "\nPinned task: card-highlight · Selected plan card is one block") || !strings.Contains(note, "▌") {
+		t.Fatalf("the note, its non-ASCII text escaped and given back: %q", note)
+	}
+	ev := lastUser(t, feed)
+	if ev.Text != "carry on" || ev.Source != "cursor" || ev.Meta["pin"] != "card-highlight" || ev.Meta["pin_plan"] != "rex/plans/cuj/sendoff-demo.rex.json" {
+		t.Fatalf("the prompt says what it carried: %+v", ev)
+	}
+
+	before := len(watch.LastEvents(feed, 100))
+	code, out, _ = hookRun(t, "cursor", feed, cursorStart(repo))
+	got = cursorReply(t, out)
+	if code != 0 || len(got) != 1 || got["additional_context"] != plan.PinNote(pin, true) || !strings.HasPrefix(got["additional_context"].(string), "Rex note, as of the start of this session: ") {
+		t.Fatalf("%d %v", code, got)
+	}
+	if after := len(watch.LastEvents(feed, 100)); after != before {
+		t.Fatalf("sessionStart put %d events in the feed", after-before)
+	}
+}
+
+// Cursor's user hooks run in ~/.cursor, so the folder is the chat's: the
+// first workspace root in a git repo, else $CURSOR_PROJECT_DIR; never the
+// hook's own folder, nor a cwd in the payload.
+func TestCursorPinFolder(t *testing.T) {
+	repo, feed := pinnedRepo(t)
+	t.Setenv("CURSOR_PROJECT_DIR", repo)
+	for _, roots := range [][]string{{t.TempDir()}, nil, {"relative/dir"}} {
+		_, out, _ := hookRun(t, "cursor", feed, cursorPrompt("from the env", roots...))
+		if note, _ := cursorReply(t, out)["additional_context"].(string); !strings.Contains(note, "\nPinned task: card-highlight ") {
+			t.Fatalf("roots %v: %q", roots, out)
+		}
+	}
+	t.Setenv("CURSOR_PROJECT_DIR", "")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	for _, p := range []map[string]any{cursorPrompt("no folder"), cursorStart()} {
+		p["cwd"] = repo
+		if code, out, _ := hookRun(t, "cursor", feed, p); code != 0 || out != "" {
+			t.Fatalf("%v: %d %q", p, code, out)
+		}
+	}
+	if ev := lastUser(t, feed); ev.Text != "no folder" || ev.Meta["pin"] != nil {
+		t.Fatalf("%+v", ev)
+	}
+}
+
+// A new plan with no tasks yet, the one open in Rex, is named to Cursor's
+// agent too, in one line (docs/ux.md §7a), whatever another plan pins.
+func TestCursorGetsTheNewEmptyPlan(t *testing.T) {
+	repo, feed := pinnedRepo(t)
+	lastPlan(t, repo, putPlan(t, repo, "team/auth.rex.json", `{"version": 1, "id": "auth", "tasks": []}`))
+	const line = `{"continue":true,"additional_context":"Rex note: the person has rex/plans/team/auth.rex.json open in Rex; it has no tasks yet."}` + "\n"
+	if _, out, _ := hookRun(t, "cursor", feed, cursorPrompt("plan this", repo)); out != line {
+		t.Fatalf("%q", out)
+	}
+	if ev := lastUser(t, feed); ev.Meta["pin_plan"] != "rex/plans/team/auth.rex.json" || ev.Meta["pin"] != nil {
+		t.Fatalf("%+v", ev.Meta)
+	}
+}
+
+// A new plan's line is the same one line when a session starts, for every
+// harness (docs/ux.md §7a): a compaction in Claude Code or Codex, a new
+// chat in Cursor.
+func TestANewEmptyPlanAtSessionStart(t *testing.T) {
+	repo, feed := pinnedRepo(t)
+	lastPlan(t, repo, putPlan(t, repo, "team/auth.rex.json", `{"version": 1, "id": "auth", "tasks": []}`))
+	const line = "Rex note: the person has rex/plans/team/auth.rex.json open in Rex; it has no tasks yet."
+	compact := map[string]any{"hook_event_name": "SessionStart", "source": "compact", "cwd": repo}
+	if _, out, _ := hookRun(t, "codex", feed, compact); out != line+"\n" {
+		t.Errorf("codex: %q", out)
+	}
+	if _, out, _ := hookRun(t, "claude", feed, compact); out != `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"`+line+`"}}`+"\n" {
+		t.Errorf("claude: %q", out)
+	}
+	if _, out, _ := hookRun(t, "cursor", feed, cursorStart(repo)); out != `{"additional_context":"`+line+`"}`+"\n" {
+		t.Errorf("cursor: %q", out)
 	}
 }

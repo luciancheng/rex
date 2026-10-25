@@ -257,3 +257,30 @@ func TestArrayEdits(t *testing.T) {
 		t.Fatalf("%s", out)
 	}
 }
+
+// Prepend lays the new first element out like the rest, and removing it
+// gives back the document byte for byte.
+func TestPrepend(t *testing.T) {
+	for src, want := range map[string]string{
+		"{\n  \"a\": [\n    {\"x\": 1}\n  ]\n}":         "{\n  \"a\": [\n    {\n      \"x\": 0\n    },\n    {\"x\": 1}\n  ]\n}",
+		"{\r\n  \"a\": [\r\n    {\"x\": 1}\r\n  ]\r\n}": "{\r\n  \"a\": [\r\n    {\r\n      \"x\": 0\r\n    },\r\n    {\"x\": 1}\r\n  ]\r\n}",
+		`{"a": [{"x": 1}, {"x": 2}]}`:                   `{"a": [{"x":0}, {"x": 1}, {"x": 2}]}`,
+		`{"a": []}`:                                     `{"a": [{"x":0}]}`,
+	} {
+		d := mustParse(t, src)
+		out, err := d.Prepend(d.Root().Member("a"), map[string]int{"x": 0})
+		if err != nil || string(out) != want {
+			t.Fatalf("%q: %v\n%q", src, err, out)
+		}
+		if src == `{"a": []}` {
+			continue
+		}
+		back := mustParse(t, string(out))
+		if out, _ := back.RemoveElem(back.Root().Member("a"), 0); string(out) != src {
+			t.Fatalf("remove it again: %q, want %q", out, src)
+		}
+	}
+	if _, err := mustParse(t, `{"a": 1}`).Prepend(nil, 1); err == nil {
+		t.Fatal("not an array")
+	}
+}

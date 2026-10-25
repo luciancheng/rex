@@ -472,6 +472,28 @@ func TestFindRepoStopsWithoutGit(t *testing.T) {
 	}
 }
 
+// The pin's folder is the first of the agent's folders in a git repo,
+// else the first of them (docs/ux.md §7a).
+func TestPinFolder(t *testing.T) {
+	plain, other := t.TempDir(), t.TempDir()
+	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	sub := filepath.Join(repo, "internal")
+	for _, c := range []struct {
+		dirs []string
+		want string
+	}{
+		{nil, ""},
+		{[]string{plain, other}, plain},
+		{[]string{plain, sub, repo}, sub},
+		{[]string{repo, plain}, repo},
+	} {
+		if got := PinFolder(c.dirs); got != c.want {
+			t.Errorf("%v: %q, want %q", c.dirs, got, c.want)
+		}
+	}
+}
+
 // The done task the pin builds on, one rule for the card, the plan list
 // and the note: its last done leaf dependency, else the plan's last done
 // leaf.

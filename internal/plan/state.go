@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"time"
 )
 
@@ -49,6 +50,43 @@ func LoadState(path string) State {
 		s.Repos[k] = v
 	}
 	return s
+}
+
+// Last is the plan last opened in repo, as the state names it, or "". A
+// key that spells the same folder another way (a symlink, another case)
+// counts, and of those the newest wins: an agent's hook may name the repo
+// by its real path while Rex was started through a link. The path is not
+// checked: callers put it through Jail.
+func (s State) Last(repo string) string {
+	keys := make([]string, 0, len(s.Repos))
+	for k := range s.Repos {
+		if k != repo {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	if _, ok := s.Repos[repo]; ok {
+		keys = append([]string{repo}, keys...) // a tie goes to the exact key
+	}
+	info, err := os.Stat(repo)
+	var last *RepoState
+	for _, k := range keys {
+		if k != repo {
+			if err != nil {
+				break
+			}
+			if i, err := os.Stat(k); err != nil || !os.SameFile(info, i) {
+				continue
+			}
+		}
+		if r := s.Repos[k]; last == nil || r.Opened > last.Opened {
+			last = &r
+		}
+	}
+	if last == nil {
+		return ""
+	}
+	return last.Plan
 }
 
 // UpdateState re-reads path, applies mutate, prunes repos that are gone or

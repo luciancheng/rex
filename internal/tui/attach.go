@@ -3,8 +3,6 @@ package tui
 import (
 	"fmt"
 	"os"
-	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,29 +24,10 @@ func completedEdit(ev watch.Event) bool {
 	return ev.Kind == "result" && watch.IsFileEditEvent(ev) && (!has || ok)
 }
 
-// planFile is p as one of this repo's plan files, or "": an existing
-// regular *.rex.json under rex/plans once symlinks are resolved, so a link
-// can't lead out. A relative p is taken from cwd. Scope.Rel cleans p, so a
-// ".." is judged by where it leads.
+// planFile is p as one of this repo's plan files, or "" (plan.Jail): a
+// relative p is taken from cwd, and a link can't lead out of rex/plans.
 func (a *app) planFile(p, cwd string) string {
-	if p == "" {
-		return ""
-	}
-	if !filepath.IsAbs(p) {
-		if !filepath.IsAbs(cwd) {
-			return ""
-		}
-		p = filepath.Join(cwd, p)
-	}
-	rel, in := a.scope.Rel(p)
-	if !in || !strings.HasPrefix(rel, "rex/plans/") || !IsPlanFile(path.Base(rel)) {
-		return ""
-	}
-	full := filepath.Join(a.plans.Repo, filepath.FromSlash(rel))
-	if info, err := os.Stat(full); err != nil || !info.Mode().IsRegular() {
-		return ""
-	}
-	return full
+	return plan.Jail(a.scope, a.plans.Repo, p, cwd)
 }
 
 // samePlan reports whether p and q are the same plan file. It goes by the
@@ -310,7 +289,7 @@ func (a *app) newestPlan() string {
 // repo, else the newest plan, else the wait screen. Either plan is
 // followed.
 func (a *app) land() {
-	p := a.planFile(plan.LoadState(a.statePath).Repos[a.plans.Repo].Plan, "")
+	p := a.planFile(plan.LoadState(a.statePath).Last(a.plans.Repo), "")
 	if p == "" {
 		p = a.newestPlan()
 	}

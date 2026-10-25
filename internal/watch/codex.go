@@ -88,6 +88,7 @@ func installCodex(path string, out io.Writer) error {
 		fmt.Fprintf(out, "codex hooks already installed at %s\n", path)
 	}
 	fmt.Fprintln(out, "codex: open Codex, run /hooks and trust the rex hooks; Codex skips new hooks until you do")
+	fmt.Fprintln(out, "codex: before each prompt the hook also adds the task pinned in this repo's Rex plan, if one is, to the agent's context")
 	if runtimeGOOS != "windows" {
 		fmt.Fprintln(out, "codex: hooks run in your login shell ($SHELL -lc); anything your shell profile prints is added to the agent's context")
 	}

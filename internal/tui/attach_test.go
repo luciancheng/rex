@@ -67,7 +67,7 @@ func hook(t *testing.T, source string, payload map[string]any) []watch.Event {
 		t.Fatal(err)
 	}
 	feed := filepath.Join(t.TempDir(), "session.jsonl")
-	if err := watch.RunIngest(strings.NewReader(string(data)), source, feed); err != nil {
+	if err := watch.Record(watch.PayloadsFromRaw(string(data)), source, feed, nil); err != nil {
 		t.Fatal(err)
 	}
 	return watch.LastEvents(feed, 10)

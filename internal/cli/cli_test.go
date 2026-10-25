@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/luciancheng/rex/internal/mascot"
@@ -275,8 +277,8 @@ func TestIngestFailsOpenOnBadFlagsAndSource(t *testing.T) {
 }
 
 func TestIngestSwallowsACrash(t *testing.T) {
-	defer func(old func(io.Reader, string, string) error) { ingestFn = old }(ingestFn)
-	ingestFn = func(io.Reader, string, string) error { panic("boom") }
+	defer func(old func(io.Reader, string, string) ([]byte, error)) { ingestFn = old }(ingestFn)
+	ingestFn = func(io.Reader, string, string) ([]byte, error) { panic("boom") }
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"ingest", "--source", "cursor"}, strings.NewReader("{}"), &stdout, &stderr); code != 0 || stdout.Len() != 0 {
 		t.Fatalf("a panic must still exit 0 with no stdout: %d %q", code, stdout.String())
@@ -286,12 +288,43 @@ func TestIngestSwallowsACrash(t *testing.T) {
 	}
 }
 
-func TestIngestNeverWritesStdout(t *testing.T) {
-	feed := t.TempDir() + "/session.jsonl"
-	var stdout bytes.Buffer
-	stdin := bytes.NewBufferString(`not json at all`)
-	if code := Main([]string{"ingest", "--events", feed}, stdin, &stdout, &bytes.Buffer{}); code != 0 || stdout.Len() != 0 {
-		t.Fatalf("code=%d stdout=%q", code, stdout.String())
+type brokenPipe struct{}
+
+func (brokenPipe) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// A note the harness never reads costs the note, never the exit code.
+func TestIngestUnwritableStdoutExitsZero(t *testing.T) {
+	defer func(old func(io.Reader, string, string) ([]byte, error)) { ingestFn = old }(ingestFn)
+	ingestFn = func(io.Reader, string, string) ([]byte, error) { return []byte("note\n"), nil }
+	var stderr bytes.Buffer
+	if code := Main([]string{"ingest", "--source", "codex"}, strings.NewReader("{}"), brokenPipe{}, &stderr); code != 0 {
+		t.Fatalf("a failed write must still exit 0: %d %q", code, stderr.String())
+	}
+	if runtime.GOOS != "windows" && !signal.Ignored(syscall.SIGPIPE) {
+		t.Fatal("SIGPIPE must be ignored, or a closed stdout exits 141")
+	}
+}
+
+// The real thing: a child whose stdout's read end is already closed. Go
+// dies of SIGPIPE on that write unless the signal is ignored.
+func TestIngestClosedStdoutExitsZero(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no SIGPIPE on Windows")
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "REX_TEST_CLOSED_STDOUT=1")
+	cmd.Stdout = w
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	w.Close()
+	if err != nil || !strings.Contains(stderr.String(), "survived the write") {
+		t.Fatalf("a closed stdout must still exit 0: %v %q", err, stderr.String())
 	}
 }
 

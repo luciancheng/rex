@@ -9,11 +9,11 @@ The agent drives the plan; Rex only shows it. Rex has no pin, done, send-off or 
 It records each decision, the friction it removes, and which slice of work owns it. TUI changes cite the section they implement. `AGENTS.md` is still the contributor contract. Where this spec changes an `AGENTS.md` rule, the change that ships it updates `AGENTS.md` too.
 
 Everything here keeps the product rules:
-- watch-only;
+- watch-only, plus one thing Rex hands over: the explicitly pinned task, added to each prompt as context (§7a);
 - the plan JSON is the source of truth, and Rex never writes it (except a new empty plan you create in the plan list);
 - yellow only, 40×40 poses;
 - hooks only;
-- Rex never sends anything to the agent.
+- Rex sends the agent nothing else: never a prompt, an approval or a correction.
 
 ---
 
@@ -441,7 +441,7 @@ The goal, the warnings, the card and `TASKS` are the head: they stay put while t
 
 ### The PINNED card
 
-The card is **the send-off, kept in the plan**: what a fresh chat needs to work the pin, already on screen, read from the plan file. It is display only. Rex copies nothing; the agent reads the same file (§9).
+The card is **the send-off, kept in the plan**: what a fresh chat needs to work the pin, already on screen, read from the plan file. It is display only. Rex copies nothing; the agent reads the same file (§9), and the pin note hands it the same fields (§7a).
 
 - **The box** spans the text column in the pin's yellow. Its top edge is `╭─[PINNED]─ <id> ───╮`: `[PINNED]` is a yellow pill (the agent's `active` task, §7), or `[NEXT UP]` on a slate pill with yellow text when the pin is worked out; the id is bold yellow. From 60 cells the title joins the edge (`<id> · <title>`) where at least 8 cells of it fit; narrower, or after a long id, it is the first row inside, in bold.
 - **Fields**, each an H3 label in an 8-cell column with its value, every row clipped with `…`:
@@ -604,9 +604,59 @@ Reload behaviour:
 
 - **The effective pin.** It is the first `active` leaf task, else the first `pending` leaf whose `depends_on` are all `done` or `skipped`. With no tasks there is no pin, and drift is off. Rex shows it, and judges drift against it (§9a), in four places, all in the pin's yellow: row 1 (`▸ <id>  <title>`, with `(next up)` when it is computed, §4); the outline's PINNED card, `[PINNED]` for the agent's `active` task or `[NEXT UP]` for a computed one (§6); the outline's pinned row, its only yellow row; and the plan list's accordion (`pinned` / `next up`, §11).
 - **The agent writes it, Rex shows it.** Rex has no pin action. You ask your agent to work, continue or pick up the plan (or a task of it); the `rex-plan` skill has it set that leaf's `status` to `active`, set any other active leaf to `pending`, and the plan's own `status` to `active` if it was `pending` or `done` (never a parent's status: a parent marked `active` is only a label), and to save that first, before any other edit, so its edits are judged against the task it is on (§9a). Rex reloads the file within a poll and shows the move: a toast (`plan updated · card-highlight → active`), one `rex › plan` line on AGENT, row 1, the card and the outline, and PLAN's cue while you are on AGENT.
-- **How the agent knows the pinned task.** It re-reads the plan file at the start of every turn while it works the plan (the skill says so). Nothing is injected and no hook writes stdout, so it works the same for Claude Code, Cursor, Codex and OpenCode. You never copy anything from Rex into the agent.
-- **`~/.rex/state.json`** is outside the repo and never committed. It holds only the last plan opened (or attached) per repo root: the one the next start opens (§11). An older Rex also kept pin start times there; they are ignored and dropped on the next write. Each write re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries. Opening includes start's own landing and attach: a plan Rex opened because the agent wrote it becomes the repo's last plan too.
+- **How the agent knows the pinned task.** Before each prompt, Claude Code's and Codex's hooks hand it the pinned task as a short note, read from the plan file just then (§7a); Cursor and OpenCode don't get it yet. It also re-reads the plan file at the start of every turn while it works the plan (the skill says so), so the file stays the source of truth. You never copy anything from Rex into the agent.
+- **`~/.rex/state.json`** is outside the repo and never committed. It holds only the last plan opened (or attached) per repo root: the one the next start opens (§11), and the only plan whose pin the prompt hooks hand the agent (§7a). An older Rex also kept pin start times there; they are ignored and dropped on the next write. Each write re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries. Opening includes start's own landing and attach: a plan Rex opened because the agent wrote it becomes the repo's last plan too.
 - **Nothing is auto-claimed.** When the agent marks the pin done, Rex shows what is next up (§8), and the agent starts it only when you ask.
+
+---
+
+## 7a. The pin reaches the agent
+
+Pinning a task has to do something for the agent, or it loses focus (F47). So on a **prompt**, while the plan Rex last opened in this repo has an **explicit pin** (an `active` leaf), the prompt hook's `rex ingest` prints a short note that the harness adds to the agent's context. In every other case ingest is what it always was: no stdout, exit 0. A computed next up is never sent, and **nothing pinned, nothing sent** is also the opt-out, so there is no config flag.
+
+**The lookup** runs in `internal/cli` (ingest) and calls `internal/plan` (`PinFor`, `PinNote`); `internal/watch` only decides which hooks ask and shapes each harness's reply, so `watch` never imports `plan`.
+1. **The folder.** Walk up from the payload's `cwd` to `.git`, never the hook's own folder; outside git, the payload's `cwd`. A payload without an absolute `cwd` gets nothing.
+2. **The plan.** Only `~/.rex/state.json`'s last plan for that folder (a key that spells the same folder another way counts, and of those the one opened last wins), through the path jail (cleaned, symlinks resolved, under `rex/plans/`, a regular `*.rex.json` of at most 4 MB). What you see in Rex is what the agent gets: no other plan is read, however pinned, so in a repo where you never opened Rex, a plan committed with an `active` task (a teammate's, or the demo plan `rex/plans/cuj/sendoff-demo.rex.json` in Rex's own repo) reaches no agent. No entry, or one the jail turns away: nothing is sent, no guessing. A read-only plan (a newer `version`, conflict markers) sends nothing, and so does a plan that can't be read (it may be mid-save or mid-merge with a pin inside). A plan whose path the note can't name as it is (over 160 characters, or with a run of spaces the note would fold) sends nothing either: a cut path names no file.
+3. **The task.** The first `active` leaf, the one Rex shows as pinned. Another `active` leaf is named in the note as `Also active` (a plan problem the person sees too).
+4. **A new plan.** When the last plan has no tasks yet, the note is one line instead: `Rex note: the person has rex/plans/team/auth.rex.json open in Rex; it has no tasks yet.` A last plan with tasks and no pin sends nothing, whatever another plan pins.
+5. **The deadline.** 750 ms, counted from the process's start (Codex runs hooks through `$SHELL -lc`, whose startup is already spent from its 5 s). Missed: no output, exit 0, and the prompt is still recorded, without `meta.pin`.
+
+**The note** is factual, not imperative (imperative injected text trips prompt-injection defenses; the how-to lives in the skill), and always starts with `Rex note`, so Codex never sees `{` or `[` first. For the CUJ fixture:
+
+```text
+Rex note, as of this prompt: the task pinned in the person's plan, read just now from rex/plans/cuj/sendoff-demo.rex.json. The plan file is the source of truth; earlier Rex notes in this conversation are out of date.
+Pinned task: card-highlight · Selected plan card is one block (status active, in plan "Send-off demo")
+Does: Bar, border and fill cover all three rows of the selected card
+Needs: the pick and pickbg colors exist in mascot.UI
+Verify: go test ./internal/tui -run PlanCardSelection; Open latest: ▌ on all three card rows
+Files: internal/tui/plans.go, internal/tui/live.go, internal/tui/plans_test.go
+Builds on: plans-ui (done): Home cards, folder browser, duplicate names refused
+Out of scope: extra palettes; web UI
+Plan goal: A teammate opens this plan in Rex and sees what the work is and which task the agent is on; a fresh chat picks it up from the plan file without rereading any transcript.
+The person wants this turn to serve this task and stay inside its files and scope. If the prompt asks for something outside it, they expect you to say so before editing. Edits outside these files show in Rex as drift.
+```
+
+- Lines without a value are left out. Optional lines, when true: `Also active: <ids>` after the task line, `Description: …` after `Does`, `Waits on: <ids> (not done)` after `Needs` (a pin can be blocked).
+- `Out of scope` joins the plan's and the task's `scope.out`. `Builds on` is the card's done row (`Graph.BuildsOn`). `Branch` is the task's `branch` and, in a stack, the branch it stacks on (`Graph.StackBase`, docs/plan-format.md, Stacks); a name that isn't plain is never handed on, and when the nearest earlier `done` leaf has no plain branch, no base is named (an older one's would leave its commits out). With no `files`, the last line asks only for its scope and says nothing of drift.
+- Every value goes through `watch.CleanText` and is folded onto one line; `<system-reminder` and `</system-reminder`, in any case, become `‹system-reminder` and `‹/system-reminder`.
+- Caps: each item 160 characters (a joined one, `Builds on`'s `<id> (done): <what>` or `Branch`'s `<branch>, stacked on <base>`, as a whole); lists show 4 items, then `(+N more in the file)`; the goal 200, the description 300; the whole note **1,500 bytes**, cut at a line boundary by dropping `Plan goal`, then `Branch`, `Builds on` and `Out of scope`, then list items from the end, a round at a time from the last list up, each list's first item only once no list has a second, and `Description` only once no list has an item left. The first two lines and the last always stay; only the task line is cut, last of all.
+- **After a compaction** (Claude's and Codex's `SessionStart` with `source: "compact"`) the first line reads `Rex note, as of the start of this session: the task pinned in the person's plan, read from <path>. The pin can move during the session; the plan file has the current one.`
+
+**Per harness.**
+
+| Harness | Events (all registered already) | stdout, then exit 0 | Silent when |
+|---|---|---|---|
+| Claude Code | `UserPromptSubmit`; `SessionStart` with `source: "compact"` | `{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"<note>"}}` and a newline (`"SessionStart"` after a compaction), hidden from the person | the payload has `cursor_version` (Cursor running Claude's hooks) or `agent_id` (a subagent); no pin; the deadline |
+| Codex | `UserPromptSubmit`; `SessionStart` with `source: "compact"` | the note as plain text and a newline, which Codex adds as developer context | `agent_id`; no pin; the deadline; never on `Stop`, `PermissionRequest` or any other event (plain text is invalid there) |
+
+Only an explicit `--source claude` or `--source codex` hook prints (the reply's shape is the harness's; `auto` never does). Nothing was re-registered: Claude Code's handler and Codex's `hooks.json` are byte for byte what they were, so Codex's trust hash holds; `--install codex` (and `--install claude`) now say the hook adds the pin. Cursor and OpenCode print nothing yet.
+
+**Safety rails.**
+- From a hook, `rex ingest` always exits 0, a panic included (recovered, with no output), and so does a harness that closed stdout before the note (SIGPIPE is ignored, so the note is lost, not the exit code); it never exits 2.
+- It writes stdout once, the whole reply at the end, so nothing can leave half a JSON object, and only on the events above.
+- It only reads plans and `state.json`; it writes only the feed, as before (`0600`, `~/.rex` `0700`).
+- Main agent only: `agent_id` and a Claude payload carrying `cursor_version` get nothing.
+- When it prints, the `user` event it records in the same run carries `meta.pin` (the task's id; none for a new plan's line) and `meta.pin_plan` (the plan's repo-relative path), and the feed's dedupe never folds it into the same words just before it when the pin differs. Nothing else in the feed is new. Rex shows nothing of it yet; the note's text is never shown.
 
 ---
 
@@ -625,9 +675,9 @@ What Rex shows when the file marks the pin done:
 
 ## 9. The plan file is the hand-off
 
-There is no send-off or planning brief, no clipboard, and nothing to paste. A new chat continues the work when you ask your agent to continue the plan ("continue rex/plans/cuj/sendoff-demo.rex.json", or just "continue the plan"); the `rex-plan` skill tells it how: read the plan file, find the current task (the `active` leaf, else the first ready one), work only on it, re-read the file every turn, and write its status and retrospective back. Without a named plan it takes the one it worked in this conversation, else the plan whose own `status` is `active`. Everything a send-off used to carry (goal, scope, tasks, what was done, where a stacked PR goes) is in the JSON, so nothing can drift from it, and Rex copies nothing.
+There is no send-off or planning brief, no clipboard, and nothing to paste. Before each prompt Claude Code and Codex get the pinned task as a note (§7a), but the file is the hand-off: a new chat continues the work when you ask your agent to continue the plan ("continue rex/plans/cuj/sendoff-demo.rex.json", or just "continue the plan"); the `rex-plan` skill tells it how: read the plan file, find the current task (the `active` leaf, else the first ready one), work only on it, re-read the file every turn, and write its status and retrospective back. Without a named plan it takes the one a Rex note names, else the one it worked in this conversation, else the plan whose own `status` is `active`. Everything a send-off used to carry (goal, scope, tasks, what was done, where a stacked PR goes) is in the JSON, so nothing can drift from it, and Rex copies nothing.
 
-**The send-off, kept in the plan.** What a send-off told a fresh chat is on screen, read from that same file: the outline's PINNED card (what the pin does and needs, how to verify it, its files, and the done task it builds on, §6) and About's `DONE` (every done task and what it accomplished). They show what the new chat will read; they are never copied, sent or pasted.
+**The send-off, kept in the plan.** What a send-off told a fresh chat is on screen, read from that same file: the outline's PINNED card (what the pin does and needs, how to verify it, its files, and the done task it builds on, §6) and About's `DONE` (every done task and what it accomplished). They show what the new chat will read; they are never copied or pasted, and the agent gets the same fields of the `active` task as the pin note (§7a).
 
 Teaching an agent the format and this loop is `rex ingest --install-skill` (§10, docs/plan-format.md). The Wait screen says so when the skill is installed nowhere Rex knows, or a copy is from an older Rex (§11).
 
@@ -775,7 +825,7 @@ FEED ─────────────────────────
 
 A word wider than the value column (a long flag or path, `--install-skill` at 24 text cells) goes whole on a row of its own, hung at column 4: a command is never split mid-word.
 
-The `skill` row says how the `rex-plan` skill stands where agents read it: `rex-plan current`, `missing · rex ingest --install-skill`, or `out of date · rex ingest --install-skill` (`… --project` when the old copy is the repo's). A copy is judged by the skill version in its generated marker (`skill v2`), never by its bytes: one with an older version, or none, is out of date; one of this version (a CRLF checkout of a committed `--project` copy too) or a newer Rex's is current, and `--install-skill` never replaces a newer Rex's copy (it says so and succeeds). Start usually lands on a plan, not the Wait screen, so this is where an upgrader sees it.
+The `skill` row says how the `rex-plan` skill stands where agents read it: `rex-plan current`, `missing · rex ingest --install-skill`, or `out of date · rex ingest --install-skill` (`… --project` when the old copy is the repo's). A copy is judged by the skill version in its generated marker (`skill v3`), never by its bytes: one with an older version, or none, is out of date; one of this version (a CRLF checkout of a committed `--project` copy too) or a newer Rex's is current, and `--install-skill` never replaces a newer Rex's copy (it says so and succeeds). Start usually lands on a plan, not the Wait screen, so this is where an upgrader sees it.
 
 - **Installs are opt-in.** Rex never installs a hook or a skill on its own. Feed health shows the command, and you run it. The install script wires Cursor and prints the opt-in commands for the other harnesses it finds. Each one is `rex ingest --install <harness>`; `--install-cursor-hook` is an alias for Cursor's. `rex ingest --install-skill` puts the `rex-plan` skill where all four agents read it: `~/.claude/skills/rex-plan` (or `$CLAUDE_CONFIG_DIR/skills`) for Claude Code and `~/.agents/skills/rex-plan` for Codex; Cursor and OpenCode read both (and may list it twice: the copies are identical). With `$CLAUDE_CONFIG_DIR` set, Rex's copy in `~/.claude/skills`, which Cursor and OpenCode still read, is updated too, and `--uninstall-skill` removes it with the others; a `SKILL.md` there that Rex didn't write is never touched. `--project` puts both copies in the repo instead.
 
@@ -960,7 +1010,7 @@ Notes:
 3. `MARKS`: the plan glyphs of §5 (`▸`, `○ · ✓`, `– !`, a parent's `1/3`, the cursor `▌`), the card's badges (`[PINNED]` the task your agent set active, `[NEXT UP]` nothing active: the first ready task, §6), the cue (`•` `!`), and what `following` / `latched` mean (§11). AGENT's marks are under `AGENT TAB`.
 4. `AGENT TAB`: how AGENT names its blocks (§10): `thinking` (a run of N thoughts, `×N`), `$`, `✗`, `[ASK]`, `reply ───`, `rex ›`.
 5. `PLAN LIST`: what typing does there (§2), `a/b`, Ctrl+U / Ctrl+W, `?` or `/help`, and `/breakdance`.
-6. `REX NEVER`: runs or approves tools, edits a plan (it only creates an empty one you name in the plan list), sends anything to your agent, or reads transcripts; your agent pins and finishes tasks in the file, and Rex shows it.
+6. `REX NEVER`: runs or approves tools, edits a plan (it only creates an empty one you name in the plan list), sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet, §7a), or reads transcripts; your agent pins and finishes tasks in the file, and Rex shows it.
 7. `FEED`: the feed path and feed health (§10), with the `skill` row (whether the `rex-plan` skill is current, missing or out of date, and the command to fix it), and the hidden-event count.
 
 `THIS PAGE` lists every key its page takes, not only its footer's: on the outline, About and Task detail, enter's switch to a new-plan offer, in AGENT's words (`switch PLAN to a new plan row 1 offers`); Home and End, with Ctrl+A and Ctrl+E (§3), wherever they move or scroll, Browse and Wait included; PgUp/PgDn on Wait. A test holds each page to the keys that act on it.
@@ -1065,6 +1115,7 @@ This is what the 2026-10 audit found, from four lenses: first run, daily loop, t
 | F44 | med | A plan's row says only its progress: what it is for, what is pinned and what got done take opening it (2026-10-24 feedback: details on hover) | The selected plan opens in place: title and status, `goal`, `pinned` / `next up`, `then`, `done`, dropping in a fixed order as rows run short, from a summary cached by path, modification time and size, so moving the cursor reads no files (§11, §12) | `feature/plan_list_groups` |
 | F45 | high | The pinned task isn't evident: the pin row, parents, Task detail's title and a rule were all yellow, and the pin and the cursor looked alike (2026-10-24 feedback: border, colour, "Pinned") | A PINNED card in the pin's yellow under the goal, `[PINNED]` / `[NEXT UP]` on its edge; the pinned row is the outline's only yellow row and keeps its yellow on the cursor's fill; parents are bold text; titles and rules are never yellow; done rows show what they accomplished (§5, §6) | `feature/outline_pin_card` |
 | F46 | high | A fresh chat's send-off isn't on screen: what to do, how to check it and what it builds on take opening the task, or the transcript (2026-10-24 feedback: "have the send off in the plan already") | The PINNED card shows it, read from the plan file (`does`, `needs`, `verify`, `files`, the done task it builds on), folding by a collapse ladder that never costs a task row and gives back what fits again; a pin with no fields yet says so inside the box; About's `DONE` lists every done task and what it accomplished. Rex still copies and sends nothing (§6, §9) | `feature/outline_pin_card` |
+| F47 | high | Pinning a task does nothing for the agent: it learns the pin only if it re-reads the plan, and loses focus (2026-10-24 feedback: "We must make sure the agent refers to the pinned task requirements so that it doesnt lose focus") | Before each prompt, Claude Code's and Codex's hooks hand it the explicitly pinned task as a short factual note read from the plan file (or a new plan with no tasks yet), capped at 1,500 bytes, within 750 ms of the hook's start, and the prompt's event records it; nothing pinned, nothing sent (§7a) | `feature/pin_context` |
 
 Found in the same audit, outside the UI:
 

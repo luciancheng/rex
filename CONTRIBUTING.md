@@ -5,7 +5,7 @@ Thanks for helping. Rex is small on purpose, so a few rules keep it that way. Th
 ## Before you start
 
 - **Open or find an issue first.** One branch closes one issue.
-- **Rex is watch-only.** It never runs, approves or steers the agent and never sends it anything; a change that does won't be merged. AGENTS.md lists the other things Rex doesn't do (new palettes, new dependencies, transcript scraping, …).
+- **Rex is watch-only.** It never runs, approves or steers the agent, and the only thing it sends it is the pinned task (or the name of a new plan that has no tasks yet), as a note before each prompt (docs/ux.md §7a); a change that does more won't be merged. AGENTS.md lists the other things Rex doesn't do (new palettes, new dependencies, transcript scraping, …).
 - Security issues go through [SECURITY.md](SECURITY.md), not a public issue.
 
 ## Making a change

@@ -25,14 +25,6 @@ func TestPlanFileName(t *testing.T) {
 	}
 }
 
-func TestFindRepoRootStopsWithoutGit(t *testing.T) {
-	dir := t.TempDir()
-	got := FindRepoRoot(dir)
-	if got != dir && !strings.HasPrefix(got, dir) {
-		t.Fatalf("walked away from %s -> %s", dir, got)
-	}
-}
-
 func TestEnsurePlansDirCreatesFolder(t *testing.T) {
 	repo := t.TempDir()
 	root, err := EnsurePlansDir(repo)

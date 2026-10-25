@@ -72,6 +72,10 @@ func TestTheSkillHasTheAgentWorkThePlan(t *testing.T) {
 		"inside the task objects you change (plus the plan's own `status`)", "keep every other byte", "never mark a task done that you did not finish",
 		"Rex has no actions of its own: never tell the person to create, open, pin or mark anything done in Rex",
 		"### Its PR, when the plan is a stack", "nearest earlier leaf task that is `done`", "later leaves that are `done`",
+		"### Rex notes", "a note that starts with `Rex note`", "While a task is pinned it is the current task", "stay inside its files and scope",
+		"run its verify list before calling it done", "say so and ask first", "If a note and the file disagree, the file wins", "notes from earlier in the conversation are out of date",
+		"The one the person names, else the plan a Rex note names", "a plan the person has open in Rex that has no tasks yet",
+		"when they ask you to plan it, or to plan without naming a file or the work", "Other work still gets its own file",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q", want)
@@ -79,7 +83,7 @@ func TestTheSkillHasTheAgentWorkThePlan(t *testing.T) {
 	}
 	// Starting a task demotes another task's active leaf, so edits are
 	// never confined to one task's object.
-	for _, never := range []string{"rex-sendoff", "send-off", "sendoff", "trailer", "d⏎", "p⏎", "s⏎", "b⏎", "paste", "inside that task's object"} {
+	for _, never := range []string{"rex-sendoff", "send-off", "sendoff", "trailer", "d⏎", "p⏎", "s⏎", "b⏎", "paste", "inside that task's object", "rex never sends you anything"} {
 		if strings.Contains(strings.ToLower(s), never) {
 			t.Errorf("the skill still speaks of %q", never)
 		}
@@ -253,6 +257,41 @@ func TestLookFindsAnOlderRexsCopy(t *testing.T) {
 	}
 	if got := Look(home, repo); got != Current {
 		t.Fatalf("every copy replaced: %v", got)
+	}
+}
+
+// The pin note came with skill v3 (docs/ux.md §7a): Rex's copies in both
+// folders carry it, and a v2 copy, which says Rex never sends the agent
+// anything, reads as out of date.
+func TestSkillV3(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if version != 3 {
+		t.Fatalf("skill v%d", version)
+	}
+	home, repo := t.TempDir(), t.TempDir()
+	for _, project := range []bool{false, true} {
+		for _, dir := range Dirs(home, repo, project) {
+			if err := Install(dir, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := os.ReadFile(filepath.Join(dir, "SKILL.md")); !bytes.Contains(got, []byte(marker+" · skill v3 · ")) {
+				t.Fatalf("%s: %.120s", dir, got)
+			}
+		}
+	}
+	v2 := bytes.Replace(RexPlan, []byte("skill v3 ·"), []byte("skill v2 ·"), 1)
+	for _, c := range []struct {
+		project bool
+		want    Copy
+	}{{false, Stale}, {true, StaleProject}} {
+		home, repo := t.TempDir(), t.TempDir()
+		for _, dir := range Dirs(home, repo, c.project) {
+			os.MkdirAll(dir, 0o755)
+			os.WriteFile(filepath.Join(dir, "SKILL.md"), v2, 0o644)
+		}
+		if got := Look(home, repo); got != c.want {
+			t.Errorf("a v2 copy (project %v): %v, want %v", c.project, got, c.want)
+		}
 	}
 }
 

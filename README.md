@@ -26,7 +26,7 @@ Rex is a terminal sidecar for developers who work with an AI coding agent: Curso
 - **PLAN**: a JSON file in your repo that breaks the work into PR-sized tasks;
 - **AGENT**: what the agent is doing right now, as it happens: your prompts, its thoughts (a run of them folds to one line with the latest), the commands it runs, failed steps, questions and replies.
 
-Rex is **watch-only**. It never runs tools, approves them, steers the agent or sends it anything, and it never edits your plan. The agent drives the plan: you ask it to plan, to work a task or to continue, and it writes the plan file (which task is active, what is done and how it was checked). Rex shows each change as it lands. There is nothing to copy from Rex into the chat.
+Rex is **watch-only**, with one thing it hands over: before each prompt, the task pinned in your plan reaches the agent as a short note (Claude Code and Codex for now). It never runs tools, approves them or steers the agent, and it never edits your plan. The agent drives the plan: you ask it to plan, to work a task or to continue, and it writes the plan file (which task is active, what is done and how it was checked). Rex shows each change as it lands. There is nothing to copy from Rex into the chat.
 
 ```
 REX [PLAN] AGENT idle            following rex/plans/cuj/sendoff-demo.rex.json
@@ -92,7 +92,7 @@ This puts `rex` in `$(go env GOPATH)/bin`. Then wire your agent (see [Agents](#a
 5. The top row says `following` while Rex opens each plan your agent writes. Pick another plan yourself (Esc, then pick it from the list, or type a name and enter) and it says `latched`: a plan the agent writes then waits on the status line until you press enter.
 6. Ctrl+C twice quits.
 
-**How does the agent know the pinned task?** It reads the plan file. The `rex-plan` skill tells it to re-read the plan at the start of every turn and work its `active` task, so a fresh chat picks up where the last one stopped when you say "continue the plan". Nothing is injected and no hook talks back to the agent, so it works the same in Cursor, Claude Code, Codex and OpenCode.
+**How does the agent know the pinned task?** In Claude Code and Codex, the prompt hook adds it to every prompt you send: a short, factual note that starts with `Rex note`, read from the plan file just then (what the task does and needs, how to verify it, its files, what it builds on, what is out of scope). It is sent only while a task is `active` in the plan Rex last opened in this repo (a task that is only next up is never sent, and a plan you never opened in Rex sends nothing, whatever it pins), it is capped at 1,500 bytes, and it is left out if it isn't ready within 750 ms of the hook starting. While nothing is pinned and the plan Rex last opened in this repo has no tasks yet, the note just names that plan, so "plan this" works. With nothing pinned and no such empty plan, nothing is sent: that is the off switch. To stop the note, set the task back to `pending` (ask your agent, or edit its `status`); `rex ingest --uninstall claude` (or `codex`) takes Rex's hooks out altogether. The `rex-plan` skill also tells the agent to re-read the plan at the start of every turn and work its `active` task, so a fresh chat picks up where the last one stopped when you say "continue the plan"; in Cursor and OpenCode that is how it knows, for now.
 
 If the agent edits files outside the pinned task, or you ask for something the plan's `scope.out` rules out, Rex shows **drift** on the status line and the AGENT tab. It never corrects the agent.
 
@@ -103,13 +103,13 @@ Rex watches agents through their hooks: each wired agent runs `rex ingest` on it
 | Agent | Wire it | Rex edits | Notes |
 | --- | --- | --- | --- |
 | Cursor | the install script, or `rex ingest --install cursor` | `~/.cursor/hooks.json` | Cursor reports only the final reply of each turn. |
-| Claude Code | `rex ingest --install claude` (add `--project` for this repo only) | `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`), or this repo's git-excluded `.claude/settings.local.json` | |
-| Codex | `rex ingest --install codex` | `~/.codex/hooks.json` (or `$CODEX_HOME`) | Then trust the hooks once in Codex's `/hooks`, and again after moving `rex` (the hook names its path). |
+| Claude Code | `rex ingest --install claude` (add `--project` for this repo only) | `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`), or this repo's git-excluded `.claude/settings.local.json` | The prompt hook adds the pinned task to each prompt. |
+| Codex | `rex ingest --install codex` | `~/.codex/hooks.json` (or `$CODEX_HOME`) | Then trust the hooks once in Codex's `/hooks`, and again after moving `rex` (the hook names its path). The prompt hook now also adds the pinned task to each prompt; the hook itself is unchanged, so hooks you already trusted stay trusted. |
 | OpenCode | `rex ingest --install opencode` | `~/.config/opencode/plugins/rex.js` (or `$XDG_CONFIG_HOME`) | Restart OpenCode to load the plugin. |
 
 - `rex ingest --install auto` wires every agent found on this machine.
 - Your other hooks and settings are kept byte for byte, and the previous file is saved next to it as `.bak`.
-- `rex ingest --install-skill` installs the `rex-plan` skill for all four agents: `~/.claude/skills/rex-plan` for Claude Code (with `CLAUDE_CONFIG_DIR` set it goes there instead, and a copy Rex left in `~/.claude/skills`, which Cursor and OpenCode still read, is updated too) and `~/.agents/skills/rex-plan` for Codex. Cursor and OpenCode read both folders and may list the skill twice; the copies are identical. Add `--project` to put both copies in this repo's `.claude/skills` and `.agents/skills` instead. It teaches the plan format, how to work a plan (start a task, mark it done, re-read the file every turn), stacked PRs and a review pass before each PR. Run it again (with `--project` where you used that) after upgrading Rex: an older copy keeps teaching the older workflow. It never replaces a copy a newer Rex wrote (a teammate's, say); it says so and leaves it.
+- `rex ingest --install-skill` installs the `rex-plan` skill for all four agents: `~/.claude/skills/rex-plan` for Claude Code (with `CLAUDE_CONFIG_DIR` set it goes there instead, and a copy Rex left in `~/.claude/skills`, which Cursor and OpenCode still read, is updated too) and `~/.agents/skills/rex-plan` for Codex. Cursor and OpenCode read both folders and may list the skill twice; the copies are identical. Add `--project` to put both copies in this repo's `.claude/skills` and `.agents/skills` instead. It teaches the plan format, how to work a plan (start a task, mark it done, re-read the file every turn, read Rex's notes), stacked PRs and a review pass before each PR. Run it again (with `--project` where you used that) after upgrading Rex: an older copy keeps teaching the older workflow. It never replaces a copy a newer Rex wrote (a teammate's, say); it says so and leaves it.
 
 ## Keys
 
@@ -139,8 +139,8 @@ Commit the `rex/plans/` folder so teammates open the same plans from git. A plan
 
 Rex makes no network connections, and everything stays on this machine:
 
-- **`~/.rex/session.jsonl`** (and the `session.jsonl.lock` next to it): the feed every wired agent appends to. It holds your prompts, the agent's thoughts and replies, the commands it runs, file paths and working folders, from every repo on this machine. File bodies and diffs are left out, and each event's text is capped at 32 KB. Only your user can read it (`0600`, in a `0700` folder). It only grows; delete it whenever you like. Set `REX_EVENTS` to keep it somewhere else.
-- **`~/.rex/state.json`**: the last plan opened in each repo (by you, or followed because your agent wrote it).
+- **`~/.rex/session.jsonl`** (and the `session.jsonl.lock` next to it): the feed every wired agent appends to. It holds your prompts (and, for one that carried the pin, the task's id and its plan's path), the agent's thoughts and replies, the commands it runs, file paths and working folders, from every repo on this machine. File bodies and diffs are left out, and each event's text is capped at 32 KB. Only your user can read it (`0600`, in a `0700` folder). It only grows; delete it whenever you like. Set `REX_EVENTS` to keep it somewhere else.
+- **`~/.rex/state.json`**: the last plan opened in each repo (by you, or followed because your agent wrote it), the only plan whose pinned task the prompt hooks hand your agent.
 - **Your repo**: Rex never edits a plan. `+ New plan`, `+ Create` and `+ New folder` in the plan list write a new empty plan or a folder (and `rex/plans/.gitkeep` the first time), never over an existing file. Everything else in `rex/plans/` is written by your agent or by you.
 - **Agent configs**: only the files in the [Agents](#agents) table, each with a `.bak` copy of what was there, and only when you run `--install`. `--install claude --project` also adds two lines to the repo's `.git/info/exclude`, and `--install-skill` writes the two `rex-plan` skill folders (and, with `CLAUDE_CONFIG_DIR` set, updates a copy Rex left in `~/.claude/skills`).
 
@@ -178,6 +178,8 @@ The install script downloads Rex's source through Go and git.
 - **Events stopped after moving `rex`, or installing it to a different folder.** Hooks call the binary by its path. Run the `rex ingest --install <agent>` command again.
 - **Events land in another file.** Hooks use the agent's `REX_EVENTS`, not your shell's. Set it in both places, or in neither.
 - **No dino, or "widen".** The dino needs 66+ columns. Under 24 columns of text Rex asks you to widen the terminal.
+- **The agent doesn't get the pinned task.** Only Claude Code and Codex get the note so far, and only while a task is `active` in the plan Rex last opened in that repo: open that plan in Rex once. Any other plan sends nothing, even one with an `active` task. A subagent never gets it.
+- **The agent still gets a task you have moved on from.** It is still `active` in the plan. Ask your agent to set it back to `pending` (or edit its `status` yourself), or to finish it.
 - **The agent doesn't pin or finish tasks in the plan.** Install the skill (`rex ingest --install-skill`, then start a new agent session), and ask it to work the plan. The wait screen and Help (`?`, the `skill` row) say when the skill is installed nowhere Rex knows, or when a copy is from an older Rex (run the command they show); an older copy is also a status-line notice when Rex starts on a plan.
 - **"rex/ is a file here · plans off".** A file named `rex` sits at the repo root, where the plans folder goes. Move it.
 

@@ -1,6 +1,7 @@
-// Command rex is a watch-only terminal sidecar for coding agents: plans in
-// rex/plans/, a live view of agent hook events, and a pixel-art dinosaur.
-// Run "rex start" in a repo.
+// Command rex is a terminal sidecar for coding agents: plans in
+// rex/plans/, a live view of agent hook events, the pinned task handed to
+// the agent before each prompt, and a pixel-art dinosaur. Run "rex start"
+// in a repo.
 package main
 
 import (

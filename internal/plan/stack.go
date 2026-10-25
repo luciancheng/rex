@@ -141,3 +141,33 @@ func (g *Graph) later(t, dep *Task) *Task {
 	}
 	return walk(dep.ID)
 }
+
+// StackBase is where t's PR goes in a stacked plan (docs/plan-format.md,
+// Stacks): the branch of the nearest earlier leaf that is done, else the
+// plan's base. Only plain names count, and "" means nothing to go on: not
+// a stack, a nearest done leaf with no plain branch (an older one's would
+// leave its commits out), or no done leaf below and no plain base.
+func (g *Graph) StackBase(t *Task) string {
+	if !g.p.Stacked() {
+		return ""
+	}
+	var below *Task
+	for i := range g.p.Tasks {
+		e := &g.p.Tasks[i]
+		if e == t {
+			break
+		}
+		if e.Status == Done && e.ID != "" && g.byID[e.ID] == e && g.Leaf(e) {
+			below = e
+		}
+	}
+	switch {
+	case below != nil:
+		if plainRef(below.Branch) {
+			return below.Branch
+		}
+	case plainRef(g.p.Base):
+		return g.p.Base
+	}
+	return ""
+}

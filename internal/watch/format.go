@@ -60,7 +60,7 @@ func IsDuplicate(event Event, recent []Event, window float64) bool {
 	}
 	for i := len(recent) - 1; i >= 0; i-- {
 		prev := recent[i]
-		if prev.Kind != event.Kind || !sameOrigin(prev, event) || !sameCall(prev, event) {
+		if prev.Kind != event.Kind || !sameOrigin(prev, event) || !sameCall(prev, event) || !samePin(prev, event) {
 			continue
 		}
 		if NormalizeText(prev.Text) != key {
@@ -206,6 +206,19 @@ func sameOrigin(a, b Event) bool {
 	ca, _ := a.Meta["cwd"].(string)
 	cb, _ := b.Meta["cwd"].(string)
 	return ca == "" || cb == "" || ca == cb
+}
+
+// samePin is false when two prompts handed the agent different pins
+// (docs/ux.md §7a): the second one's event says what it carried.
+func samePin(a, b Event) bool {
+	for _, k := range []string{"pin", "pin_plan"} {
+		va, _ := a.Meta[k].(string)
+		vb, _ := b.Meta[k].(string)
+		if va != vb {
+			return false
+		}
+	}
+	return true
 }
 
 // sameCall is false when both events name their tool call and the calls

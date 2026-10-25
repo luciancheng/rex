@@ -331,47 +331,10 @@ func rowBlurb(t *plan.Task, cells int) string {
 	return flatHead(t.Description, cells)
 }
 
-// doneWhat is what a done task says it accomplished, else its title.
-func doneWhat(t *plan.Task) string {
-	if len(t.Accomplished) > 0 {
-		return strings.Join(t.Accomplished, " · ")
-	}
-	return t.Title
-}
-
-// lastDone is the plan's last done leaf in file order: what the PINNED
-// card and the plan list's "done" line name when the pin builds on no
-// done task (buildsOn, docs/ux.md §6, §11).
-func lastDone(p *plan.Plan, g *plan.Graph) *plan.Task {
-	var last *plan.Task
-	for i := range p.Tasks {
-		if t := &p.Tasks[i]; t.Status == plan.Done && g.Leaf(t) {
-			last = t
-		}
-	}
-	return last
-}
-
-// buildsOn is the done task the PINNED card and the plan list's accordion
-// name (docs/ux.md §6, §11), one rule for both: the pin's last done leaf
-// dependency in depends_on order, said what it accomplished or not; else,
-// or with no pin, the plan's last done leaf. A parent's done is only a
-// label (§7), so a parent dependency names nothing.
-func buildsOn(p *plan.Plan, g *plan.Graph, pin *plan.Task) *plan.Task {
-	if pin != nil {
-		for i := len(pin.DependsOn) - 1; i >= 0; i-- {
-			if dep := g.Task(pin.DependsOn[i]); dep != nil && dep.Status == plan.Done && g.Leaf(dep) {
-				return dep
-			}
-		}
-	}
-	return lastDone(p, g)
-}
-
 // doneRef is a done task as a card or About names it: "✓ <id>  <what it
 // accomplished>".
 func doneRef(t *plan.Task) string {
-	return strings.TrimSpace("✓ " + taskKey(t) + "  " + flat(doneWhat(t)))
+	return strings.TrimSpace("✓ " + taskKey(t) + "  " + flat(t.DoneWhat()))
 }
 
 // filesLine is the pin's files on one row of room cells (docs/ux.md §6):
@@ -898,7 +861,7 @@ func (o *outline) cardFields(f outlineFit) []h3 {
 	if len(pin.Files) > 0 {
 		fields = append(fields, h3{label: "files", items: []string{filesLine(pin.Files, room)}, rows: 1})
 	}
-	if t := buildsOn(o.p, o.g, pin); t != nil && (f.done || !full) {
+	if t := o.g.BuildsOn(pin); t != nil && (f.done || !full) {
 		fields = append(fields, h3{label: "done", items: []string{doneRef(t)}, role: "muted", rows: 1})
 	}
 	if !full && len(fields) > 1 {
@@ -1212,7 +1175,7 @@ func taskDetail(d *planDoc, key string, width int, tall bool) []LogLine {
 		mark, _, _ := glyph(r, g, pin)
 		what := r.Title
 		if r.Status == plan.Done {
-			what = doneWhat(r)
+			what = r.DoneWhat()
 		}
 		return strings.TrimSpace(mark + " " + taskKey(r) + "  " + flat(what))
 	}

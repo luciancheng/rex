@@ -270,7 +270,9 @@ for (let i = 0; i < 600; i++) {
 			kinds = append(kinds, ev.Kind+": "+ev.Text)
 		}
 	}
-	want := []string{"result: wrote /repo/a.go", "command: multiedit /repo/b.go", "thought: thinking it over", "user: fix the cards", "question: permission: edit: a.go", "text: All done."}
+	// The plugin sends the tool's relative paths; they join to the session's
+	// folder with the OS's separator.
+	want := []string{"result: wrote " + filepath.Join("/repo", "a.go"), "command: multiedit " + filepath.Join("/repo", "b.go"), "thought: thinking it over", "user: fix the cards", "question: permission: edit: a.go", "text: All done."}
 	if strings.Join(kinds, " | ") != strings.Join(want, " | ") {
 		t.Fatalf("mapped:\n%s\nwant:\n%s", strings.Join(kinds, "\n"), strings.Join(want, "\n"))
 	}

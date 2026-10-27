@@ -161,6 +161,7 @@ func TestTheOfferedPlansWorkIsNotDrift(t *testing.T) {
 	if press(a, "o"); a.plans.Current != other || !a.follow || a.offer != "" {
 		t.Fatalf("o switches: current=%q (was %q) follow=%v", a.plans.Current, path, a.follow)
 	}
+	c.t = c.t.Add(toastFor) // it said what opened
 	a.ingest([]watch.Event{edit(a, c, 4*time.Second, "README.md")})
 	if got := a.statusLine().Text; got != "off pin · README.md · outside render files" {
 		t.Fatalf("following again, edits are judged against the new pin: %q", got)

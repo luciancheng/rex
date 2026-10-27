@@ -60,8 +60,10 @@ type app struct {
 	health feedHealth
 
 	doc        *planDoc // the open plan, nil until one is opened
-	at         planAt   // which PLAN screen: library, outline or a detail
+	at         planAt   // which PLAN screen: library, the task list or a page
 	outline    outlineView
+	pages      pageCache // the task details or About laid out, for the frames that only scroll it
+	pageOver   bool      // the open plan's page with no list runs past the screen: ↑↓ scroll it
 	toast      StatusLine
 	toastUntil time.Time
 	toastWait  bool // raised while AGENT was on screen: its time starts on PLAN
@@ -200,15 +202,18 @@ func (a *app) composeOptions() ComposeOptions {
 		opt.Footer = pageFooter(len(body) > l.bodyH, "esc plans", "tab agent", true)
 	case a.at != atLibrary && a.doc != nil:
 		opt.PlanRows = a.planRows()
-		opt.PlanView, opt.PlanScroll = a.planView(l.textW, opt.PlanRows)
+		var above int
+		opt.PlanView, above = a.planView(l.textW, opt.PlanRows)
+		if above > 0 {
+			opt.More = fmt.Sprintf("↑ %d more", above)
+		}
 		opt.Footer = a.planFooter()
 	default:
 		opt.Plans = a.plans // the screen decides what PLAN draws, never an empty view
 	}
-	// After the plan's layout: the outline's title says where the
-	// selection is once TASKS is gone (docs/ux.md §4).
 	opt.Page = a.page()
 	if a.overlay[a.pane] == overlayHelp {
+		opt.More = ""
 		body := a.helpBody(textW)
 		footer := pageFooter(len(body) > l.bodyH, "esc close", "tab "+otherPlace(a.pane), false)
 		opt.Overlay = &Overlay{Lines: body, Footer: footer, Scroll: a.overlayScroll[a.pane]}
@@ -220,7 +225,8 @@ func (a *app) composeOptions() ComposeOptions {
 
 // helpPages names the page Help was opened over, on Help's row 1.
 var helpPages = map[string]string{
-	"agent": "Agent", "waiting": "the wait screen", "about": "About", "task": "this task", "outline": "the outline",
+	"agent": "Agent", "waiting": "the wait screen", "about": "About", "task": "this task", "tasks": "the task list",
+	"no tasks": "a plan with no tasks", "can't read": "a plan Rex can't read",
 	"folder": "this folder", "new plan": "a new plan", "new folder": "a new folder", "plans": "the plan list",
 }
 
@@ -248,11 +254,10 @@ func (a *app) page() *Page {
 	return &p
 }
 
-// docPage is the open plan's title: its title, then "About" or the task's
-// id on a detail screen. On the outline it is the title row, selected
-// while the cursor is on it, with the plan's progress and how it got here
-// (following, read-only, can't read) as meta; while the list scrolls
-// with TASKS gone, where the selection is leads it.
+// docPage is the open plan's title (docs/ux.md §4): its title, then
+// "About" or the task's id on a page of their own. On the task list its
+// meta is the plan's progress and how it got here (following, read-only,
+// can't read); on details, the task's state.
 func (a *app) docPage() Page {
 	d := a.doc
 	title := planTitle(d.plan, d.path)
@@ -260,10 +265,9 @@ func (a *app) docPage() Page {
 	case d.plan == nil:
 		return Page{Crumbs: []string{title}, Meta: []Span{{Text: "can't read", Role: "error"}}}
 	case a.at == atPlanDetail:
-		done, total := d.plan.Graph().Progress()
-		meta := fmt.Sprintf("%d/%d done", done, total)
-		if total == 0 {
-			meta = "no tasks"
+		meta := "no tasks"
+		if short := progress(d.plan); short != "" {
+			meta = short + " done"
 		}
 		if d.plan.Status != "" {
 			meta = string(d.plan.Status) + " · " + meta
@@ -273,7 +277,7 @@ func (a *app) docPage() Page {
 		p := Page{Crumbs: []string{title, a.outline.sel}}
 		if t := findTask(d.plan, a.outline.sel); t != nil {
 			g := d.plan.Graph()
-			word, role := taskWord(t, g, g.Pin())
+			word, role := taskState(t, g, g.Pin())
 			p.Meta = []Span{{Text: word, Role: role}}
 		}
 		return p
@@ -293,14 +297,7 @@ func (a *app) docPage() Page {
 	if _, bad := docStatus(d); bad {
 		meta = append(meta, Span{Text: " · ", Role: "muted"}, Span{Text: "can't read", Role: "error"})
 	}
-	p := Page{Crumbs: []string{title}, Meta: meta, Short: metaSpans(short), Selectable: true, Selected: a.outline.sel == ""}
-	if pos := a.outline.pos; pos != "" {
-		// TASKS is gone and the list scrolls: the position leads the meta,
-		// and stands alone where both don't fit.
-		p.Meta = append([]Span{{Text: pos + " · ", Role: "muted"}}, meta...)
-		p.Short = metaSpans(pos)
-	}
-	return p
+	return Page{Crumbs: []string{title}, Meta: meta, Short: metaSpans(short)}
 }
 
 // libraryPage is the plan list's title: Plans, then Find, the folder being
@@ -361,7 +358,7 @@ var spacedPlan = layoutFor(TextOnlyBelow, blankFrom).bare().bodyH
 
 // planRows is the body rows the open plan's screens are laid out in
 // (docs/ux.md §12): 11 rows lay them out as 12 do, so a taller terminal
-// never shows less of the outline or a detail; the row left over is blank.
+// never shows less of the task list or a page; the row left over is blank.
 func (a *app) planRows() int {
 	rows := a.layout().bodyH
 	if a.lines < blankFrom {
@@ -370,49 +367,69 @@ func (a *app) planRows() int {
 	return rows
 }
 
-// planView lays out the open plan's screen and picks its first visible
-// line: the outline is laid out to the row, keeping the selection in
-// view; details scroll, with their blank rows from 16 rows.
+// pageCache keeps a page of the open plan laid out (task details, About)
+// for one read of the plan, task and width: a frame that only scrolls it
+// costs the rows it shows, however long the page is.
+type pageCache struct {
+	plan  *plan.Plan
+	at    planAt
+	key   string
+	width int
+	lines []LogLine
+}
+
+// planView lays out the open plan's screen in viewH rows (docs/ux.md
+// §6): the task list's window around the selection, or a page from its
+// scroll. It says how many lines are above what it shows, for row 2's
+// ↑ N more; under blankFrom rows a marker takes a row of the body
+// instead, and the list has no group labels.
 func (a *app) planView(width, viewH int) ([]LogLine, int) {
 	if width <= 0 {
 		return nil, 0
 	}
 	v := &a.outline
-	var body []LogLine
-	tall := viewH >= outlineTall
-	switch a.at {
-	case atPlanDetail:
-		body = planDetail(a.doc, width, tall)
-	case atTaskDetail:
-		body = taskDetail(a.doc, v.sel, width, tall)
-	default:
-		return outlineScreen(a.doc, v, width, viewH), 0
+	roomy := a.lines >= blankFrom
+	a.pageOver = false
+	if a.at != atPlanDetail && a.at != atTaskDetail {
+		if page := listless(a.doc, a.planLabel(a.doc.path), a.plans.CurrentRel(), width); page != nil {
+			a.pageOver = len(page) > viewH
+			return pageWindow(page, &v.scroll, viewH, roomy)
+		}
+		return outlineScreen(a.doc.plan, v, width, viewH, roomy)
 	}
-	v.scroll = max(0, min(v.scroll, len(body)-viewH))
-	return body, v.scroll
+	c := &a.pages
+	if c.plan == nil || c.plan != a.doc.plan || c.at != a.at || c.key != v.sel || c.width != width {
+		*c = pageCache{plan: a.doc.plan, at: a.at, key: v.sel, width: width}
+		if a.at == atPlanDetail {
+			c.lines = aboutPage(a.doc, width)
+		} else {
+			c.lines = taskPage(a.doc, a.plans.CurrentRel(), v.sel, width)
+		}
+	}
+	return pageWindow(c.lines, &v.scroll, viewH, roomy)
 }
 
 // planFooter is the footer for the open plan's screens (docs/ux.md §4):
-// ↑↓, what enter does on the selected row (by its widest form, so the
-// cursor never changes the footer), where esc goes, tab, ? help. An offer
-// is taken with o, which its notice names.
+// on the task list ↑↓, enter details, i about, where esc goes, tab, ? help;
+// a page scrolls and esc goes back to the tasks. An offer is taken with o,
+// which its notice names.
 func (a *app) planFooter() []FooterSeg {
 	tab := FooterSeg{Text: "tab agent"}
 	if a.at == atPlanDetail || a.at == atTaskDetail {
-		return []FooterSeg{{Text: "↑↓ scroll"}, {Text: "esc outline"}, tab, helpSeg}
+		return []FooterSeg{{Text: "↑↓ scroll"}, {Text: "esc tasks"}, tab, helpSeg}
 	}
 	p := a.doc.plan
+	var scroll []FooterSeg
+	if a.pageOver {
+		scroll = []FooterSeg{{Text: "↑↓ scroll"}}
+	}
 	switch {
 	case p == nil:
-		return []FooterSeg{{Text: "esc plans"}, tab, helpSeg}
+		return append(scroll, FooterSeg{Text: "esc plans"}, tab, helpSeg)
 	case len(p.Tasks) == 0:
-		return []FooterSeg{{Text: "enter about"}, {Text: "esc plans"}, tab, helpSeg}
+		return append(scroll, FooterSeg{Text: "i about"}, FooterSeg{Text: "esc plans"}, tab, helpSeg)
 	}
-	enter := seg("enter details", "enter about")
-	if a.outline.sel == "" {
-		enter.Text = "enter about"
-	}
-	return []FooterSeg{{Text: "↑↓ select"}, enter, {Text: "esc plans"}, tab, helpSeg}
+	return []FooterSeg{{Text: "↑↓ select"}, {Text: "enter details"}, {Text: "i about"}, {Text: "esc plans"}, tab, helpSeg}
 }
 
 // placeholder is the dim hint in the plan list's empty composer: what you
@@ -442,7 +459,7 @@ func (a *app) preview() string {
 	return "enter not a verb"
 }
 
-// context is row 1 (docs/ux.md §4): on the outline the pin line, on
+// context is row 1 (docs/ux.md §4): on the task list the pin line, on
 // AGENT the turn and the pin, elsewhere what the page is for.
 func (a *app) context() StatusLine {
 	muted := func(text string) StatusLine { return StatusLine{Text: text, Kind: "muted"} }
@@ -891,9 +908,9 @@ func (a *app) helpKey(key string) bool {
 func (a *app) applyKey(key string) bool {
 	if l := layoutFor(a.columns, a.lines); !l.typing && key != CtrlC && key != "\x0c" {
 		_, paste := IsPaste(key)
-		// ? opening Help, and o opening an offer, type nothing, so they still
-		// work on a short screen.
-		edits := paste || (isPrintableKey(key) && !a.helpKey(key) && !a.offerKey(key)) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
+		// ? opening Help, o opening an offer and i opening About type
+		// nothing, so they still work on a short screen.
+		edits := paste || (isPrintableKey(key) && !a.helpKey(key) && !a.offerKey(key) && !a.aboutKey(key)) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
 		submits := (key == "\r" || key == "\n") && a.draft != "" && a.composing()
 		if l.locked || edits || submits {
 			// The UI isn't visible (locked), or the composer isn't: nothing
@@ -954,6 +971,9 @@ func (a *app) handleKeyArmed(key string) bool {
 	}
 	if a.offerKey(key) {
 		return a.takeOffer()
+	}
+	if a.aboutKey(key) {
+		return a.openAbout()
 	}
 	text, paste := IsPaste(key)
 	if !a.composing() {
@@ -1150,6 +1170,7 @@ func (a *app) planEnter() bool {
 		if b.CommitCreate(a.draft) == PlanOpenChat {
 			a.draft = ""
 			a.openedPlan()
+			a.created()
 			a.latch() // you made it: latched (docs/ux.md §11)
 			a.offerHeld(held)
 		}
@@ -1160,6 +1181,7 @@ func (a *app) planEnter() bool {
 		return true
 	}
 	filter, was, held := b.Filter, b.Current, a.pending
+	create := b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowCreateNamed
 	switch b.Activate() {
 	case PlanStartCreate:
 		// From a Browse filter, what was typed becomes the name to edit.
@@ -1174,6 +1196,9 @@ func (a *app) planEnter() bool {
 		a.draft = ""
 	case PlanOpenChat:
 		a.openedPlan()
+		if create {
+			a.created()
+		}
 		if !samePlan(b.Current, was) {
 			a.latch() // you picked it: latched (docs/ux.md §11); the open plan picks nothing new
 		}
@@ -1183,8 +1208,8 @@ func (a *app) planEnter() bool {
 }
 
 // openedPlan runs after a plan is opened, created or attached: Rex reads
-// it, lands PLAN on its outline with the pin selected, and remembers it as
-// this repo's last plan.
+// it, lands PLAN on its task list with the pin selected, says which file
+// opened on the notice row, and remembers it as this repo's last plan.
 func (a *app) openedPlan() {
 	path := a.plans.Current
 	now := a.now()
@@ -1201,96 +1226,135 @@ func (a *app) openedPlan() {
 	a.draft = ""
 	a.at = atOutline
 	a.offer, a.pending = "", "" // any open settles which plan is shown
-	a.glanceOnce()              // a reload never comes through here
+	full, rel := "Opened ", a.plans.CurrentRel()
+	if t := a.planTitle(); t != "" {
+		full += t + " · "
+	}
+	a.show(openNotice(full+rel, "Opened ", rel))
+	a.glanceOnce() // a reload never comes through here
 	a.syncDrift()
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
 		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
 	})
 }
 
-// docKey handles keys on the open plan's outline and detail screens. They
+// created says the plan you just made was written (docs/ux.md §6),
+// "✔ Created rex/plans/team/auth.rex.json", over openedPlan's notice.
+func (a *app) created() {
+	rel := a.plans.CurrentRel()
+	a.show(openNotice(doneMark+" Created "+rel, doneMark+" Created ", rel))
+}
+
+// planTitle is the open plan's title as a notice names it, or "".
+func (a *app) planTitle() string {
+	if a.doc == nil || a.doc.plan == nil {
+		return ""
+	}
+	return strings.TrimSpace(flat(a.doc.plan.Title))
+}
+
+// openNotice is the notice that says which file just opened (docs/ux.md
+// §4, §6), "Opened Send-off demo · rex/plans/cuj/sendoff-demo.rex.json":
+// narrow, it is lead and the path, then the path clips from the left.
+func openNotice(full, lead, rel string) StatusLine {
+	full, rel = flat(full), flat(rel)
+	return StatusLine{Text: full, Kind: "text", Fit: func(w int) string {
+		switch short := lead + rel; {
+		case cellLen(short) <= w:
+			return short
+		case w-cellLen(lead) > headPathMin:
+			return lead + "…" + tailCells(rel, w-cellLen(lead)-1)
+		}
+		return ellipsis(full, w)
+	}}
+}
+
+// docKey handles keys on the open plan's task list and its pages. They
 // have no composer: every key acts at once (docs/ux.md §3).
 func (a *app) docKey(key string) bool {
 	v := &a.outline
 	p := a.doc.plan
 	step := max(1, a.planRows()-2)
 	if a.at == atOutline {
+		if p == nil || len(p.Tasks) == 0 {
+			// No list: the page scrolls, clamped when drawn (docs/ux.md §6).
+			if key == "esc" || key == "left" {
+				return a.toLibrary()
+			}
+			return pageKey(&v.scroll, key, a.planRows())
+		}
 		switch key {
 		case "up", "down":
-			if p == nil {
-				return false
-			}
 			v.move(p, map[string]int{"up": -1, "down": 1}[key])
 			return true
 		case "pageup", "pagedown":
-			if p == nil {
-				return false
-			}
-			l := a.layout()
-			v.sel = outlinePage(p, *v, l.textW, a.planRows(), key == "pagedown")
+			v.sel = outlinePage(p, *v, a.layout().textW, a.planRows(), a.lines >= blankFrom, key == "pagedown")
 			return true
 		case "home", "end":
-			if p == nil {
-				return false
-			}
 			v.edge(p, key == "end")
 			return true
-		case "right":
+		case "right", "\r", "\n":
 			return a.openDetail()
-		}
-	} else {
-		switch key {
-		case "up":
-			v.scroll = max(0, v.scroll-1)
-			return true
-		case "down":
-			v.scroll++
-			return true
-		case "pageup":
-			v.scroll = max(0, v.scroll-step)
-			return true
-		case "pagedown":
-			v.scroll += step
-			return true
-		case "home":
-			v.scroll = 0
-			return true
-		case "end":
-			v.scroll = 1 << 30 // clamped when drawn
-			return true
-		}
-	}
-	switch key {
-	case "esc", "left":
-		if a.at == atOutline {
+		case "esc", "left":
 			return a.toLibrary()
 		}
-		a.at = atOutline
-		a.outline.keepSel(a.doc.plan) // the task read in detail may be gone
-		return true
-	case "\r", "\n":
-		if a.at == atOutline {
-			return a.openDetail()
-		}
 		return false
+	}
+	switch key {
+	case "up":
+		v.scroll = max(0, v.scroll-1)
+		return true
+	case "down":
+		v.scroll++
+		return true
+	case "pageup":
+		v.scroll = max(0, v.scroll-step)
+		return true
+	case "pagedown":
+		v.scroll += step
+		return true
+	case "home":
+		v.scroll = 0
+		return true
+	case "end":
+		v.scroll = 1 << 30 // clamped when drawn
+		return true
+	case "esc", "left":
+		// Back to the list, on the task it showed (docs/ux.md §3), or on the
+		// pin when that task has left the file.
+		a.at = atOutline
+		a.outline.keepSel(a.doc.plan)
+		return true
 	}
 	return false
 }
 
+// openDetail is enter or → on the task list: the selected task's details,
+// on a page of their own (docs/ux.md §6).
 func (a *app) openDetail() bool {
-	if a.doc.plan == nil {
+	if a.doc.plan == nil || a.outline.sel == "" {
 		return false
 	}
 	a.at = atTaskDetail
-	if a.outline.sel == "" {
-		a.at = atPlanDetail
-	}
+	a.outline.scroll = 0
+	return true
+}
+
+// aboutKey reports that key is i opening About from the task list
+// (docs/ux.md §3): a letter that types nothing there.
+func (a *app) aboutKey(key string) bool {
+	return key == "i" && a.pane == PanePlans && a.at == atOutline && a.overlay[PanePlans] == overlayNone && a.doc != nil && a.doc.plan != nil
+}
+
+// openAbout is i on the task list: About, from its top.
+func (a *app) openAbout() bool {
+	a.at = atPlanDetail
 	a.outline.scroll = 0
 	return true
 }
 
 // toLibrary leaves the open plan for the plan list, the cursor on it under
-// OPEN (docs/ux.md §11). The plan stays open: row 0 and AGENT keep it.
+// OPEN (docs/ux.md §11). The plan stays open: AGENT keeps it.
 func (a *app) toLibrary() bool {
 	b := a.plans
 	a.at = atLibrary
@@ -1309,7 +1373,6 @@ func (a *app) pollDoc() bool {
 	if a.doc == nil {
 		return false
 	}
-	hadTasks := a.doc.plan != nil && len(a.doc.plan.Tasks) > 0
 	var was *plan.Task
 	if a.doc.plan != nil {
 		was = a.doc.plan.Graph().Pin()
@@ -1320,14 +1383,12 @@ func (a *app) pollDoc() bool {
 	}
 	a.plans.showDoc(a.doc)
 	if a.at == atLibrary {
-		a.plans.Rebuild() // the open plan's row and accordion follow what the outline shows
+		a.plans.Rebuild() // the open plan's row and accordion follow what the task list shows
 	}
 	if a.at != atTaskDetail {
+		// An agent that fills an empty plan lands the cursor on its pin, as
+		// an open does (docs/ux.md §1).
 		a.outline.keepSel(a.doc.plan)
-	}
-	if p := a.doc.plan; !hadTasks && p != nil && len(p.Tasks) > 0 && a.outline.sel == "" {
-		// An agent just filled an empty plan: land on its pin, as an open does.
-		a.outline.sel = defaultSel(p)
 	}
 	a.rejudgeDrift()
 	if news.text == "" {
@@ -1443,8 +1504,12 @@ func (a *app) pageKind() string {
 		return "about"
 	case a.at == atTaskDetail:
 		return "task"
+	case a.doc.plan == nil:
+		return "can't read"
+	case len(a.doc.plan.Tasks) == 0:
+		return "no tasks"
 	default:
-		return "outline"
+		return "tasks"
 	}
 	switch a.plans.Screen {
 	case ScreenBrowse:

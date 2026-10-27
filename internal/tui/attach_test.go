@@ -174,10 +174,11 @@ func TestEveryHarnessWriteOpensThePlan(t *testing.T) {
 		if a.pane != PaneChat {
 			t.Fatalf("%s: an attach moved you: pane=%d", tc.source, a.pane)
 		}
-		if s := a.toast; !a.toastLive() || s.Text != "following "+planStem(tc.name) || s.Kind != "text" || a.notice().Text != "" {
+		says := "Your agent wrote Send-off demo · opened rex/plans/" + tc.name
+		if s := a.toast; !a.toastLive() || s.Text != says || s.Kind != "text" || a.notice().Text != "" {
 			t.Fatalf("%s: the toast that says why the plan changed waits for PLAN, in text, not the pin's yellow: %q %q", tc.source, s.Text, s.Kind)
 		}
-		if press(a, "\t"); a.notice().Text != "following "+planStem(tc.name) {
+		if press(a, "\t"); a.notice().Text != says {
 			t.Fatalf("%s: back on PLAN the notice row says why: %q", tc.source, a.notice().Text)
 		}
 		if last := a.log[len(a.log)-1]; last.Source != "rex" || last.Kind != "plan" || last.Text != "following "+planStem(tc.name) {
@@ -326,6 +327,7 @@ func TestLatchedOffersTheNewPlan(t *testing.T) {
 	if a.plans.Current != path || a.at != atTaskDetail || a.offer == "" {
 		t.Fatalf("enter never takes the offer: current=%q at=%d", a.plans.Current, a.at)
 	}
+	c.t = c.t.Add(toastFor) // reopening it said so on the notice row, over the offer
 	press(a, "esc", "o")
 	if a.plans.Current != other || !a.follow || a.offer != "" || a.at != atOutline {
 		t.Fatalf("o opens it: current=%q follow=%v", a.plans.Current, a.follow)
@@ -475,6 +477,7 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	repo := attachRepo(t)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
 	a := startIn(repo)
+	endToast(a)
 	press(a, "esc")
 	pickRow(a, PlanRowNew, "")
 	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowNew {
@@ -516,6 +519,10 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	if a.plans.Current != filepath.Join(PlansDir(repo), "mine.rex.json") || a.follow || a.pending != "" || a.offer != three {
 		t.Fatalf("creating latches and offers it: current=%q follow=%v pending=%q offer=%q", a.plans.Current, a.follow, a.pending, a.offer)
 	}
+	if got := a.statusLine().Text; got != "✔ Created rex/plans/mine.rex.json" {
+		t.Fatalf("creating says so first: %q", got)
+	}
+	endToast(a)
 	if got := a.statusLine().Text; got != "Your agent wrote Send-off demo (three) · o opens it" {
 		t.Fatalf("notice %q", got)
 	}
@@ -572,6 +579,10 @@ func TestLatchingOffersAHeldAttach(t *testing.T) {
 		if a.plans.Current != pick.want || a.follow != (pick.want == one) || a.pending != "" || a.offer != two {
 			t.Fatalf("%s: current=%q follow=%v pending=%q offer=%q", pick.find, a.plans.Current, a.follow, a.pending, a.offer)
 		}
+		if got := a.statusLine().Text; !strings.HasPrefix(got, "Opened Send-off demo · rex/plans/") {
+			t.Fatalf("%s: the pick says what opened first: %q", pick.find, got)
+		}
+		endToast(a)
 		a.settle(a.columns, a.lines)
 		if a.plans.Current != pick.want || a.statusLine().Text != "Your agent wrote Send-off demo (two) · o opens it" {
 			t.Fatalf("offered, not opened: current=%q notice %q", a.plans.Current, a.statusLine().Text)
@@ -613,6 +624,7 @@ func TestPickingWhileHeldKeepsTheAgentsPlan(t *testing.T) {
 	if a.plans.Current != scratch || a.follow || a.offer != other {
 		t.Fatalf("picked: current=%q follow=%v offer=%q", a.plans.Current, a.follow, a.offer)
 	}
+	c.t = c.t.Add(toastFor) // the pick's Opened notice first
 	if got := a.statusLine().Text; got != "Your agent wrote agent-new · o opens it" {
 		t.Fatalf("notice %q", got)
 	}
@@ -668,16 +680,16 @@ func TestColdStartFindsAPlanWithoutAHook(t *testing.T) {
 func TestTitleSaysFollowing(t *testing.T) {
 	a, _, _ := cujApp(t) // start follows the plan it lands on
 	a.settle(120, 32)
-	if got := textOf(a.frameRows().Rows[0], 120); got != "  Send-off demo"+strings.Repeat(" ", 77-15-35)+"1/3 done · following   plan · agent" {
+	if got := textOf(a.frameRows().Rows[0], 120); got != "Send-off demo"+strings.Repeat(" ", 77-13-35)+"1/3 done · following   plan · agent" {
 		t.Fatalf("row 0 following: %q", got)
 	}
 	a.settle(38, 24)
-	if got := textOf(a.frameRows().Rows[0], 38); got != "  Send-off demo    1/3   plan · agent" {
+	if got := textOf(a.frameRows().Rows[0], 38); got != "Send-off demo      1/3   plan · agent" {
 		t.Fatalf("row 0 at 38x24: %q", got)
 	}
 	a.settle(120, 32)
 	a.latch()
-	if got := textOf(a.frameRows().Rows[0], 120); got != "  Send-off demo"+strings.Repeat(" ", 77-15-23)+"1/3 done   plan · agent" {
+	if got := textOf(a.frameRows().Rows[0], 120); got != "Send-off demo"+strings.Repeat(" ", 77-13-23)+"1/3 done   plan · agent" {
 		t.Fatalf("row 0 latched: %q", got)
 	}
 	b := testApp(t)
@@ -761,6 +773,7 @@ func TestNoticeRanksTheOffer(t *testing.T) {
 		t.Fatalf("hard drift %q (%v) is under the offer: %q", s.Text, ok, a.notice().Text)
 	}
 	press(a, "esc", "\r") // the open plan settles the offer
+	endToast(a)           // and says it opened
 	if got := a.notice().Text; a.offer != "" || got != "off pin · README.md · outside card-highlight files" {
 		t.Fatalf("notice %q", got)
 	}
@@ -768,6 +781,7 @@ func TestNoticeRanksTheOffer(t *testing.T) {
 	// Soft drift is AGENT's only.
 	a, _, _, _ = offered(t, "internal/tui/live.go")
 	press(a, "esc", "\r")
+	endToast(a)
 	if got := a.notice().Text; a.offer != "" || got != "" || a.drift.soft == nil {
 		t.Fatalf("soft drift on the notice row: %q", got)
 	}
@@ -871,6 +885,7 @@ func TestAHeldAttachShowsOnRowOne(t *testing.T) {
 	repo := attachRepo(t)
 	writePlan(t, repo, "one.rex.json", demoPlan)
 	a := startIn(repo)
+	endToast(a)
 	press(a, "esc")
 	typeText(a, "pi")
 	two := writePlan(t, repo, "team/a-much-longer-plan-name.rex.json", demoPlan)
@@ -883,7 +898,7 @@ func TestAHeldAttachShowsOnRowOne(t *testing.T) {
 		t.Fatalf("the notice row at 38 columns: %q", row)
 	}
 	press(a, "\x15")
-	if a.plans.Current != two || strings.HasPrefix(a.notice().Text, "Your agent wrote") {
+	if a.plans.Current != two || strings.Contains(a.notice().Text, "waiting") || strings.Contains(a.notice().Text, "opens when") {
 		t.Fatalf("current=%q notice %q", a.plans.Current, a.notice().Text)
 	}
 

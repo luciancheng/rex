@@ -465,24 +465,6 @@ func TestTitleRow(t *testing.T) {
 	if short := placeLabel(PanePlans, true); spanText(short) != "plan" || short[0].Role != "text" {
 		t.Errorf("the short label is the place on screen: %+v", short)
 	}
-	// Selected, the outline's title row is ❯ and the selection's purple,
-	// but for the label, which keeps its roles.
-	sel := titleLine(Page{Crumbs: []string{"Send-off demo"}, Meta: metaSpans("1/3 done"), Selected: true}, 50, PanePlans)
-	if got := plainRow(sel, 50); got != sides("❯ Send-off demo", "1/3 done   "+label, 50) || sel.Kind != "pick" {
-		t.Errorf("the selected title row: %q kind %q", got, sel.Kind)
-	}
-	for _, sp := range sel.Spans {
-		switch sp.Text {
-		case "plan", "agent", " · ":
-			if sp.Role == "" {
-				t.Errorf("the label keeps its roles on the selected row: %+v", sp)
-			}
-		default:
-			if sp.Role != "" && strings.TrimSpace(sp.Text) != "" {
-				t.Errorf("the selected title is all purple: %+v", sp)
-			}
-		}
-	}
 	// Under NO_COLOR it is the same text, and nothing is ever filled.
 	painted := paintLine(line, 78, true)
 	if !strings.Contains(painted, "\033[1mcard-highlight") || stripSGR(painted) != paintLine(line, 78, false) || strings.Contains(painted, "\033[48") {
@@ -619,8 +601,11 @@ func TestNoticePriorityAndExpiry(t *testing.T) {
 		t.Fatalf("then the offer is back: %v %q", kind(), text())
 	}
 	press(a, "o")
-	if a.plans.Current != other || kind() != noticeNone {
-		t.Fatalf("o takes the offer, and nothing else applies: %v %q", kind(), text())
+	if a.plans.Current != other || kind() != noticeToast || text() != "Opened Send-off demo · rex/plans/cuj/next.rex.json" {
+		t.Fatalf("o takes the offer and says what opened: %v %q", kind(), text())
+	}
+	if c.t = c.t.Add(toastFor); kind() != noticeNone {
+		t.Fatalf("then nothing else applies: %v %q", kind(), text())
 	}
 	// Narrow, each kind keeps what it is about.
 	for _, s := range []StatusLine{
@@ -841,25 +826,25 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 		t.Fatalf("Help moved under the reader, or its crumbs didn't\n%s\n%s", t2, b2)
 	}
 	press(a, "esc")
-	if title, _ := frame(); !strings.HasPrefix(title, "  Send-off demo ") {
-		t.Fatalf("Esc shows the outline: %q", title)
+	if title, _ := frame(); !strings.HasPrefix(title, "Send-off demo ") {
+		t.Fatalf("Esc shows the task list: %q", title)
 	}
 	press(a, "?")
-	if title, _ := frame(); crumbs(title) != "Send-off demo › Help" || !strings.Contains(viewText(a.helpBody(38)), "─ outline\n") {
-		t.Fatalf("Help opens over the outline now: %q", title)
+	if title, _ := frame(); crumbs(title) != "Send-off demo › Help" || !strings.Contains(viewText(a.helpBody(38)), "─ tasks\n") {
+		t.Fatalf("Help opens over the task list now: %q", title)
 	}
 	// Over a task, an attach under Help names the plan Esc lands on.
 	press(a, "esc", "\r", "?")
 	newer := writePlan(t, repo, "cuj/newer.rex.json", strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Brand new plan"`, 1))
 	a.ingest([]watch.Event{wrote(repo, newer)})
 	if title, _ := frame(); crumbs(title) != "Brand new plan › Help" {
-		t.Fatalf("Help's crumbs name the outline under it: %q", title)
+		t.Fatalf("Help's crumbs name the task list under it: %q", title)
 	}
 	if !strings.Contains(viewText(a.helpBody(38)), "─ task\n") {
 		t.Fatal("THIS PAGE stays the task's")
 	}
 	press(a, "esc")
-	if title, _ := frame(); !strings.HasPrefix(title, "  Brand new plan ") {
+	if title, _ := frame(); !strings.HasPrefix(title, "Brand new plan ") {
 		t.Fatalf("Esc goes where the crumbs said: %q", title)
 	}
 	// AGENT has a title at every height, and so does Help over it.
@@ -944,11 +929,17 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 		page  string
 		setup func(a *app)
 	}{
-		{"outline", func(a *app) {}},
-		{"outline", func(a *app) { press(a, "home") }},
-		{"outline", func(a *app) { latched(a); offered(a) }},
-		{"about", func(a *app) { press(a, "home", "\r") }},
-		{"about", func(a *app) { latched(a); press(a, "home", "\r"); offered(a) }},
+		{"tasks", func(a *app) {}},
+		{"tasks", func(a *app) { press(a, "home") }},
+		{"tasks", func(a *app) { latched(a); offered(a) }},
+		{"about", func(a *app) { press(a, "i") }},
+		{"about", func(a *app) { latched(a); press(a, "i"); offered(a) }},
+		{"no tasks", func(a *app) { press(a, "esc"); typeText(a, "scratch"); press(a, "\r") }},
+		{"can't read", func(a *app) {
+			p := writePlan(t, a.plans.Repo, "ux/broken.rex.json", `{"tasks": [`)
+			a.plans.open(p)
+			a.openedPlan()
+		}},
 		{"task", func(a *app) { latched(a); press(a, "\r"); offered(a) }},
 		{"plans", func(a *app) { press(a, "esc") }},
 		{"plans", func(a *app) { latched(a); press(a, "esc"); offered(a) }},
@@ -963,7 +954,7 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 		{"agent", func(a *app) { press(a, "\t"); scrolls(a) }},
 		{"agent", func(a *app) { latched(a); press(a, "\t"); scrolls(a); offered(a) }},
 	}
-	words := map[string]string{"up": "↑↓", "down": "↑↓", "pageup": "pgup", "pagedown": "pgdn", "home": "home", "end": "end", "left": "←", "right": "→", "esc": "esc", "\r": "enter"}
+	words := map[string]string{"up": "↑↓", "down": "↑↓", "pageup": "pgup", "pagedown": "pgdn", "home": "home", "end": "end", "left": "←", "right": "→", "esc": "esc", "\r": "enter", "i": "i"}
 	opposite := map[string]string{"up": "down", "down": "up", "pageup": "pagedown", "pagedown": "pageup", "home": "end", "end": "home"}
 	for _, size := range [][2]int{{24, 7}, {80, 12}, {120, 32}} {
 		for _, pg := range pages {
@@ -1029,7 +1020,7 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 				t.Errorf("%d×%d %s: o opens the offer, but THIS PAGE doesn't say %q\n%s", size[0], size[1], pg.page, offerHelp.what, text)
 			}
 			for key, word := range words {
-				if listed[word] {
+				if listed[word] || key == "i" && listed["type"] { // a letter types where the page takes typing
 					continue
 				}
 				o, ok := opposite[key]
@@ -1106,8 +1097,8 @@ func TestFootersPinned(t *testing.T) {
 	sizes := [4]int{24, 38, 60, 121}
 	home := want{"enter open · ? help", "enter open · tab agent · ? help", "↑↓ select · enter open · tab agent · ? help", "↑↓ select · enter open · type to find · tab agent · ? help"}
 	create := want{"enter create · ? help", "enter create · tab agent · ? help", "↑↓ select · enter create · tab agent · ? help", "↑↓ select · enter create · type to find · tab agent · ? help"}
-	outline := want{"enter details · ? help", "enter details · esc plans · ? help", "↑↓ select · enter details · esc plans · tab agent · ? help", "↑↓ select · enter details · esc plans · tab agent · ? help"}
-	detail := want{"esc outline · ? help", "esc outline · tab agent · ? help", "↑↓ scroll · esc outline · tab agent · ? help", "↑↓ scroll · esc outline · tab agent · ? help"}
+	tasks := want{"enter details · ? help", "enter details · esc plans · ? help", "↑↓ select · enter details · esc plans · tab agent · ? help", "↑↓ select · enter details · i about · esc plans · tab agent · ? help"}
+	detail := want{"esc tasks · ? help", "esc tasks · tab agent · ? help", "↑↓ scroll · esc tasks · tab agent · ? help", "↑↓ scroll · esc tasks · tab agent · ? help"}
 	agent := want{"tab plan · ? help", "↑↓ scroll · tab plan · ? help", "↑↓ scroll · home oldest · end live · tab plan · ? help", "↑↓ scroll · home oldest · end live · tab plan · ? help"}
 	for _, tc := range []struct {
 		name  string
@@ -1133,11 +1124,12 @@ func TestFootersPinned(t *testing.T) {
 		{"plan list, /help typed", func(a *app) { press(a, "esc"); typeText(a, "/help") }, want{"enter help · esc clear", "enter help · esc clear · tab agent", "enter help · esc clear · tab agent", "enter help · esc clear · tab agent"}},
 		{"name prompt", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r") }, want{"enter create · ? help", "enter create · esc cancel · ? help", "enter create · esc cancel · tab agent · ? help", "enter create · esc cancel · tab agent · ? help"}},
 		{"name prompt, named", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x") }, want{"enter create", "enter create · esc clear · tab agent", "enter create · esc clear · tab agent", "enter create · esc clear · tab agent"}},
-		{"outline", func(a *app) {}, outline},
-		{"outline, title row", func(a *app) { press(a, "home") }, want{"enter about · ? help", "enter about · esc plans · ? help", "↑↓ select · enter about · esc plans · tab agent · ? help", "↑↓ select · enter about · esc plans · tab agent · ? help"}},
-		{"outline, offer", func(a *app) { latched(a); press(a, "esc"); typeText(a, "sendoff"); press(a, "\r"); offered(a) }, outline},
+		{"tasks", func(a *app) {}, tasks},
+		{"tasks, a done task", func(a *app) { press(a, "home") }, tasks},
+		{"tasks, offer", func(a *app) { latched(a); press(a, "esc"); typeText(a, "sendoff"); press(a, "\r"); offered(a) }, tasks},
+		{"tasks, none yet", latched, want{"esc plans · ? help", "esc plans · tab agent · ? help", "i about · esc plans · tab agent · ? help", "i about · esc plans · tab agent · ? help"}},
 		{"task detail", func(a *app) { press(a, "\r") }, detail},
-		{"about", func(a *app) { press(a, "home", "\r") }, detail},
+		{"about", func(a *app) { press(a, "i") }, detail},
 		{"detail, offer", func(a *app) { latched(a); press(a, "esc"); typeText(a, "sendoff"); press(a, "\r", "\r"); offered(a) }, detail},
 		{"agent", func(a *app) { press(a, "\t"); a.ingest([]watch.Event{watch.NewEvent("claude", "text", "done", nil)}) }, agent},
 		{"agent, scrolled", scrolled, agent},
@@ -1213,7 +1205,7 @@ func TestFooterNeverMovesWithTheCursor(t *testing.T) {
 			a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, filepath.Join(a.plans.Root, "ux"), true
 			a.plans.Rebuild()
 		}},
-		{"outline", func(a *app) {
+		{"tasks", func(a *app) {
 			os.WriteFile(a.plans.Current, []byte(redesignPlan), 0o644)
 			a.reloadDoc()
 		}},
@@ -1234,7 +1226,8 @@ func TestFooterNeverMovesWithTheCursor(t *testing.T) {
 				seen[footer()] = true
 				press(a, "down")
 			}
-			if len(seen) < 2 && s.name != "find" {
+			// The task list's enter always opens details (docs/ux.md §4.2).
+			if len(seen) < 2 && s.name != "find" && s.name != "tasks" {
 				t.Errorf("%s %d×%d: no row changed what enter does: %v", s.name, size[0], size[1], seen)
 			}
 		}
@@ -1253,32 +1246,15 @@ func TestExitLine(t *testing.T) {
 }
 
 // docs/ux.md §5: H2 is a bold capitals label, a slate rule of at least
-// three cells, and optional muted meta; H3 is a field in an 8-cell label
-// column with its value hanging beside it.
-func TestH2AndFields(t *testing.T) {
-	var lines []LogLine
-	lines = append(lines, h2Line("VERIFY", "2", 38), h2Line("CONTEXT", "", 38))
-	lines = append(lines, fieldLines(h3{label: "needs", items: []string{"the pick and pickbg colors exist in mascot.UI"}}, 38, 8)...)
-	lines = append(lines, fieldLines(h3{label: "does", items: []string{"one", "two"}}, 38, 8)...)
-	lines = append(lines, fieldLines(h3{label: "files", items: []string{"internal/tui/plans.go", "internal/tui/live.go"}}, 38, 8)...)
-	lines = append(lines, fieldLines(h3{label: "after", items: []string{"✔ plans-ui  Home cards, folder browser, duplicate names refused"}, bare: true, rows: 2}, 38, 8)...)
-	lines = append(lines, fieldLines(h3{label: "changed", items: []string{"internal/tui/plans.go"}}, 38, h3Col(h3{label: "changed", items: []string{"x"}}))...)
+// three cells, and optional muted meta.
+func TestH2Line(t *testing.T) {
 	var got []string
-	for _, l := range lines {
+	for _, l := range []LogLine{h2Line("VERIFY", "2", 38), h2Line("CONTEXT", "", 38)} {
 		got = append(got, plainRow(l, 38))
 	}
 	want := []string{
 		"VERIFY ───────────────────────────── 2",
 		"CONTEXT ──────────────────────────────",
-		"  needs   the pick and pickbg colors",
-		"          exist in mascot.UI",
-		"  does    • one",
-		"          • two",
-		"  files   internal/tui/plans.go",
-		"          internal/tui/live.go",
-		"  after   ✔ plans-ui  Home cards,",
-		"          folder browser, duplicate n…",
-		"  changed  internal/tui/plans.go",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -1288,9 +1264,6 @@ func TestH2AndFields(t *testing.T) {
 	}
 	if h := h2Line("FEED", "", 38); !h.Spans[0].Bold || h.Spans[1].Role != "border" {
 		t.Fatalf("%+v", h.Spans)
-	}
-	if fieldLines(h3{label: "needs"}, 38, 8) != nil {
-		t.Fatal("an empty field draws nothing")
 	}
 }
 
@@ -1314,33 +1287,23 @@ func TestHardDriftNoticeGoesOnceAgentIsSeen(t *testing.T) {
 	}
 }
 
-// docs/ux.md §4: the outline's title row keeps its 2-cell gutter whether
-// the cursor is on it or not, so moving the cursor changes only the
-// gutter: never which crumbs, meta or label row 0 shows.
-func TestTitleRowNeverMovesWithTheCursor(t *testing.T) {
-	for _, title := range []string{"Sixteen cell ttl", "Send-off demo", "A very long plan title that cannot fit"} {
-		page := Page{Crumbs: []string{title}, Meta: metaSpans("1/3 done · following"), Short: metaSpans("1/3"), Selectable: true}
-		for width := 24; width <= 80; width++ {
-			off := plainRow(titleLine(page, width, PanePlans), width)
-			page.Selected = true
-			on := plainRow(titleLine(page, width, PanePlans), width)
-			page.Selected = false
-			if cutCells(off, 2) != "  " || cutCells(on, 2) != "❯ " || tailCells(off, cellLen(off)-2) != tailCells(on, cellLen(on)-2) {
-				t.Errorf("%q at %d cells:\noff %q\non  %q", title, width, off, on)
-			}
-		}
-	}
+// docs/ux.md §4, §6: the plan's title on row 0 is never selectable: the
+// cursor moves over the tasks only (Home is the first task), and row 0
+// starts at column 0 and never changes as it moves.
+func TestTitleRowIsNeverSelected(t *testing.T) {
 	a, _, _ := openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Sixteen cell ttl"`, 1), 38, 24)
 	row0 := func() string { return textOf(a.frameRows().Rows[0], 38) }
-	on := ""
-	for _, key := range []string{"home", "down", "down", "up", "up"} {
+	first := row0()
+	if !strings.HasPrefix(first, "Sixteen cell ttl") {
+		t.Fatalf("row 0 starts at column 0: %q", first)
+	}
+	for _, key := range []string{"home", "up", "up", "down", "end", "down", "pageup", "home"} {
 		press(a, key)
-		got := row0()
-		if on == "" {
-			on = got
+		if got := row0(); got != first || a.outline.sel == "" {
+			t.Fatalf("%s: row 0 %q → %q, sel %q", key, first, got, a.outline.sel)
 		}
-		if tailCells(got, cellLen(got)-2) != tailCells(on, cellLen(on)-2) {
-			t.Fatalf("%s moved row 0: %q → %q", key, on, got)
-		}
+	}
+	if a.outline.sel != "plans-ui" {
+		t.Fatalf("home is the first task: %q", a.outline.sel)
 	}
 }

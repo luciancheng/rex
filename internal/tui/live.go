@@ -418,10 +418,9 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		scroll = opt.Plans.window(body, bodyH)
 		fromTop, list = true, true
 	} else if opt.Pane == PanePlans {
-		// Wait, or the open plan's screen, even an empty one. The
-		// outline's head stays put over its tasks; its collapse ladder
-		// already fit it to the rows (docs/ux.md §6), PlanRows of them
-		// where it says.
+		// Wait, or the open plan's screen, even an empty one. The task
+		// list and its pages come laid out to their rows (docs/ux.md §6),
+		// PlanRows of them where it says.
 		if opt.PlanRows > 0 && opt.PlanRows < bodyH {
 			bodyH, bodyBottom = opt.PlanRows, bodyTop+opt.PlanRows
 		}
@@ -499,7 +498,12 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		rows[1] = statusRow(line, width, enabled)
 	}
 	if l.blank > 0 {
+		// Blank, but for ↑ N more at its right end while the open plan's
+		// list or page is scrolled (docs/ux.md §4).
 		rows[2] = strings.Repeat(" ", width)
+		if more := cellLen(opt.More); more > 0 && more < width {
+			rows[2] = strings.Repeat(" ", width-1-more) + paintSpans([]Span{{Text: opt.More}}, "muted", more, enabled) + " "
+		}
 	}
 	for offset, line := range pinned {
 		rows[bodyTop-len(pinned)+offset] = paintLine(line, width, enabled)
@@ -628,6 +632,7 @@ type ComposeOptions struct {
 	PlanView    []LogLine   // Wait or the open plan's screen, when PLAN shows one
 	PlanScroll  int         // its first visible line
 	PlanRows    int         // the body rows the open plan's screen takes, when fewer than the screen has
+	More        string      // "↑ 3 more": the open plan's list or page goes on above, said at row 2's right end
 	Footer      []FooterSeg // the screen's footer, when the caller has it
 }
 

@@ -283,6 +283,7 @@ func TestAPlanOpenGlancesOnce(t *testing.T) {
 	if a.glance != 0 || a.offer == "" {
 		t.Fatalf("latched, the write is only offered: glance %d offer %q", a.glance, a.offer)
 	}
+	c.t = c.t.Add(toastFor) // the pick's Opened notice is over the offer until it ends
 	press(a, "o")
 	if a.plans.Current != next {
 		t.Fatalf("o: %q", a.plans.Current)
@@ -612,3 +613,7 @@ func TestAgentNeedsYouNotice(t *testing.T) {
 		t.Fatalf("state.json holds a notice: %s", data)
 	}
 }
+
+// endToast has the notice row's toast had its time, as toastFor would:
+// an open's notice is over what a test checks next (docs/ux.md §4).
+func endToast(a *app) { a.toastUntil, a.toastWait = time.Time{}, false }

@@ -53,7 +53,7 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 	a.settle(120, 32)
 	typeText(a, "?")
 	press(a, "\r")
-	if a.overlay[PaneChat] != overlayHelp || !strings.Contains(viewText(a.helpBody(PaneTextWidth(a.columns))), "rex ingest --install claude") {
+	if a.overlay[PaneChat] != overlayHelp || !strings.Contains(viewText(a.helpBody(PaneTextWidth(a.columns, a.lines))), "rex ingest --install claude") {
 		t.Fatal("help shows feed health too")
 	}
 }
@@ -74,7 +74,7 @@ func TestEmptyAgentNeverStartsMidSentence(t *testing.T) {
 		if !strings.HasPrefix(body[0], "FEED ─") || strings.Contains(strings.Join(body, "\n"), "your agent's work") {
 			t.Errorf("%s: the page starts mid-block, or the lead is in it: %q\n%s", name, body[0], strings.Join(body, "\n"))
 		}
-		if row, want := textOf(a.frameRows().Rows[1], a.columns), feedLead; row != want && (cellLen(feedLead) < PaneTextWidth(a.columns) || row != feedShort && !strings.HasSuffix(row, "…")) {
+		if row, want := textOf(a.frameRows().Rows[1], a.columns), feedLead; row != want && (cellLen(feedLead) < PaneTextWidth(a.columns, a.lines) || row != feedShort && !strings.HasSuffix(row, "…")) {
 			t.Errorf("%s: row 1 is the lead, or its short form where it doesn't fit: %q", name, row)
 		}
 	}
@@ -88,7 +88,7 @@ func TestEmptyAgentScrollsLikeWait(t *testing.T) {
 	a := testApp(t)
 	a.health, a.hidden = notWired(), 4
 	press(a, "\t")
-	a.settle(80, 16)
+	a.settle(38, 16)
 	l := a.layout()
 	all := a.emptyAgent(l.textW)
 	footer := func() string {
@@ -130,17 +130,17 @@ func TestEmptyAgentScrollsLikeWait(t *testing.T) {
 		t.Fatalf("a page is the body less its two marker rows: %d", a.emptyScroll)
 	}
 	// A page that fits has no markers, and nothing to scroll.
-	a.settle(80, 32)
+	a.settle(38, 32)
 	before := a.frame()
 	press(a, "down", "pagedown", "end")
 	if f := a.frame(); f != before || strings.Contains(f, "more") || footer() != "tab plan · ? help" {
 		t.Fatalf("nothing to scroll at 32 rows\n%s", f)
 	}
 	// The first event ends the page: AGENT is live, at the bottom.
-	a.settle(80, 16)
+	a.settle(38, 16)
 	press(a, "down", "down")
 	a.ingest([]watch.Event{watch.NewEvent("claude", "text", "done", nil)})
-	if a.settle(80, 16); a.scroll != 0 || !strings.Contains(a.frame(), "done") {
+	if a.settle(38, 16); a.scroll != 0 || !strings.Contains(a.frame(), "done") {
 		t.Fatalf("scroll=%d\n%s", a.scroll, a.frame())
 	}
 }
@@ -237,7 +237,7 @@ func TestFeedHealthSaysHowTheSkillStands(t *testing.T) {
 }
 
 // A word wider than the value column, such as --install-skill at 24-25
-// text cells (66-67 columns), gets a row of its own, whole: a command
+// text cells (24-25 columns), gets a row of its own, whole: a command
 // split mid-word can't be copied (docs/ux.md §10).
 func TestFeedHealthNeverSplitsAWord(t *testing.T) {
 	h := feedHealth{path: "/x/session.jsonl", statuses: []watch.HarnessStatus{{Name: "codex", Present: true}}, read: time.Now()}
@@ -267,7 +267,7 @@ func TestFeedHealthNeverSplitsAWord(t *testing.T) {
 	if want := "  skill    missing · rex\n           ingest\n    --install-skill"; !strings.Contains(text, want) {
 		t.Fatalf("want\n%s\n%s", want, text)
 	}
-	for _, cols := range []int{66, 67} {
+	for _, cols := range []int{24, 25} {
 		a := testApp(t)
 		a.settle(cols, 44)
 		press(a, "\t")

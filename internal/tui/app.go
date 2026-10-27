@@ -23,6 +23,7 @@ type app struct {
 	hold       int
 	spriteName string
 	animated   bool
+	glance     int // frame ticks left of the glance a plan's open plays (docs/ux.md §12)
 
 	columns, lines int
 
@@ -128,12 +129,33 @@ func (a *app) syncTurn() {
 	a.play(AnimationForTurn(a.turn))
 }
 
+// glanceTicks is how long the glance holds: as long as the idle cycle's.
+const glanceTicks = 14
+
+// glanceOnce has the mascot glance aside once (docs/ux.md §12): a plan
+// opened. Only where the mascot shows, and never over a breakdance, which
+// plays whole. The pose under it keeps its clock.
+func (a *app) glanceOnce() {
+	if a.layout().mascotCols > 0 && a.sequence.Name != "breakdance" {
+		a.glance = glanceTicks
+	}
+}
+
+// sprite is the pose drawn now: the glance while it holds, else the
+// animation's frame.
+func (a *app) sprite() string {
+	if a.glance > 0 {
+		return mascot.Glance
+	}
+	return a.spriteName
+}
+
 func (a *app) frame() string {
-	return ComposeFrame(a.spriteName, a.color, a.composeOptions())
+	return ComposeFrame(a.sprite(), a.color, a.composeOptions())
 }
 
 func (a *app) frameRows() Frame {
-	return composeRows(a.spriteName, a.color, a.composeOptions())
+	return composeRows(a.sprite(), a.color, a.composeOptions())
 }
 
 func (a *app) composeOptions() ComposeOptions {
@@ -643,7 +665,7 @@ func (a *app) viewOpt() viewOpt {
 }
 
 func (a *app) logLines() int {
-	textW := PaneTextWidth(a.columns)
+	textW := PaneTextWidth(a.columns, a.lines)
 	if textW <= 0 {
 		return 0
 	}
@@ -702,7 +724,7 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 	if dropped > 0 && a.scroll > 0 {
 		// The cap takes the oldest lines off the top, which a view counted
 		// from the bottom never moves for.
-		before -= trimmedRows(old, dropped, PaneTextWidth(a.columns), opt)
+		before -= trimmedRows(old, dropped, PaneTextWidth(a.columns, a.lines), opt)
 	}
 	if len(added) > 0 || a.turn != prevTurn {
 		a.below(before) // a turn's end draws nothing but can settle a run
@@ -994,6 +1016,7 @@ func (a *app) submit(text string) bool {
 		a.openHelp()
 	case "breakdance":
 		a.play("breakdance")
+		a.glance = 0 // it plays whole
 	}
 	return true
 }
@@ -1178,6 +1201,7 @@ func (a *app) openedPlan() {
 	a.draft = ""
 	a.at = atOutline
 	a.offer, a.pending = "", "" // any open settles which plan is shown
+	a.glanceOnce()              // a reload never comes through here
 	a.syncDrift()
 	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
 		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
@@ -1512,6 +1536,12 @@ func (a *app) tick() bool {
 			changed = true
 		}
 	}
+	if a.glance > 0 {
+		a.glance--
+		if a.glance == 0 {
+			changed = true
+		}
+	}
 	if !a.animated {
 		return changed
 	}
@@ -1523,7 +1553,9 @@ func (a *app) tick() bool {
 	}
 	if next := a.sequence.Frames[a.frameIndex].Sprite; next != a.spriteName {
 		a.spriteName = next
-		changed = true
+		if a.glance == 0 { // under the glance it shows once the glance ends
+			changed = true
+		}
 	}
 	return changed
 }

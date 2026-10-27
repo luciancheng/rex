@@ -206,7 +206,7 @@ The footer lists **keys**, never the screen's name: the title says where you are
 - After the first Ctrl+C the footer is `ctrl+c again to quit`, muted.
 - Under 7 rows the plan list's hidden composer takes no typing (§12): `type to …` goes, `enter` goes while a hidden draft has text and in a Name prompt, and `? help` while a hidden draft has text.
 
-| Screen | 24 cells | 38 cells (80×24) | 79 cells (121 columns) |
+| Screen | 24 cells | 38 cells | 79 cells (121 columns) |
 |---|---|---|---|
 | plan list | `enter open · ? help` | `enter open · tab agent · ? help` | `↑↓ select · enter open · type to find · tab agent · ? help` |
 | plan list, no plan open | `enter create · ? help` | `enter create · esc wait · ? help` | `↑↓ select · enter create · type to find · esc wait · tab agent · ? help` |
@@ -276,7 +276,7 @@ Rules:
 
 Opening, creating or attaching a plan (§11) lands on its **Outline**. It answers three questions at a glance: what is pinned, what a fresh chat needs to work it, and where every task stands.
 
-The landing state at 80×24 (38-cell text column), the cursor on the pin:
+The landing state in a 38-cell text column (a 38×24 terminal; at 80 columns the text has all 80 cells, §12), the cursor on the pin:
 
 ```
   Send-off demo    1/3   plan · agent
@@ -344,7 +344,7 @@ TASKS ────────────────────────�
 ↑↓ select · enter details · esc plans · tab agent · ? help
 ```
 
-Shorter screens fold the head, never the tasks (the ladder, below): the strip at 80×12 and at 80×7 (with the goal and `TASKS` at 12 rows), and always under 30 cells:
+Shorter screens fold the head, never the tasks (the ladder, below): the strip at 38×12 and at 38×7 (with the goal and `TASKS` at 12 rows), and always under 30 cells:
 
 ```
   Send-off demo    1/3   plan · agent
@@ -707,7 +707,7 @@ The stream is bottom-anchored, newest at the bottom. Each block is named by its 
 | Rex: drift | `rex › drift · <pin>`, then `  hard\|soft <path or prompt> · <why>`, each row fitted like a failed tool call, one block per pin (§9a) | 1 + a row each | packed |
 | warm start | `── before rex started ──` (muted) | 1 | no blank row after |
 
-Mockup at 80×24 (38-col text column), the turn over, an edit next to the pin's files soft drift in its block:
+Mockup at 38×24 (a 38-cell text column), the turn over, an edit next to the pin's files soft drift in its block:
 
 ```
 Agent             live   plan · agent
@@ -736,7 +736,7 @@ reply ────────────────────────�
 ↑↓ scroll · tab plan · ? help
 ```
 
-Mid-turn at 80×12, the newest block a live thought run (the next command settles it to one row):
+Mid-turn at 38×12, the newest block a live thought run (the next command settles it to one row):
 
 ```
 Agent             live   plan · agent
@@ -843,7 +843,7 @@ Either plan lands on its outline and is **following**. The plan list's notice, w
 - of an existing regular `*.rex.json` under this repo's `rex/plans/`, once the path is cleaned and its symlinks resolved: a `..` counts by where it leads, and a link out of `rex/plans/` leads nowhere (a relative path is taken from the event's working directory);
 - not the plan already open, judged by the file rather than its spelling (another case on macOS or Windows, a link inside `rex/plans/`). A write of the open plan only reloads it (§6) and never hides another plan written in the same batch or patch: that one is still opened or offered.
 
-Following, it opens the plan's outline (as opening it in the plan list would: §6, §7). The notice row says `following <name>` (seen from AGENT, the toast waits for PLAN, §4), and AGENT gets one muted line, `rex › plan · following <name>`, so the move stays on record (Rex's own line, never the feed). The place never changes. Text in the plan list's composer or a Name prompt (you are finding or making a plan), in either place, holds the attach: the notice row says `Your agent wrote <title> (<path>) · opens when the line is clear` (`· opens when the prompt closes` while a Name prompt is open, §4), and the plan opens once they clear (Esc, an emptied draft, the prompt cancelled). Nothing else holds it: the Wait screen, the outline, the details, AGENT and Help have no composer, so letters typed there leave nothing behind. A newer write replaces a held one; a write of the open plan drops it (the agent is back on that plan); picking or creating a plan in the plan list makes it the offer (above), unless it is the plan you picked. Keys read together with a batch of events are applied first, so a key acts on the screen you saw and a find typed with it holds the attach. The plan's first write may be a stub; the outline fills from the 500 ms reload, and the cursor moves to the pin once tasks appear (§1). A plan that doesn't parse when attach opens it shows its error at once, as any first open does; the two-poll debounce is for a plan already open (§6).
+Following, it opens the plan's outline (as opening it in the plan list would: §6, §7), and the mascot, where it shows, glances once (§12). The notice row says `following <name>` (seen from AGENT, the toast waits for PLAN, §4), and AGENT gets one muted line, `rex › plan · following <name>`, so the move stays on record (Rex's own line, never the feed). The place never changes. Text in the plan list's composer or a Name prompt (you are finding or making a plan), in either place, holds the attach: the notice row says `Your agent wrote <title> (<path>) · opens when the line is clear` (`· opens when the prompt closes` while a Name prompt is open, §4), and the plan opens once they clear (Esc, an emptied draft, the prompt cancelled). Nothing else holds it: the Wait screen, the outline, the details, AGENT and Help have no composer, so letters typed there leave nothing behind. A newer write replaces a held one; a write of the open plan drops it (the agent is back on that plan); picking or creating a plan in the plan list makes it the offer (above), unless it is the plan you picked. Keys read together with a batch of events are applied first, so a key acts on the screen you saw and a find typed with it holds the attach. The plan's first write may be a stub; the outline fills from the 500 ms reload, and the cursor moves to the pin once tasks appear (§1). A plan that doesn't parse when attach opens it shows its error at once, as any first open does; the two-poll debounce is for a plan already open (§6).
 
 **Fallback.** While no plan is open, Rex also looks for a plan file once a poll (an editor save, or a write whose hook was missed) and opens the newest. Once a plan is open, attached or latched, Rex never scans the folder to change the screen: only a write is followed, and newest-by-mtime is never used again.
 
@@ -922,12 +922,12 @@ enter open · tab agent · ? help
 
 | Terminal | Layout |
 |---|---|
-| ≥ 66 cols | mascot (40) + gutter (2) + text column (≥ 24) |
-| < 66 cols | **text only**: the mascot is hidden and the text column uses the full width |
+| ≥ 110 cols and ≥ 16 rows | mascot (40) + gutter (2) + text column (68 cells at 110 columns); the mascot is cropped from the bottom under 20 rows |
+| < 110 cols or < 16 rows | **text only**: no mascot; the text column starts at column 0 and uses the full width (all 80 cells at 80 columns), up to 100 cells |
 | text column > 100 cols | the text column stays 100 cells; the rest of each row is empty (§4) |
 | text column ≥ 60 cols | the outline's rows carry their blurbs and tags, and the PINNED card's title joins its edge (§6) |
 | text column < 30 cols | row 0 has no places' label (§4); an AGENT thought run is only `thinking ×N`, without its latest thought (§10); the plan list's accordion is the title and `▸ <id>`, unlabeled (§11); the outline's PINNED card is always the strip, `[PINNED] <id>`, and `TASKS` reads `1/3` (§6) |
-| text column < 24 cols | `REX · widen to 24 cols`; keys other than Ctrl+C and Ctrl+L are ignored |
+| text column < 24 cols | `widen to 24 columns` (`widen to 24 cols` under 19 columns), with no wordmark; keys other than Ctrl+C and Ctrl+L are ignored |
 | < 16 rows | the plan list's composer is one borderless row; no blank row goes above an H2 (on the outline the collapse ladder decides, §6); details have no blank rows; the outline wants 3 task rows in view, not 5 |
 | < 12 rows | no blank row 2 and no notice row: a notice takes row 1 while it shows (§4). At 11 rows the outline, Plan / Task detail and the plan list's accordion are laid out as at 12 rows, so they never shrink as the terminal grows (below). AGENT has no blank rows, and a live thought run takes 1 row instead of 2 (§10) |
 | < 7 rows | the plan list's composer is hidden: printable keys and pastes are ignored there, so nothing is typed blind, and enter never submits its draft. Its footer says only what works, whatever row is selected: `type to find` / `type to filter` go; `enter` stays on an empty draft (it still opens or starts the selected row) and goes while a hidden draft has text and in a Name prompt, which nothing can be typed into (`esc cancel` takes you out); and `? help` goes while a hidden draft has text. Screens without a composer keep their keys and footers; `?` on an empty draft, and on screens without a composer, still opens Help |
@@ -945,7 +945,7 @@ Body rows between the chrome (§4):
 
 From 12 rows the blank row 2 and the notice row take two rows that an 11-row terminal gives the body, so 11 rows lay the outline, Plan / Task detail and the plan list's accordion out as 12 do, the row left over blank: a taller terminal never shows less of them. The chrome is never a body line, so the lines that stay put above a list and the selection margin never see it. A selection taller than the rows its list has shows its top, so a plan's own row is never the part cut.
 
-The outline's shape (§6) is one function of its body rows too, `outlineLayout`: its collapse ladder keeps the PINNED card whole at 80×24 and at 120×24; at 80×21 without its `done` row; at 80×17 without its second rows and the blank rows, its `needs` row back in the room they leave; compact (edges, title, one row) at 80×13; the strip at 80×9 to 80×12 (11 rows laid out as 12), the goal over it, and always under 30 cells; the strip without `TASKS` at 80×7; none at 6 rows, where three tasks sit under the title, which says where the cursor is in a longer list.
+The outline's shape (§6) is one function of its body rows too, `outlineLayout`: its collapse ladder keeps the PINNED card whole at 38×24 (a 38-cell text column) and at 120×24; at 38×21 without its `done` row; at 38×17 without its second rows and the blank rows, its `needs` row back in the room they leave; compact (edges, title, one row) at 38×13; the strip at 38×9 to 38×12 (11 rows laid out as 12), the goal over it, and always under 30 cells; the strip without `TASKS` at 38×7; none at 6 rows, where three tasks sit under the title, which says where the cursor is in a longer list.
 
 The plan list's shape (§11) is one function of its body rows, which the selection margin reads too:
 - its H2s need 5 body rows, so at 7 rows it is only rows: no H2, no blank row, no accordion;
@@ -953,6 +953,7 @@ The plan list's shape (§11) is one function of its body rows, which the selecti
 - the blank rows above each H2 but the first (whose blank is row 2) go in from 16 rows, and only where the accordion keeps its lines with them.
 
 Notes:
+- **The mascot.** Its poses don't change with the layout: typing while a turn is in flight, idle otherwise, `/breakdance` once. When a plan opens (start's, an attach, a pick or a create in the plan list, an offer taken with `o`), it **glances once**: the idle grid's glance transform for about a second (14 frame ticks), on the frame clock, over whatever pose plays, whose own frames keep their time under it. A reload of the open plan never glances, nor does an open on a terminal too small to show the mascot, and a breakdance plays whole. No key waits for it.
 - **No full clears.** Rex never clears the whole screen on a normal frame. Each changed row is erased from column 1 and then written whole, inside synchronized-output markers. Nothing is erased after a row: after a write to the last column the cursor stays there, and an erase would wipe that cell. The cursor is hidden while painting.
 - **Repaints.** Resize, `SIGCONT` and Ctrl+L force a full repaint.
 - **Widths.**
@@ -1078,6 +1079,7 @@ This is what the 2026-10 audit found, from four lenses: first run, daily loop, t
 | F47 | high | Pinning a task does nothing for the agent: it learns the pin only if it re-reads the plan, and loses focus (2026-10-24 feedback: "We must make sure the agent refers to the pinned task requirements so that it doesnt lose focus") | Before each prompt, Claude Code's, Codex's and Cursor's hooks and OpenCode's plugin hand it the explicitly pinned task as a short factual note read from the plan file (or a new plan with no tasks yet), capped at 1,500 bytes, within 750 ms of the hook's start (OpenCode's plugin waits at most 1.5 s for it), and the prompt's event records it; Cursor also gets it when each chat starts; nothing pinned, nothing sent (§7a) | `feature/pin_context`, `feature/pin_context_cursor`, `feature/pin_context_opencode` |
 | F48 | high | The UI is loud: yellow meant the pin, live work, commands, news and the brand; cyan, orange and green tinted the cursor, prompts, folders and actions; fills and slate bars sat behind the cursor, the tabs and every page title (2026-10-24 feedback: "Overall we need to tone down the UI as it is too overwhelming") | Quiet roles: yellow is only the pin, purple only the selection (`❯` in the gutter, no fill), green only `✔`, red only an error; titles are bright and bold; `pickbg`, `folder` and `you` retire and nothing is filled (§5) | `feature/quiet_roles` |
 | F49 | high | Too many moving parts: row 0 had five elements (`REX`, two pills, a cue, the turn word) and a path, two of them always moving; row 1 had six jobs (the pin, toasts, drift, errors, offers, progress) and changed several times a minute; the page title was a second title row; footers changed as the cursor moved, and enter meant open or switch by what row 1 said (2026-10-24 feedback: "Theres way too many moving parts and it feels very cluttered") | One frame on every screen: row 0 a breadcrumb title with its meta and a quiet `plan · agent` label, row 1 what the page is (the pin line on the outline), one notice row by priority, a muted ` · ` footer fitted by its longest forms; offers taken with `o`, which their notice names (§3, §4) | `feature/quiet_chrome` |
+| F50 | high | At 80 columns the mascot took half the width and left the plan 38 cells, so titles, the pin line and the footer clipped on the most common terminal; and nothing on screen moved when a plan opened (2026-10-24 feedback: "At 80 columns the dinosaur takes half the width, which leaves 38 cells for text… show it from about 110 columns. Narrower terminals give the plan the full width.") | The mascot only from 110 columns and 16 rows; narrower or shorter, the text takes the whole width up to 100 cells; no `REX` wordmark, even on the widen screen; where it shows, the mascot glances once when a plan opens, never on a reload (§12) | `feature/mascot_wide` |
 
 Found in the same audit, outside the UI:
 

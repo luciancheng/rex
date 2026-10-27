@@ -326,8 +326,10 @@ func PaneBodyHeight(termLines int) int {
 	return layoutFor(TextOnlyBelow, termLines).bare().bodyH
 }
 
-func PaneTextWidth(columns int) int {
-	return layoutFor(columns, 24).textW
+// PaneTextWidth is the text column's width: the mascot takes its share
+// only on a terminal big enough for it (docs/ux.md §12).
+func PaneTextWidth(columns, lines int) int {
+	return layoutFor(columns, lines).textW
 }
 
 func ClampScroll(total, viewH, scroll int) int {
@@ -656,10 +658,11 @@ func composeRows(spriteName, color string, opt ComposeOptions) Frame {
 	}
 	if l.locked {
 		rows := make([]string, lines)
-		rows[0] = mascot.Paint(clip(fmt.Sprintf("widen to %d cols", MinTextCols), columns), mascot.UI["title"], opt.Enabled)
-		if msg := fmt.Sprintf("REX · widen to %d cols", MinTextCols); cellLen(msg) <= columns {
-			rows[0] = mascot.Paint(clip(msg, columns), mascot.UI["title"], opt.Enabled)
+		msg := fmt.Sprintf("widen to %d columns", MinTextCols)
+		if cellLen(msg) > columns {
+			msg = fmt.Sprintf("widen to %d cols", MinTextCols)
 		}
+		rows[0] = mascot.Paint(clip(msg, columns), mascot.UI["title"], opt.Enabled)
 		for i := 1; i < lines; i++ {
 			rows[i] = strings.Repeat(" ", columns)
 		}

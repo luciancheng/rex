@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luciancheng/rex/internal/mascot"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -164,7 +165,7 @@ func TestAppScrollClampsToTheLog(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		press(a, "up")
 	}
-	total := len(BuildLogView(a.log, PaneTextWidth(a.columns), a.viewOpt()))
+	total := len(BuildLogView(a.log, PaneTextWidth(a.columns, a.lines), a.viewOpt()))
 	if want := ClampScroll(total, PaneBodyHeight(a.lines), total); a.scroll != want || want == 0 {
 		t.Fatalf("scroll=%d want=%d", a.scroll, want)
 	}
@@ -199,6 +200,102 @@ func TestAppBreakdancePlaysOnceThenResumes(t *testing.T) {
 	}
 	if a.sequence.Name != "idle" {
 		t.Fatalf("should resume idle, got %s", a.sequence.Name)
+	}
+}
+
+// docs/ux.md §12: the mascot glances once when a plan opens (start's, an
+// attach, a pick in the plan list, the offer taken with o), on the frame
+// clock: it holds glanceTicks ticks under the pose's own frames, a key
+// neither eats it nor moves it, and a reload of the open plan never plays
+// it. The turn keeps the typing pose, which never looks aside, so every
+// glance on screen is an open's.
+func TestAPlanOpenGlancesOnce(t *testing.T) {
+	a, c, path := cujApp(t) // start opened the CUJ plan
+	repo := a.plans.Repo
+	a.ingest([]watch.Event{watch.NewEvent("claude", "user", "go", nil)})
+	look := strings.Join(stagedMascot(mascot.Glance, a.color, mascot.StageSize, false), "\n")
+	glancing := func() bool {
+		var left []string
+		for _, row := range a.frameRows().Rows[:len(stagedMascot(mascot.Glance, a.color, mascot.StageSize, false))] {
+			left = append(left, cutCells(row, mascot.StageSize))
+		}
+		return strings.Join(left, "\n") == look
+	}
+	// once ticks the clock until the glance has had its time, and long
+	// after: it shows from the open through its glanceTicks-th frame,
+	// then never again.
+	once := func(what string) {
+		t.Helper()
+		if !glancing() {
+			t.Fatalf("%s: the frame the plan opens on glances", what)
+		}
+		for i := 1; i <= 4*glanceTicks; i++ {
+			if a.tick(); glancing() != (i < glanceTicks) {
+				t.Fatalf("%s: tick %d glances %v", what, i, glancing())
+			}
+		}
+	}
+	once("start")
+	if a.sequence.Name != "typing" {
+		t.Fatalf("the turn's pose: %s", a.sequence.Name)
+	}
+
+	// The agent saves the open plan: a reload, polled or written.
+	for i, src := range []string{strings.Replace(demoPlan, "Outline view", "Outline view, again", 1), demoPlan} {
+		os.WriteFile(path, []byte(src), 0o644)
+		if i == 0 {
+			later(a, c)
+		} else {
+			a.ingest([]watch.Event{wrote(repo, path)})
+		}
+		for n := 0; n < 2*glanceTicks; n++ {
+			if glancing() || a.glance != 0 {
+				t.Fatalf("reload %d: no glance (tick %d)", i, n)
+			}
+			a.tick()
+		}
+	}
+
+	// The agent writes another plan, which Rex follows.
+	next := writePlan(t, repo, "cuj/next.rex.json", demoPlan)
+	a.ingest([]watch.Event{wrote(repo, next)})
+	if a.plans.Current != next {
+		t.Fatalf("attach: %q", a.plans.Current)
+	}
+	// A key is the key's: it moves the selection and leaves the glance
+	// to the clock.
+	sel, left := a.outline.sel, a.glance
+	press(a, "down")
+	if a.outline.sel == sel || a.glance != left {
+		t.Fatalf("a key during the glance: sel %q → %q, glance %d → %d", sel, a.outline.sel, left, a.glance)
+	}
+	once("attach")
+
+	// A pick in the plan list, which latches; then o takes the offer.
+	press(a, "esc")
+	typeText(a, "sendoff-demo")
+	press(a, "\r")
+	if a.plans.Current != path || a.follow {
+		t.Fatalf("pick: %q follow=%v", a.plans.Current, a.follow)
+	}
+	once("pick")
+	a.ingest([]watch.Event{wrote(repo, next)})
+	if a.glance != 0 || a.offer == "" {
+		t.Fatalf("latched, the write is only offered: glance %d offer %q", a.glance, a.offer)
+	}
+	press(a, "o")
+	if a.plans.Current != next {
+		t.Fatalf("o: %q", a.plans.Current)
+	}
+	once("offer")
+
+	// Where the mascot doesn't show, an open plays nothing.
+	a.settle(109, 24)
+	press(a, "esc")
+	typeText(a, "sendoff-demo")
+	press(a, "\r")
+	if a.plans.Current != path || a.glance != 0 {
+		t.Fatalf("109 columns: glance %d", a.glance)
 	}
 }
 
@@ -289,7 +386,7 @@ func TestAppScrolledViewStaysPut(t *testing.T) {
 		t.Fatalf("scroll %d", a.scroll)
 	}
 	top := func() string {
-		view := BuildLogView(a.log, PaneTextWidth(a.columns), a.viewOpt())
+		view := BuildLogView(a.log, PaneTextWidth(a.columns, a.lines), a.viewOpt())
 		end := len(view) - a.scroll
 		return view[max(0, end-PaneBodyHeight(a.lines))].Text
 	}

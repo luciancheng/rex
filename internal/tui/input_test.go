@@ -301,8 +301,8 @@ func TestHelpTakesNoTyping(t *testing.T) {
 	if a.overlayScroll[PaneChat] != top-1 {
 		t.Fatalf("scroll is clamped, so ↑ works at once: %d -> %d", top, a.overlayScroll[PaneChat])
 	}
-	for _, line := range a.helpBody(PaneTextWidth(80)) {
-		if strings.Contains(line.Text, "…") || cellLen(line.Text) > PaneTextWidth(80) {
+	for _, line := range a.helpBody(PaneTextWidth(80, 24)) {
+		if strings.Contains(line.Text, "…") || cellLen(line.Text) > PaneTextWidth(80, 24) {
 			t.Fatalf("help rows wrap, never clip: %q", line.Text)
 		}
 	}
@@ -365,7 +365,7 @@ func TestCtrlCClosesHelp(t *testing.T) {
 	if a.overlay[PanePlans] != overlayNone || a.draft != "" || a.plans.Filter != "" || !a.quitPending {
 		t.Fatalf("overlay %d draft %q filter %q", a.overlay[PanePlans], a.draft, a.plans.Filter)
 	}
-	a.settle(80, 24)
+	a.settle(38, 24)
 	press(a, "?")
 	if f := a.frameRows().Rows; !strings.Contains(f[len(f)-1], "tab agent") {
 		t.Fatalf("help keeps its must-have tab at 38 cells: %q", f[len(f)-1])

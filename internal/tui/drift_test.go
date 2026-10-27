@@ -207,7 +207,7 @@ func TestDriftKeepsAScrolledUpViewStill(t *testing.T) {
 		} else {
 			for i, e := range a.log {
 				if e.Kind == "drift" {
-					a.scroll = len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns), a.viewOpt())) + 10 // the view ends just above the block
+					a.scroll = len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns, a.lines), a.viewOpt())) + 10 // the view ends just above the block
 				}
 			}
 		}
@@ -240,10 +240,10 @@ func TestDriftBlockAtTheViewBottom(t *testing.T) {
 		}
 		for i, e := range a.log {
 			if e.Kind == "drift" {
-				if v := BuildLogView(a.log[i:i+2], PaneTextWidth(a.columns), a.viewOpt()); v[len(v)-1].Kind == "gap" {
+				if v := BuildLogView(a.log[i:i+2], PaneTextWidth(a.columns, a.lines), a.viewOpt()); v[len(v)-1].Kind == "gap" {
 					t.Fatal("setup: the block under the drift packs")
 				}
-				a.scroll = len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns), a.viewOpt())) + off
+				a.scroll = len(BuildLogView(a.log[i+1:], PaneTextWidth(a.columns, a.lines), a.viewOpt())) + off
 			}
 		}
 		a.settle(a.columns, a.lines)

@@ -102,12 +102,12 @@ func TestOutlineAtAGlance(t *testing.T) {
 		"│ needs   pick / pickbg colors exist",
 		"│ verify  Open latest: ▌ on all three card rows",
 		"│ files   internal/tui/plans.go",
-		"│ done    ✓ plans-ui  Home cards, browse, duplicate warn",
+		"│ done    ✔ plans-ui  Home cards, browse, duplicate warn",
 		"╰───",
 		"TASKS ─",
 		"─ 1/3 done",
-		"✓ plans-ui        Plans navigator · Home cards, browse, duplicate warn",
-		"▌ ▸ card-highlight",
+		"✔ plans-ui        Plans navigator · Home cards, browse, duplicate warn",
+		"❯ ▸ card-highlight",
 		"Selected plan card is one block · Bar, border, an…  pinned",
 		"pinned",
 		"· load-outline",
@@ -118,7 +118,7 @@ func TestOutlineAtAGlance(t *testing.T) {
 			t.Errorf("missing %q\n%s", want, frame)
 		}
 	}
-	for _, never := range []string{"╭──", "/ find", "last ✓", "p⏎", "d⏎", "s⏎", "b⏎", "?⏎"} {
+	for _, never := range []string{"╭──", "/ find", "last ✔", "p⏎", "d⏎", "s⏎", "b⏎", "?⏎"} {
 		if strings.Contains(frame, never) {
 			t.Errorf("the outline has no composer and no verbs: %q\n%s", never, frame)
 		}
@@ -137,15 +137,15 @@ func TestOutlineNarrowShowsTheBlurbUnderTheSelection(t *testing.T) {
 	if strings.Contains(frame, "Plans navigator · ") {
 		t.Fatal("rows are title-only below 60 columns")
 	}
-	if !strings.Contains(frame, "▌ ▸ card-highlight Selected") || strings.Contains(frame, "▌     Bar, border") || !strings.Contains(frame, "│ does    Bar, border") || !strings.Contains(frame, "▸ card-highlight  Selected plan…") {
+	if !strings.Contains(frame, "❯ ▸ card-highlight Selected") || strings.Contains(frame, "      Bar, border") || !strings.Contains(frame, "│ does    Bar, border") || !strings.Contains(frame, "▸ card-highlight  Selected plan…") {
 		t.Fatalf("the card says what the pin does, so its row has no blurb row\n%s", frame)
 	}
 	press(a, "down")
-	if frame := a.frame(); !strings.Contains(frame, "▌ · load-outline   Outline view") || !strings.Contains(frame, "▌     Show tasks") {
+	if frame := a.frame(); !strings.Contains(frame, "❯ · load-outline   Outline view") || !strings.Contains(frame, "      Show tasks") {
 		t.Fatalf("another task's blurb is on its own row\n%s", frame)
 	}
 	press(a, "up", "up")
-	if frame := a.frame(); !strings.Contains(frame, "▌ ✓ plans-ui") || !strings.Contains(frame, "▌     Home cards, browse, duplicate w…") {
+	if frame := a.frame(); !strings.Contains(frame, "❯ ✔ plans-ui") || !strings.Contains(frame, "      Home cards, browse, duplicate w…") {
 		t.Fatalf("a done task's blurb is what it accomplished\n%s", frame)
 	}
 	for _, row := range a.frameRows().Rows {
@@ -162,7 +162,7 @@ func TestOutlineDetailAndBack(t *testing.T) {
 		t.Fatal("enter on a task opens its detail")
 	}
 	frame := a.frame()
-	for _, want := range []string{"PLANS › Send-off demo › card-highlight", "  [PINNED] active", "DOES ─", "VERIFY ─", "FILES ─", "CONTEXT ─", "  after   ✓ plans-ui  Home cards, browse, duplicate warn", "  then    · load-outline  Outline view", "  needs   pick / pickbg colors exist", "esc outline  tab agent  ↑↓ scroll"} {
+	for _, want := range []string{"PLANS › Send-off demo › card-highlight", "  [PINNED] active", "DOES ─", "VERIFY ─", "FILES ─", "CONTEXT ─", "  after   ✔ plans-ui  Home cards, browse, duplicate warn", "  then    · load-outline  Outline view", "  needs   pick / pickbg colors exist", "esc outline  tab agent  ↑↓ scroll"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("task detail missing %q\n%s", want, frame)
 		}
@@ -172,12 +172,12 @@ func TestOutlineDetailAndBack(t *testing.T) {
 		t.Fatal("Esc goes back to the outline, selection kept")
 	}
 	press(a, "up", "up", "up")
-	if a.outline.sel != "" || !strings.Contains(a.frame(), "▌ PLANS › Send-off demo") {
+	if a.outline.sel != "" || !strings.Contains(a.frame(), "❯ PLANS › Send-off demo") {
 		t.Fatalf("the title row, the page title, is the top row, got %q\n%s", a.outline.sel, a.frame())
 	}
 	press(a, "\r")
 	frame = a.frame()
-	for _, want := range []string{"PLANS › Send-off demo › about", "  Send-off demo", "  active · 1 of 3 done  ━━━━━━━─────────────", "  rex/plans/cuj/demo.rex.json", "GOAL ─", "  Show a plan, pin a task", "SCOPE ─", "  in   • outline view", "  out  • extra palettes", "DONE ─", "  ✓ plans-ui  Home cards, browse, duplicate warn"} {
+	for _, want := range []string{"PLANS › Send-off demo › about", "  Send-off demo", "  active · 1 of 3 done  ━━━━━━━─────────────", "  rex/plans/cuj/demo.rex.json", "GOAL ─", "  Show a plan, pin a task", "SCOPE ─", "  in   • outline view", "  out  • extra palettes", "DONE ─", "  ✔ plans-ui  Home cards, browse, duplicate warn"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("plan detail missing %q\n%s", want, frame)
 		}
@@ -187,7 +187,7 @@ func TestOutlineDetailAndBack(t *testing.T) {
 	if a.at != atTaskDetail || a.outline.sel != "plans-ui" {
 		t.Fatal("→ opens task detail")
 	}
-	if frame := a.frame(); !strings.Contains(frame, "  ✓ done") || !strings.Contains(frame, "DONE ─") || !strings.Contains(frame, "  did      Home cards, browse, duplicate warn") || !strings.Contains(frame, "  changed  internal/tui/plans.go") || strings.Index(frame, "DONE ─") > strings.Index(frame, "INTENDED ─") {
+	if frame := a.frame(); !strings.Contains(frame, "  ✔ done") || !strings.Contains(frame, "DONE ─") || !strings.Contains(frame, "  did      Home cards, browse, duplicate warn") || !strings.Contains(frame, "  changed  internal/tui/plans.go") || strings.Index(frame, "DONE ─") > strings.Index(frame, "INTENDED ─") {
 		t.Fatalf("a done task leads with what it did, then what it intended\n%s", frame)
 	}
 	press(a, "esc", "esc")
@@ -262,14 +262,14 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
       "completed_notes": "the pick colors were already there",`, 1)
 	os.WriteFile(path, []byte(done), 0o644)
 	later(a, c)
-	if got := a.statusLine().Text; got != "✓ card-highlight done · next up load-outline" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
 		t.Fatalf("the file finished the pin: %q", got)
 	}
 	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "card-highlight → done" {
 		t.Fatalf("tape line %+v", last)
 	}
 	a.settle(80, 24) // 38 text cells: the done id clips, the next one stays, and progress yields
-	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "✓ …ghlight done · next up load-outline" {
+	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "✔ …ghlight done · next up load-outline" {
 		t.Fatalf("row 1 at 80×24: %q", row)
 	}
 	a.settle(120, 32)
@@ -279,7 +279,7 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
 		t.Fatalf("then the next up task, with no verb to type: %q", got)
 	}
 	// The card moves to what is next up, and names the task it builds on.
-	if frame := a.frame(); !strings.Contains(frame, "╭─[NEXT UP]─ load-outline · Outline view") || !strings.Contains(frame, "│ done    ✓ card-highlight  the bar spans all three card rows") || !strings.Contains(frame, "✓ card-highlight  Selected plan card is one block · the bar spans") {
+	if frame := a.frame(); !strings.Contains(frame, "╭─[NEXT UP]─ load-outline · Outline view") || !strings.Contains(frame, "│ done    ✔ card-highlight  the bar spans all three card rows") || !strings.Contains(frame, "✔ card-highlight  Selected plan card is one block · the bar spans") {
 		t.Fatalf("the outline follows the file\n%s", frame)
 	}
 	press(a, "home", "down", "down", "\r")
@@ -306,7 +306,7 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
   "scope"`, 1)
 	os.WriteFile(path, []byte(last), 0o644)
 	later(a, c)
-	if got := a.statusLine().Text; got != "✓ load-outline done · the plan is done" {
+	if got := a.statusLine().Text; got != "✔ load-outline done · the plan is done" {
 		t.Fatalf("the last leaf: %q", got)
 	}
 	if got, _ := os.ReadFile(path); string(got) != last {
@@ -326,7 +326,7 @@ func TestTheAgentsDoneWithNothingUnblocked(t *testing.T) {
       "depends_on": ["plans-ui"],`, 1)
 	os.WriteFile(path, []byte(done), 0o644)
 	later(a, c)
-	if got := a.statusLine().Text; got != "✓ card-highlight done · nothing else is unblocked" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · nothing else is unblocked" {
 		t.Fatalf("the file finished the pin, the rest is blocked: %q", got)
 	}
 	if got, _ := os.ReadFile(path); string(got) != done {
@@ -344,7 +344,7 @@ func TestTheDoneToastOutlastsTheRetrospective(t *testing.T) {
       "depends_on": ["plans-ui"],`, 1)
 	os.WriteFile(path, []byte(done), 0o644)
 	later(a, c)
-	if got := a.statusLine().Text; got != "✓ card-highlight done · next up load-outline" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
 		t.Fatalf("save 1: %q", got)
 	}
 	c.t = c.t.Add(time.Second)
@@ -354,7 +354,7 @@ func TestTheDoneToastOutlastsTheRetrospective(t *testing.T) {
       "depends_on": ["plans-ui"],`, 1)
 	os.WriteFile(path, []byte(retro), 0o644)
 	later(a, c) // 1.5 s after save 1
-	if got := a.statusLine().Text; got != "✓ card-highlight done · next up load-outline" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
 		t.Fatalf("save 2, the retrospective only: %q", got)
 	}
 	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "edited" {
@@ -378,11 +378,11 @@ func TestTheDoneToastSaysNowWhenTheNextIsStarted(t *testing.T) {
 	both = strings.Replace(both, `"status": "pending"`, `"status": "active"`, 1)
 	os.WriteFile(path, []byte(both), 0o644)
 	later(a, c)
-	if got := a.statusLine().Text; got != "✓ card-highlight done · now load-outline" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · now load-outline" {
 		t.Fatalf("row 1 %q", got)
 	}
 	a.settle(80, 24) // 38 text cells: the done id clips, what is on now stays, and progress yields
-	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "✓ …d-highlight done · now load-outline" {
+	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "✔ …d-highlight done · now load-outline" {
 		t.Fatalf("38 cells: %q", row)
 	}
 }
@@ -398,7 +398,7 @@ func TestThePlanIsDoneBeforeItsStatusSays(t *testing.T) {
 	leaves = strings.Replace(leaves, `"status": "pending"`, `"status": "skipped"`, 1)
 	os.WriteFile(path, []byte(leaves), 0o644)
 	later(a, c)
-	if got := a.statusLine().Text; got != "✓ card-highlight done · the plan is done" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · the plan is done" {
 		t.Fatalf("every leaf is done or skipped, the plan's status not yet: %q", got)
 	}
 	whole := strings.Replace(leaves, `"status": "active",
@@ -406,7 +406,7 @@ func TestThePlanIsDoneBeforeItsStatusSays(t *testing.T) {
   "scope"`, 1)
 	os.WriteFile(path, []byte(whole), 0o644)
 	later(a, c)
-	if got := a.statusLine().Text; got != "✓ card-highlight done · the plan is done" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · the plan is done" {
 		t.Fatalf("the plan's own status keeps the done news: %q", got)
 	}
 	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "plan → done" {
@@ -426,10 +426,10 @@ func TestFitDone(t *testing.T) {
 		width int
 		want  string
 	}{
-		{44, "✓ card-highlight done · next up load-outline"},
-		{38, "✓ …ghlight done · next up load-outline"},
-		{34, "✓ …hlight done · next load-outline"},
-		{20, "✓ done · next load-outline"}, // clip cuts the rest
+		{44, "✔ card-highlight done · next up load-outline"},
+		{38, "✔ …ghlight done · next up load-outline"},
+		{34, "✔ …hlight done · next load-outline"},
+		{20, "✔ done · next load-outline"}, // clip cuts the rest
 	} {
 		got := fitDone("card-highlight", " · next up load-outline", " · next load-outline", c.width)
 		if got != c.want || (c.width > 20 && cellLen(got) > c.width) {
@@ -491,7 +491,7 @@ func TestOutlineStates(t *testing.T) {
 		t.Errorf("no pin, no card: a quiet line stands in for it\n%s", body)
 	}
 	c, _, _ := openDemo(t, `{"tasks": [{"id": "a", "status": "done"}, {"id": "b", "status": "skipped"}]}`, 120, 32)
-	if frame := c.frame(); c.statusLine().Text != "no pin · all tasks done" || !strings.Contains(frame, "  ✓ all tasks done") || !strings.Contains(frame, "– b") || !strings.Contains(frame, "skipped") {
+	if frame := c.frame(); c.statusLine().Text != "no pin · all tasks done" || !strings.Contains(frame, "  ✔ all tasks done") || !strings.Contains(frame, "– b") || !strings.Contains(frame, "skipped") {
 		t.Fatalf("%q\n%s", c.statusLine().Text, frame)
 	}
 	d, _, _ := openDemo(t, `{"tasks": [`, 120, 32)
@@ -524,10 +524,10 @@ func TestOutlineStates(t *testing.T) {
 	// The warnings wrap to two rows each and are the ladder's last step:
 	// at 80×12 the goal and TASKS are gone, the strip stays under them.
 	w, _, _ := openDemo(t, `{"version": 2, "title": "Warned", "goal": "a goal", "tasks": [{"id": "a", "status": "active", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]}, {"id": "d"}, {"id": "e"}, {"id": "f"}]}`, 80, 12)
-	if body := planBody(w); !strings.HasPrefix(body, "  read-only: version 2 · newer than\n    this Rex reads\n  ! 3 problems · enter on the title\n    lists them\n[PINNED] a\n▌ ▸ a ") || strings.Contains(body, "a goal") || strings.Contains(body, "TASKS") {
+	if body := planBody(w); !strings.HasPrefix(body, "  read-only: version 2 · newer than\n    this Rex reads\n  ! 3 problems · enter on the title\n    lists them\n[PINNED] a\n❯ ▸ a ") || strings.Contains(body, "a goal") || strings.Contains(body, "TASKS") {
 		t.Errorf("80×12: the warnings, two rows each, over the strip\n%s", body)
 	}
-	if w.settle(80, 8); strings.Contains(planBody(w), "read-only") || !strings.HasPrefix(planBody(w), "[PINNED] a\n▌ ▸ a ") {
+	if w.settle(80, 8); strings.Contains(planBody(w), "read-only") || !strings.HasPrefix(planBody(w), "[PINNED] a\n❯ ▸ a ") {
 		t.Errorf("80×8: the warnings go last, for the task rows, and the strip fits again\n%s", planBody(w))
 	}
 	f, _, _ := openDemo(t, `{"tasks": [{"id": "ui", "title": "UI"}, {"id": "x", "parent": "ui", "status": "done"}, {"id": "y", "parent": "ui"}]}`, 120, 32)
@@ -552,16 +552,16 @@ func TestOutlineScrollsAndKeepsTheSelection(t *testing.T) {
 		press(a, "down")
 	}
 	frame := a.frame()
-	if a.outline.sel != "t12" || !strings.Contains(frame, "─ 12 of 40") || !strings.Contains(frame, "↓ more") || !strings.Contains(frame, "▌ ○ t12") {
+	if a.outline.sel != "t12" || !strings.Contains(frame, "─ 12 of 40") || !strings.Contains(frame, "↓ more") || !strings.Contains(frame, "❯ ○ t12") {
 		t.Fatalf("sel %q\n%s", a.outline.sel, frame)
 	}
 	press(a, "end")
-	if a.outline.sel != "t40" || !strings.Contains(a.frame(), "▌ ○ t40") {
+	if a.outline.sel != "t40" || !strings.Contains(a.frame(), "❯ ○ t40") {
 		t.Fatal("End goes to the last task")
 	}
 	os.WriteFile(path, []byte(`{"title": "Big", "tasks": [{"id": "new"},`+strings.Join(tasks, ",")+`]}`), 0o644)
 	later(a, c)
-	if a.outline.sel != "t40" || !strings.Contains(a.frame(), "▌ ○ t40") {
+	if a.outline.sel != "t40" || !strings.Contains(a.frame(), "❯ ○ t40") {
 		t.Fatal("a reload keeps the selection by id")
 	}
 }
@@ -608,7 +608,7 @@ func TestOpenGroupAfterRestart(t *testing.T) {
 	if row.Group != groupOpen || row.Path != path {
 		t.Fatalf("cursor on %+v", row)
 	}
-	if frame := again.frame(); !strings.Contains(frame, "OPEN ─") || !strings.Contains(frame, "▌ cuj/demo ") || !strings.Contains(frame, "▌   pinned  ▸ card-highlight") {
+	if frame := again.frame(); !strings.Contains(frame, "OPEN ─") || !strings.Contains(frame, "❯ cuj/demo ") || !strings.Contains(frame, "    pinned  ▸ card-highlight") {
 		t.Fatalf("%s", frame)
 	}
 }
@@ -626,7 +626,7 @@ func TestOutlinePageTitleStaysAsTheListScrolls(t *testing.T) {
 		press(a, "down")
 	}
 	frame := a.frame()
-	if !strings.Contains(frame, "PLANS › Big") || !strings.Contains(frame, "TASKS ─") || !strings.Contains(frame, "─ 31 of 40") || !strings.Contains(frame, "↑ more") || !strings.Contains(frame, "▌ ○ t31") || !strings.Contains(frame, "[NEXT UP]─ t01") {
+	if !strings.Contains(frame, "PLANS › Big") || !strings.Contains(frame, "TASKS ─") || !strings.Contains(frame, "─ 31 of 40") || !strings.Contains(frame, "↑ more") || !strings.Contains(frame, "❯ ○ t31") || !strings.Contains(frame, "[NEXT UP]─ t01") {
 		t.Fatalf("deep in the list, the page title, the card and the position stay on screen\n%s", frame)
 	}
 	b, _, _ := openDemo(t, `{"title": "Rex visual redesign", "status": "active", "tasks": [`+strings.Join(tasks, ",")+`]}`, 80, 24)
@@ -785,7 +785,7 @@ func TestNarrowOutlineKeepsProgressOnRowOne(t *testing.T) {
 		t.Fatalf("row 1 keeps the progress, row 2 the title\n%s", a.frame())
 	}
 	press(a, "home")
-	if frame := a.frame(); !strings.Contains(frame, "39/40") || !strings.Contains(frame, "▌ … › A very") || !strings.Contains(frame, "✓ t01") {
+	if frame := a.frame(); !strings.Contains(frame, "39/40") || !strings.Contains(frame, "❯ … › A very") || !strings.Contains(frame, "✔ t01") {
 		t.Fatalf("scrolled to the top, it still does\n%s", frame)
 	}
 }
@@ -924,12 +924,12 @@ func TestOutlineCardTiers(t *testing.T) {
 │ verify  go test ./internal/tui -r… │
 │         Open latest: ▌ on all thr… │
 │ files   plans.go  live.go  +1      │
-│ done    ✓ plans-ui  Home cards, f… │
+│ done    ✔ plans-ui  Home cards, f… │
 ╰────────────────────────────────────╯
 
 TASKS ─────────────────────── 1/3 done
-  ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan card…
+  ✔ plans-ui       Plans navigator
+❯ ▸ card-highlight Selected plan card…
   · load-outline   Outline view
 
 
@@ -947,8 +947,8 @@ TASKS ─────────────────────── 1/3 
 ╰────────────────────────────────────╯
 
 TASKS ─────────────────────── 1/3 done
-  ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan card…
+  ✔ plans-ui       Plans navigator
+❯ ▸ card-highlight Selected plan card…
   · load-outline   Outline view`},
 		// The second rows and the blank rows make room for needs again;
 		// verify says what its one row leaves out.
@@ -961,33 +961,33 @@ TASKS ─────────────────────── 1/3 
 │ files   plans.go  live.go  +1      │
 ╰────────────────────────────────────╯
 TASKS ─────────────────────── 1/3 done
-  ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan card…
+  ✔ plans-ui       Plans navigator
+❯ ▸ card-highlight Selected plan card…
   · load-outline   Outline view`},
 		{80, 12, `╭─[PINNED]─ card-highlight ──────────╮
 │ Selected plan card is one block    │
 │ does    Bar, border and fill cove… │
 ╰────────────────────────────────────╯
 TASKS ─────────────────────── 1/3 done
-  ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan card…
+  ✔ plans-ui       Plans navigator
+❯ ▸ card-highlight Selected plan card…
   · load-outline   Outline view`},
 		// The strip leaves the card's does to the pin's own blurb row, and
 		// makes room for the goal again.
 		{80, 11, `  A teammate opens this plan in Rex a…
 [PINNED] card-highlight  Selected pla…
 TASKS ─────────────────────── 1/3 done
-  ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan card…
-▌     Bar, border and fill cover all…
+  ✔ plans-ui       Plans navigator
+❯ ▸ card-highlight Selected plan card…
+      Bar, border and fill cover all…
   · load-outline   Outline view`},
 		// TASKS goes before the strip (docs/ux.md §6, ladder steps 8 and 9).
 		{80, 8, `[PINNED] card-highlight  Selected pla…
-  ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan card…
+  ✔ plans-ui       Plans navigator
+❯ ▸ card-highlight Selected plan card…
   · load-outline   Outline view`},
-		{80, 7, `  ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan card…
+		{80, 7, `  ✔ plans-ui       Plans navigator
+❯ ▸ card-highlight Selected plan card…
   · load-outline   Outline view`},
 		{120, 24, `  A teammate opens this plan in Rex and sees what the work is and which task …
 
@@ -997,12 +997,12 @@ TASKS ─────────────────────── 1/3 
 │ verify  go test ./internal/tui -run PlanCardSelection                      │
 │         Open latest: ▌ on all three card rows                              │
 │ files   plans.go  live.go  plans_test.go                                   │
-│ done    ✓ plans-ui  Home cards, folder browser, duplicate names refused    │
+│ done    ✔ plans-ui  Home cards, folder browser, duplicate names refused    │
 ╰────────────────────────────────────────────────────────────────────────────╯
 
 TASKS ─────────────────────────────────────────────────────────────── 1/3 done
-  ✓ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
-▌ ▸ card-highlight  Selected plan card is one block · Bar, border and…  pinned
+  ✔ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
+❯ ▸ card-highlight  Selected plan card is one block · Bar, border and…  pinned
   · load-outline    Outline view · Opening a plan shows…  after card-highlight
 
 
@@ -1016,8 +1016,8 @@ TASKS ────────────────────────�
 │ does    Bar, border and fill cover all three rows of the selected card     │
 ╰────────────────────────────────────────────────────────────────────────────╯
 TASKS ─────────────────────────────────────────────────────────────── 1/3 done
-  ✓ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
-▌ ▸ card-highlight  Selected plan card is one block · Bar, border and…  pinned
+  ✔ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
+❯ ▸ card-highlight  Selected plan card is one block · Bar, border and…  pinned
   · load-outline    Outline view · Opening a plan shows…  after card-highlight`},
 		// Under 30 cells the card is always the strip.
 		{24, 12, `  A teammate opens this…
@@ -1025,11 +1025,11 @@ TASKS ────────────────────────�
 [PINNED] card-highlight
 
 TASKS ────────────── 1/3
-  ✓ plans-ui Plans navi…
-▌ ▸ card-hi… Selected p…
+  ✔ plans-ui Plans navi…
+❯ ▸ card-hi… Selected p…
   · load-ou… Outline vi…`},
-		{24, 7, `  ✓ plans-ui Plans navi…
-▌ ▸ card-hi… Selected p…
+		{24, 7, `  ✔ plans-ui Plans navi…
+❯ ▸ card-hi… Selected p…
   · load-ou… Outline vi…`},
 	} {
 		a, _, _ := cujApp(t)
@@ -1056,7 +1056,7 @@ TASKS ────────────── 1/3
 ╰────────────────────────────────────────────────────────────────────────────╯
 
 TASKS ─────────────────────────────────────────────────────────────── 0/2 done
-▌ ▸ a  First thing                                                      pinned
+❯ ▸ a  First thing                                                      pinned
   · b  Second thing                                                    after a`},
 		{bare, 80, 12, `  g
 ╭─[PINNED]─ a ───────────────────────╮
@@ -1064,7 +1064,7 @@ TASKS ────────────────────────�
 │ no does, verify or files yet       │
 ╰────────────────────────────────────╯
 TASKS ─────────────────────── 0/2 done
-▌ ▸ a First thing
+❯ ▸ a First thing
   · b Second thing`},
 		{untitled, 80, 12, `
 ╭─[PINNED]─ a ───────────────────────╮
@@ -1072,22 +1072,22 @@ TASKS ─────────────────────── 0/2 
 ╰────────────────────────────────────╯
 
 TASKS ─────────────────────── 0/2 done
-▌ ▸ a (untitled)
+❯ ▸ a (untitled)
   ○ b B`},
 		{verifyOnly, 80, 12, `╭─[PINNED]─ card-highlight ──────────╮
 │ Selected plan card is one block    │
 │ verify  go test ./internal/tu…  +1 │
 ╰────────────────────────────────────╯
 TASKS ─────────────────────── 1/3 done
-  ✓ plans-ui       Plans navigator
-▌ ▸ card-highlight Selected plan card…
+  ✔ plans-ui       Plans navigator
+❯ ▸ card-highlight Selected plan card…
   · load-outline   Outline view`},
 		{verifyOnly, 120, 11, `╭─[PINNED]─ card-highlight · Selected plan card is one block ────────────────╮
 │ verify  go test ./internal/tui -run PlanCardSelection  +1                  │
 ╰────────────────────────────────────────────────────────────────────────────╯
 TASKS ─────────────────────────────────────────────────────────────── 1/3 done
-  ✓ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
-▌ ▸ card-highlight  Selected plan card is one block                     pinned
+  ✔ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
+❯ ▸ card-highlight  Selected plan card is one block                     pinned
   · load-outline    Outline view · Opening a plan shows…  after card-highlight`},
 	} {
 		a, _, _ := openDemo(t, tc.src, tc.cols, tc.rows)
@@ -1115,7 +1115,7 @@ func TestNoGoalKeepsTheTitlesBlankRow(t *testing.T) {
 		t.Errorf("80×12: the ladder drops the blank rows for the task rows\n%s", a.frame())
 	}
 	none, _, _ := openDemo(t, `{"title": "All done", "tasks": [{"id": "a", "title": "A", "status": "done"}]}`, 80, 24)
-	if body := planBody(none); !strings.HasPrefix(body, "\n  ✓ all tasks done\n\nTASKS ─") {
+	if body := planBody(none); !strings.HasPrefix(body, "\n  ✔ all tasks done\n\nTASKS ─") {
 		t.Errorf("80×24: the line that stands in for the card gets it too\n%s", body)
 	}
 }
@@ -1198,7 +1198,7 @@ func TestOutlineGroupGaps(t *testing.T) {
 				t.Errorf("%dx%d: no blank row before %q\n%s", size[0], size[1], row, body)
 			}
 		}
-		for _, row := range []string{"    ✓ tab-bar", "▌   ▸ page-ti", "    · plan-li", "    ! pin-card"} {
+		for _, row := range []string{"    ✔ tab-bar", "❯   ▸ page-ti", "    · plan-li", "    ! pin-card"} {
 			if gapBefore(body, row) {
 				t.Errorf("%dx%d: a blank row inside a group, before %q\n%s", size[0], size[1], row, body)
 			}
@@ -1214,15 +1214,16 @@ func TestOutlineGroupGaps(t *testing.T) {
 }
 
 // docs/ux.md §5, §6: the pin's ▸ and id are the only yellow on the list,
-// in bold, and keep their yellow on the selection's fill; parents are bold
-// text; "pinned" tags the pin's row only from 60 cells.
+// in bold, and keep their yellow on the selection's purple; the selection
+// is ❯ and purple, with no fill; parents are bold text; "pinned" tags the
+// pin's row only from 60 cells.
 func TestPinRowStyle(t *testing.T) {
 	for _, cols := range []int{80, 120} {
 		a, _, _ := openDemo(t, redesignPlan, cols, 32)
 		for _, sel := range []string{"page-titles", "agent-stream"} {
 			a.outline.sel = sel
 			view := a.composeOptions().PlanView
-			pins := 0
+			pins, marks := 0, 0
 			for _, l := range view[headOf(view):] {
 				role := func(s Span) string {
 					if s.Role != "" {
@@ -1230,15 +1231,18 @@ func TestPinRowStyle(t *testing.T) {
 					}
 					return l.Kind
 				}
-				name := strings.Fields(strings.TrimLeft(l.Text, "▌ "))
+				name := strings.Fields(strings.TrimLeft(l.Text, "❯ "))
+				if picked := l.Kind == "pick"; picked != l.Selected || strings.HasPrefix(l.Text, "❯ ") && (!picked || sel != name[1]) {
+					t.Errorf("%d cols: the selection is ❯ and purple: %+v", cols, l)
+				}
+				if strings.HasPrefix(l.Text, "❯ ") {
+					marks++
+				}
 				switch {
 				case len(name) > 1 && name[1] == "page-titles":
 					pins++
-					if len(l.Spans) < 3 || l.Spans[2].Text != "▸ page-titles" || l.Spans[2].Role != "title" || !l.Spans[2].Bold {
+					if len(l.Spans) < 3 || l.Spans[2].Text != "▸ page-titles" || l.Spans[2].Role != "accent" || !l.Spans[2].Bold {
 						t.Errorf("%d cols: the pin's ▸ and id are bold yellow: %+v", cols, l.Spans)
-					}
-					if (sel == "page-titles") != (l.Fill == "pickbg") {
-						t.Errorf("%d cols: the selection's fill: %+v", cols, l)
 					}
 					if tagged := strings.HasSuffix(strings.TrimRight(l.Text, " "), "pinned"); tagged != (cols == 120) {
 						t.Errorf("%d cols: pinned tag %v: %q", cols, tagged, l.Text)
@@ -1247,6 +1251,12 @@ func TestPinRowStyle(t *testing.T) {
 				case len(name) > 0 && (name[0] == "chrome" || name[0] == "plan-views"):
 					if l.Kind != "text" || !l.Spans[2].Bold || role(l.Spans[2]) != "text" || !l.Spans[4].Bold {
 						t.Errorf("%d cols: a parent is bold text: %+v", cols, l)
+					}
+				case len(name) > 1 && name[1] == sel:
+					for _, s := range l.Spans {
+						if role(s) != "pick" && role(s) != "error" {
+							t.Errorf("%d cols: the selected row is purple: %q in %q", cols, s.Text, l.Text)
+						}
 					}
 				}
 				if l.Kind == "title" || l.Kind == "accent" {
@@ -1258,16 +1268,17 @@ func TestPinRowStyle(t *testing.T) {
 					}
 				}
 			}
-			if pins != 1 {
-				t.Errorf("%d cols: %d pin rows", cols, pins)
+			if pins != 1 || marks != 1 {
+				t.Errorf("%d cols: %d pin rows, %d ❯", cols, pins, marks)
 			}
 		}
 	}
 }
 
-// docs/ux.md §6, §7: with no task active the pin is worked out: the card
-// says [NEXT UP] on a slate pill, row 1 says (next up), and the pin's row
-// is tagged next up; the agent's active task is [PINNED] on yellow.
+// docs/ux.md §5, §6, §7: with no task active the pin is worked out: the
+// card says [NEXT UP], muted in a slate box, row 1 says (next up), and the
+// pin's row is tagged next up, muted; none of it is yellow, which is the
+// agent's pin's: [PINNED] and its box.
 func TestNextUpBadge(t *testing.T) {
 	planned := strings.Replace(demoPlan, `"status": "active",
       "depends_on": ["plans-ui"],`, `"status": "pending",
@@ -1286,22 +1297,25 @@ func TestNextUpBadge(t *testing.T) {
 		t.Fatal("no card")
 		return nil
 	}
-	if b := badge(); b[1].Text != "NEXT UP" || b[1].Role != "title" || b[1].Fill != "border" || b[0].Fill != "border" || b[0].Role != "border" || !b[1].Bold {
-		t.Fatalf("[NEXT UP] is yellow on slate: %+v", b)
+	if b := badge(); b[1].Text != "NEXT UP" || b[1].Role != "muted" || b[0].Role != "muted" || !b[1].Bold {
+		t.Fatalf("[NEXT UP] is muted: %+v", b)
+	}
+	if spans := a.statusLine().Spans(a.statusLine().Text); spans[0].Role == "accent" {
+		t.Fatalf("row 1's next up is not the pin's yellow: %+v", spans)
 	}
 	// Row 1's "(next up)" would satisfy a frame-wide look, so the row's
-	// own tag is checked on the row: yellow from 60 cells, none under.
+	// own tag is checked on the row: muted from 60 cells, none under.
 	pinRow := func(a *app) (LogLine, bool) {
 		view := a.composeOptions().PlanView
 		for _, l := range view[headOf(view):] {
-			if strings.HasPrefix(strings.TrimLeft(l.Text, "▌ "), "▸ card-highlight") {
+			if strings.HasPrefix(strings.TrimLeft(l.Text, "❯ "), "▸ card-highlight") {
 				return l, true
 			}
 		}
 		return LogLine{}, false
 	}
-	if l, ok := pinRow(a); !ok || len(l.Spans) == 0 || l.Spans[len(l.Spans)-1].Text != "next up" || l.Spans[len(l.Spans)-1].Role != "title" {
-		t.Fatalf("the pin's row is tagged next up in yellow: %+v\n%s", l, frame)
+	if l, ok := pinRow(a); !ok || len(l.Spans) == 0 || l.Spans[len(l.Spans)-1].Text != "next up" || slices.ContainsFunc(l.Spans, func(s Span) bool { return s.Role == "accent" }) {
+		t.Fatalf("the pin's row is tagged next up, never yellow: %+v\n%s", l, frame)
 	}
 	narrow, _, _ := openDemo(t, planned, 80, 32)
 	if l, ok := pinRow(narrow); !ok || strings.HasSuffix(strings.TrimRight(l.Text, " "), "next up") {
@@ -1309,8 +1323,8 @@ func TestNextUpBadge(t *testing.T) {
 	}
 	os.WriteFile(path, []byte(demoPlan), 0o644)
 	later(a, c)
-	if b := badge(); b[1].Text != "PINNED" || b[1].Role != "pickbg" || b[1].Fill != "title" || b[0].Role != "title" || !strings.Contains(a.frame(), "╭─[PINNED]─ card-highlight") {
-		t.Fatalf("[PINNED] is ink on yellow: %+v\n%s", b, a.frame())
+	if b := badge(); b[1].Text != "PINNED" || b[1].Role != "accent" || b[0].Role != "accent" || !strings.Contains(a.frame(), "╭─[PINNED]─ card-highlight") {
+		t.Fatalf("[PINNED] is yellow: %+v\n%s", b, a.frame())
 	}
 	if a.enabled = true; !strings.Contains(stripSGR(a.frame()), "[PINNED]") {
 		t.Fatal("color never changes the characters: the brackets are painted, not dropped")
@@ -1341,14 +1355,14 @@ func TestDetailSections(t *testing.T) {
 	pin := detail("page-titles")
 	order(pin, "DOES", "VERIFY", "FILES", "CONTEXT")
 	for _, want := range []string{"\n  [PINNED] active · under chrome\n", "\n  Page titles and footer keys\n", "VERIFY ─", "─ 2\n", "─ 3\n", "  • go test ./internal/tui -run PageTitle", "  internal/tui/outline.go\n",
-		"  needs   the tab bar on row 0", "  after   ✓ tab-bar  Two tabs on row 0, the active one filled", "  then    · agent-stream  Fold runs of thoughts", "  under   chrome  Chrome: tabs, page titles, keys", "  branch  feature/page_titles"} {
+		"  needs   the tab bar on row 0", "  after   ✔ tab-bar  Two tabs on row 0, the active one filled", "  then    · agent-stream  Fold runs of thoughts", "  under   chrome  Chrome: tabs, page titles, keys", "  branch  feature/page_titles"} {
 		if !strings.Contains(pin, want) {
 			t.Errorf("the pin's detail has %q\n%s", want, pin)
 		}
 	}
 	done := detail("tab-bar")
 	order(done, "DONE", "INTENDED", "CONTEXT")
-	for _, want := range []string{"\n  ✓ done · under chrome\n", "  did      Two tabs on row 0, the active one filled", "  changed  internal/tui/chrome.go", "  checked  go test ./internal/tui -run TabBar", "  notes    the cue cell is fixed width", "  does     Both tabs on row 0", "  then     ▸ page-titles  Page titles and footer keys"} {
+	for _, want := range []string{"\n  ✔ done · under chrome\n", "  did      Two tabs on row 0, the active one filled", "  changed  internal/tui/chrome.go", "  checked  go test ./internal/tui -run TabBar", "  notes    the cue cell is fixed width", "  does     Both tabs on row 0", "  then     ▸ page-titles  Page titles and footer keys"} {
 		if !strings.Contains(done, want) {
 			t.Errorf("a done task's detail has %q\n%s", want, done)
 		}
@@ -1365,7 +1379,7 @@ func TestDetailSections(t *testing.T) {
 	}
 	about := viewText(planDetail(a.doc, "rex/plans/ux/redesign.rex.json", 78, true))
 	order(about, "GOAL", "SCOPE", "STACK", "DONE")
-	for _, want := range []string{"\n  Rex visual redesign\n", "\n  active · 2 of 6 done  ━━━━━━━─────────────\n", "\n  rex/plans/ux/redesign.rex.json", "  in   • chrome\n       • outline\n  out  • extra palettes\n", "  base    dev", "─ 1 · 1 skipped\n  ✓ tab-bar  Two tabs on row 0, the active one filled"} {
+	for _, want := range []string{"\n  Rex visual redesign\n", "\n  active · 2 of 6 done  ━━━━━━━─────────────\n", "\n  rex/plans/ux/redesign.rex.json", "  in   • chrome\n       • outline\n  out  • extra palettes\n", "  base    dev", "─ 1 · 1 skipped\n  ✔ tab-bar  Two tabs on row 0, the active one filled"} {
 		if !strings.Contains(about, want) {
 			t.Errorf("About has %q\n%s", want, about)
 		}
@@ -1411,7 +1425,7 @@ func TestOutlinePagesByItsWindow(t *testing.T) {
 			if l.Kind == "gap" || l.Kind == "idle" || (l.Selected && i > 0 && list[i-1].Selected) {
 				continue
 			}
-			at = append(at, slices.Index(outlineRows(a.doc.plan), strings.Fields(strings.TrimLeft(l.Text, "▌ "))[1]))
+			at = append(at, slices.Index(outlineRows(a.doc.plan), strings.Fields(strings.TrimLeft(l.Text, "❯ "))[1]))
 		}
 		return at
 	}
@@ -1562,7 +1576,7 @@ func TestCardFields(t *testing.T) {
 		{"id": "x", "title": "X", "status": "done", "accomplished": ["built x"]},
 		{"id": "y", "title": "Y", "status": "done", "accomplished": ["built y"]},
 		{"id": "pin", "title": "Pin", "status": "active", "depends_on": ["x"], "does": ["the work"], "verify": ["check one", "check two", "check three"]}]}`, 120, 32)
-	if body := planBody(a); !strings.Contains(body, "│ done    ✓ x  built x") || strings.Contains(body, "✓ y  built y") ||
+	if body := planBody(a); !strings.Contains(body, "│ done    ✔ x  built x") || strings.Contains(body, "✔ y  built y") ||
 		!strings.Contains(body, "│ verify  check one ") || !strings.Contains(body, "│         check two  +1 ") || strings.Contains(body, "check three") {
 		t.Errorf("the pin builds on x; two verify rows, then how many more\n%s", body)
 	}
@@ -1572,7 +1586,7 @@ func TestCardFields(t *testing.T) {
 		{"id": "x", "title": "Schema migration", "status": "done"},
 		{"id": "y", "title": "Unrelated docs", "status": "done", "accomplished": ["fixed README typos"]},
 		{"id": "pin", "title": "Pin", "status": "active", "depends_on": ["x"], "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(early); !strings.Contains(body, "│ done    ✓ x  Schema migration ") || strings.Contains(body, "│ done    ✓ y") {
+	if body := planBody(early); !strings.Contains(body, "│ done    ✔ x  Schema migration ") || strings.Contains(body, "│ done    ✔ y") {
 		t.Errorf("the pin builds on x, done without accomplished yet\n%s", body)
 	}
 	// The card and the plan list's accordion name the same task: the pin's
@@ -1581,18 +1595,18 @@ func TestCardFields(t *testing.T) {
 		{"id": "x", "title": "X", "status": "done", "accomplished": ["built x"]},
 		{"id": "y", "title": "Y", "status": "done", "accomplished": ["built y"]},
 		{"id": "pin", "title": "Pin", "status": "active", "depends_on": ["x"], "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(same); !strings.Contains(body, "│ done    ✓ x  built x ") {
+	if body := planBody(same); !strings.Contains(body, "│ done    ✔ x  built x ") {
 		t.Errorf("the card names x\n%s", body)
 	}
 	press(same, "esc")
 	if row := same.plans.Rows[same.plans.Cursor]; row.Group != groupOpen {
 		t.Fatalf("cursor on %+v", row)
 	}
-	if body := planBody(same); !strings.Contains(body, "done    ✓ x  built x") || strings.Contains(body, "✓ y") {
+	if body := planBody(same); !strings.Contains(body, "done    ✔ x  built x") || strings.Contains(body, "✔ y") {
 		t.Errorf("OPEN's accordion names x, as the card does\n%s", body)
 	}
 	b, _, _ := openDemo(t, `{"tasks": [{"id": "x", "title": "X", "status": "done"}, {"id": "y", "title": "Y", "status": "active", "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(b); !strings.Contains(body, "│ done    ✓ x  X") {
+	if body := planBody(b); !strings.Contains(body, "│ done    ✔ x  X") {
 		t.Errorf("no done dependency: the plan's last done task\n%s", body)
 	}
 	c, _, _ := openDemo(t, `{"tasks": [{"id": "pin", "title": "Pin", "status": "active", "does": ["the work"]}]}`, 120, 32)
@@ -1605,7 +1619,7 @@ func TestCardFields(t *testing.T) {
 		{"id": "p", "title": "P", "status": "done", "accomplished": ["parent acc"]},
 		{"id": "k", "title": "K", "parent": "p", "status": "done", "accomplished": ["kid acc"]},
 		{"id": "z", "title": "Z", "status": "active", "depends_on": ["p"], "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(parent); !strings.Contains(body, "│ done    ✓ k  kid acc") || strings.Contains(body, "✓ p") {
+	if body := planBody(parent); !strings.Contains(body, "│ done    ✔ k  kid acc") || strings.Contains(body, "✔ p") {
 		t.Errorf("a parent dependency falls through to the last done leaf\n%s", body)
 	}
 	long, _, _ := openDemo(t, `{"tasks": [{"id": "a-really-long-task-identifier-that-overflows", "title": "Short title", "status": "active", "does": ["x"]}]}`, 102, 32)
@@ -1632,11 +1646,12 @@ func TestCardFields(t *testing.T) {
 	}
 }
 
-// docs/ux.md §5, §6: the card is in the pin's yellow, its box and its id
-// (bold), its title bold text, its done row quiet; ✓ and – rows, parents'
-// rollups and waits are muted, the pinned tag yellow, a blocked row red
-// with its tag at every width, the goal quiet; the details' titles are
-// bold.
+// docs/ux.md §5, §6: the agent's pin's card is in the pin's yellow, its
+// box and its id (bold), its title a bright bold title, its done row
+// quiet with ✔ green; ✔ and – rows, parents' rollups and waits are muted,
+// the pinned tag yellow, a blocked row text with its tag muted at every
+// width (red is only an error), the goal quiet; the details' titles are
+// bright and bold.
 func TestCardStyle(t *testing.T) {
 	role := func(l LogLine, s Span) string {
 		if s.Role != "" {
@@ -1661,22 +1676,22 @@ func TestCardStyle(t *testing.T) {
 			text := strings.TrimRight(l.Text, " ")
 			if i < head && strings.ContainsAny(text, "╭│╰") {
 				for _, s := range l.Spans {
-					if strings.ContainsAny(s.Text, "╭╮│╰╯─") && s.Fill == "" && role(l, s) != "title" {
+					if strings.ContainsAny(s.Text, "╭╮│╰╯─") && role(l, s) != "accent" {
 						t.Errorf("%d cols: the card's edge is yellow: %q in %q", cols, s.Text, text)
 					}
 				}
-				if s, ok := span(l, "page-titles"); ok && (s.Role != "title" || !s.Bold) {
+				if s, ok := span(l, "page-titles"); ok && (s.Role != "accent" || !s.Bold) {
 					t.Errorf("%d cols: the card's id is bold yellow: %+v", cols, s)
 				}
 				if s, ok := span(l, "Page titles and footer keys"); ok {
 					found["title"] = true
-					if !s.Bold || role(l, s) != "text" {
-						t.Errorf("%d cols: the card's title is bold text: %+v", cols, s)
+					if !s.Bold || role(l, s) != "title" {
+						t.Errorf("%d cols: the card's title is a bold title: %+v", cols, s)
 					}
 				}
 				if strings.HasPrefix(text, "│ done") {
 					found["done"] = true
-					if k := slices.IndexFunc(l.Spans, func(s Span) bool { return strings.HasPrefix(s.Text, "✓ tab-bar") }); k < 0 || role(l, l.Spans[k]) != "muted" {
+					if k := slices.IndexFunc(l.Spans, func(s Span) bool { return strings.HasPrefix(s.Text, "✔ tab-bar") }); k < 0 || role(l, l.Spans[k]) != "muted" {
 						t.Errorf("%d cols: the done row is quiet: %+v", cols, l.Spans)
 					}
 				}
@@ -1691,7 +1706,7 @@ func TestCardStyle(t *testing.T) {
 			if i < head {
 				continue
 			}
-			name := strings.Fields(strings.TrimLeft(text, "▌ "))
+			name := strings.Fields(strings.TrimLeft(text, "❯ "))
 			if len(name) < 2 {
 				continue
 			}
@@ -1714,12 +1729,12 @@ func TestCardStyle(t *testing.T) {
 				}
 			case id == "pin-card":
 				found["blocked"] = true
-				if l.Kind != "error" || last.Text != "blocked" || role(l, last) != "error" {
-					t.Errorf("%d cols: a blocked row is red and tagged at every width: %+v", cols, l)
+				if l.Kind != "text" || last.Text != "blocked" || role(l, last) != "muted" {
+					t.Errorf("%d cols: a blocked row is text and tagged at every width: %+v", cols, l)
 				}
 			case id == "page-titles" && cols == 120:
 				found["pinned"] = true
-				if last.Text != "pinned" || role(l, last) != "title" {
+				if last.Text != "pinned" || role(l, last) != "accent" {
 					t.Errorf("%d cols: the pinned tag is yellow: %+v", cols, last)
 				}
 			}
@@ -1746,8 +1761,8 @@ func TestCardStyle(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("no title %q\n%s", tc.title, viewText(tc.lines))
 		}
-		if s, _ := span(tc.lines[i], tc.title); !s.Bold || role(tc.lines[i], s) != "text" {
-			t.Errorf("a detail's title is bold text: %+v", tc.lines[i])
+		if s, _ := span(tc.lines[i], tc.title); !s.Bold || role(tc.lines[i], s) != "title" {
+			t.Errorf("a detail's title is a bold title: %+v", tc.lines[i])
 		}
 	}
 }
@@ -2060,7 +2075,7 @@ func TestShortOutlineSaysWhereItIs(t *testing.T) {
 		press(a, "home")
 		body, title = planBody(a), words()
 		lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
-		if lines[len(lines)-1] != "  ↓ more" || tc.tasks && !strings.Contains(body, "─ 0/30 done") || title != "▌ PLANS › Many active" {
+		if lines[len(lines)-1] != "  ↓ more" || tc.tasks && !strings.Contains(body, "─ 0/30 done") || title != "❯ PLANS › Many active" {
 			t.Errorf("%d×%d: the title row: the list from its top, then ↓ more: %q\n%s", tc.cols, tc.rows, title, body)
 		}
 	}
@@ -2115,7 +2130,7 @@ func TestLadderGivesBackWhatFits(t *testing.T) {
 		t.Errorf("80×13: the goal fits over the compact card\n%s", planBody(c))
 	}
 	w, _, _ := openDemo(t, v2, 80, 9)
-	if body := planBody(w); body != "  read-only: version 2 · newer than\n    this Rex reads\n[PINNED] x  X\n▌ ▸ x X\n  · y Y                          cycle" {
+	if body := planBody(w); body != "  read-only: version 2 · newer than\n    this Rex reads\n[PINNED] x  X\n❯ ▸ x X\n  · y Y                          cycle" {
 		t.Errorf("80×9: the problems don't fit; read-only outranks the goal and stays over the strip\n%s", body)
 	}
 }

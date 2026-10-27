@@ -223,22 +223,38 @@ func TestColor256QuantizesTheSamePalette(t *testing.T) {
 }
 
 // Bold is the only attribute Rex adds (docs/ux.md §5), and only in color;
-// a fill under 256 colors goes through the same map as its text.
+// nothing is filled.
 func TestPaintStyleBold(t *testing.T) {
-	fg, bg := UI["pickbg"], UI["text"]
-	if got := PaintStyle("PLAN", &fg, &bg, true, false); got != "PLAN" {
+	fg := UI["title"]
+	if got := PaintStyle("PLAN", fg, true, false); got != "PLAN" {
 		t.Fatalf("no color, no SGR: %q", got)
 	}
-	got := PaintStyle("PLAN", &fg, &bg, true, true)
-	if want := FG(fg) + BG(bg) + "\033[1m" + "PLAN" + Reset; got != want {
+	if got, want := PaintStyle("PLAN", fg, true, true), FG(fg)+"\033[1m"+"PLAN"+Reset; got != want {
 		t.Fatalf("%q want %q", got, want)
 	}
-	if got := PaintStyle("x", &fg, nil, false, true); strings.Contains(got, "\033[1m") || strings.Contains(got, "\033[48") {
+	if got := PaintStyle("x", fg, false, true); strings.Contains(got, "\033[1m") || strings.Contains(got, "\033[48") {
 		t.Fatalf("no bold, no fill: %q", got)
+	}
+}
+
+// docs/ux.md §5: one meaning per role. The selection is purple, xterm 141
+// under 256 colors; the title is bright, never the pin's yellow; and the
+// roles that only filled or tinted are gone.
+func TestUIRoles(t *testing.T) {
+	if got := UI["pick"]; got != (RGB{175, 135, 255}) || Index256(got) != 141 {
+		t.Fatalf("pick %v -> %d", got, Index256(got))
+	}
+	if UI["title"] == UI["accent"] || UI["title"] != (RGB{240, 244, 250}) {
+		t.Fatalf("title %v", UI["title"])
+	}
+	for _, gone := range []string{"pickbg", "folder", "you"} {
+		if _, ok := UI[gone]; ok {
+			t.Errorf("%s is retired", gone)
+		}
 	}
 	defer func(d Depth) { ColorDepth = d }(ColorDepth)
 	ColorDepth = Color256
-	if got := PaintStyle("[", &bg, &bg, false, true); got != FG(bg)+BG(bg)+"["+Reset || !strings.Contains(got, "38;5;") || !strings.Contains(got, "48;5;") {
-		t.Fatalf("a bracket on its own fill stays fill on fill: %q", got)
+	if got := FG(UI["pick"]); got != "\033[38;5;141m" {
+		t.Fatalf("pick under 256 colors: %q", got)
 	}
 }

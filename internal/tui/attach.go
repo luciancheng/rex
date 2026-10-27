@@ -123,7 +123,7 @@ func (a *app) attach(path string) bool {
 	a.openedPlan()
 	a.markOpened()
 	name := a.planLabel(path)
-	a.flash("following "+name, "accent")
+	a.flash("following "+name, "text")
 	// An event moved PLAN, so the AGENT tab keeps a record of it (Rex's
 	// own line, never the feed).
 	a.tapeLine("plan", "following "+name)
@@ -237,7 +237,7 @@ func (a *app) offerStatus() (StatusLine, bool) {
 		tail = " · enter switch" // narrow, the footer still says it
 	}
 	name := a.planLabel(p)
-	return StatusLine{Text: "new plan " + name + tail, Kind: "accent", Fit: func(w int) string { return fitNewPlan(name, tail, short, w) }, Spans: keySpans}, true
+	return StatusLine{Text: "new plan " + name + tail, Kind: "text", Fit: func(w int) string { return fitNewPlan(name, tail, short, w) }, Spans: keySpans}, true
 }
 
 // fitNewPlan fits "new plan <name><tail>" into width cells: the name is
@@ -306,7 +306,7 @@ func (a *app) land() {
 	// isn't news: Wait and Help say so.
 	switch c, n := a.skill.look(a.plans.Repo, a.now()), a.plans.Notice; {
 	case c == skill.Stale || c == skill.StaleProject:
-		a.flash(skillHint(c), "accent")
+		a.flash(skillHint(c), "text")
 		a.toast.Short = "rex-plan skill out of date · ? help"
 		a.toast.Spans = keySpans
 	case n != "":

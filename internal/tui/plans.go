@@ -865,7 +865,7 @@ func summarize(p *plan.Plan) planSummary {
 }
 
 // meta is a plan row's right-hand side (docs/ux.md §11): its progress,
-// "✓ 13/13" once every leaf is finished, "no tasks", or "can't read".
+// "✔ 13/13" once every leaf is finished, "no tasks", or "can't read".
 func (s planSummary) meta() (text, role string) {
 	switch {
 	case s.err != "":
@@ -873,7 +873,7 @@ func (s planSummary) meta() (text, role string) {
 	case s.total == 0:
 		return "no tasks", "muted"
 	case s.done == s.total:
-		return fmt.Sprintf("✓ %d/%d", s.done, s.total), "muted"
+		return fmt.Sprintf("%s %d/%d", doneMark, s.done, s.total), "muted"
 	}
 	return fmt.Sprintf("%d/%d", s.done, s.total), "muted"
 }
@@ -1444,9 +1444,9 @@ const nameColumn = 22
 
 // rowLine is one row of the plan list (docs/ux.md §11): under 60 cells
 // "name … meta", from 60 "name  title … meta" with the title muted. A
-// plan's folder prefix is orange; a finished plan's whole row is quiet.
-// The open plan's meta says so wherever no OPEN H2 does (heads).
-// Selected, it gets ▌ and the fill, and only it does.
+// folder is text with its "/"; a finished plan's whole row is quiet. The
+// open plan's meta says so wherever no OPEN H2 does (heads). Selected, it
+// gets ❯ and the selection's purple, and only it does.
 func (b *PlanBrowser) rowLine(row PlanRow, selected bool, width int, heads bool) LogLine {
 	inner := max(1, width-2)
 	kind := "text"
@@ -1455,53 +1455,46 @@ func (b *PlanBrowser) rowLine(row PlanRow, selected bool, width int, heads bool)
 	switch row.Kind {
 	case PlanRowPlan:
 		s, ok := b.sums[row.Path]
-		folder := "folder"
 		if ok {
 			meta.Text, meta.Role = s.meta()
 			if s.finished() {
-				kind, folder = "muted", ""
+				kind = "muted"
 			}
 		}
 		if row.Open && (row.Group != groupOpen || !heads) {
 			meta.Text = strings.TrimSuffix("open · "+meta.Text, " · ")
 		}
-		name := planStem(row.Name)
-		if i := strings.LastIndex(name, "/"); i >= 0 {
-			left = []Span{{Text: name[:i+1], Role: folder}, {Text: name[i+1:]}}
-		} else {
-			left = []Span{{Text: name}}
-		}
+		left = []Span{{Text: planStem(row.Name)}}
 		if width >= progressWide && ok {
 			left = padSpans(cutSpans(left, nameColumn-2), nameColumn)
 			left = append(left, Span{Text: s.title, Role: "muted"})
 		}
 	case PlanRowDir:
-		left = []Span{{Text: row.Name + "/", Role: "folder"}}
+		left = []Span{{Text: row.Name + "/"}}
 		meta.Text = plural(row.Plans, "%d plan", "%d plans")
 	case PlanRowUp:
-		left = []Span{{Text: "../", Role: "folder"}}
+		left = []Span{{Text: "../"}}
 	case PlanRowFile:
 		kind = "muted"
 		left = []Span{{Text: row.Name}}
 	case PlanRowNew:
-		left = []Span{{Text: "+ New plan", Role: "action"}}
+		left = []Span{{Text: "+ New plan"}}
 	case PlanRowMkdir:
-		left = []Span{{Text: "+ New folder", Role: "action"}}
+		left = []Span{{Text: "+ New folder"}}
 	case PlanRowCreateNamed:
-		left = []Span{{Text: "+ Create '" + row.Name + "'", Role: "action"}}
+		left = []Span{{Text: "+ Create '" + row.Name + "'"}}
 	}
-	lead := Span{Text: "  "}
-	fill := ""
+	lead, spans := Span{Text: "  "}, sideSpans(left, meta, inner)
 	if selected {
-		kind, fill, lead = "pick", "pickbg", Span{Text: "▌ "}
+		kind, lead, spans = "pick", Span{Text: selMark}, picked(spans)
 	}
-	line := spanLine(kind, append([]Span{lead}, sideSpans(left, meta, inner)...)...)
-	line.Fill, line.Selected = fill, selected
+	line := spanLine(kind, append([]Span{lead}, spans...)...)
+	line.Selected = selected
 	return line
 }
 
 // accordion is the selected plan opened in place under its row (docs/ux.md
-// §11): ▌ down each line, none of them filled, so the pin keeps its
+// §11), under the row's ❯ and in the plain roles, so the pin keeps its
 // yellow. Its lines, the H3 labels in their 8-cell column: the title and
 // status (from 60 cells, the status and when it changed; a plan with no
 // title, just its status), goal, pinned or next up, then, done. At most n
@@ -1518,7 +1511,7 @@ func accordion(s planSummary, width, n int, now time.Time) []LogLine {
 	// A line with a label has it in the H3 column; one without starts
 	// where the labels do.
 	add := func(drop int, label string, value ...Span) {
-		spans := []Span{{Text: "▌ ", Role: "pick"}, {Text: "  "}}
+		spans := []Span{{Text: "    "}}
 		if labels && label != "" {
 			spans = append(spans, Span{Text: padRight(label, 8), Role: "muted"})
 		}
@@ -1557,13 +1550,16 @@ func accordion(s planSummary, width, n int, now time.Time) []LogLine {
 		if s.pinned {
 			label = "pinned"
 		}
-		pin := []Span{{Text: "▸ " + s.pin.id, Role: "title", Bold: true}}
+		pin := []Span{{Text: "▸ " + s.pin.id, Bold: true}}
+		if s.pinned {
+			pin[0].Role = "accent" // only the agent's pin is yellow (docs/ux.md §5)
+		}
 		if labels && s.pin.title != "" {
 			pin = append(pin, Span{Text: "  " + s.pin.title})
 		}
 		add(5, label, pin...)
 	case s.finished():
-		add(5, " ", Span{Text: "✓ all done", Role: "muted"}) // a blank label: under the other values
+		add(5, " ", Span{Text: doneMark + " all done", Role: "muted"}) // a blank label: under the other values
 	default:
 		add(5, "", Span{Text: "no pin · nothing unblocked", Role: "muted"})
 	}
@@ -1587,7 +1583,7 @@ func accordion(s planSummary, width, n int, now time.Time) []LogLine {
 		if wide {
 			done = 4
 		}
-		add(done, "done", Span{Text: strings.TrimSuffix("✓ "+s.last.id+"  "+s.last.title, "  "), Role: "muted"})
+		add(done, "done", Span{Text: strings.TrimSuffix(doneMark+" "+s.last.id+"  "+s.last.title, "  "), Role: "muted"})
 	}
 	for len(items) > n {
 		low := 0

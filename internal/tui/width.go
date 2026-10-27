@@ -11,7 +11,7 @@ import (
 // table and Rex adds no modules, so this is a small hand-kept range list:
 // wide and fullwidth CJK, Hangul and emoji count 2, combining marks and
 // zero-width characters count 0, and everything else, including the
-// ambiguous-width glyphs Rex draws (· … ─ │ ▌ ○ ↑ ↓), counts 1.
+// glyphs Rex draws (· … ─ │ ❯ ✔ ✗ › ○ ↑ ↓), counts 1.
 //
 // Strings are measured by sequence, the way terminals draw them: U+FE0F
 // (emoji presentation) or a keycap makes the symbol before it 2 cells

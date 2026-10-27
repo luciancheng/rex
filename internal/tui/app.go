@@ -1161,12 +1161,12 @@ func (a *app) pollDoc() bool {
 		a.toast, a.toastUntil = done, a.now().Add(toastFor)
 		return true
 	}
-	if !news.tasks && strings.HasPrefix(a.toast.Text, "✓ ") && a.now().Before(a.toastUntil) {
+	if !news.tasks && strings.HasPrefix(a.toast.Text, doneMark+" ") && a.now().Before(a.toastUntil) {
 		// The agent finishes a task in several saves (its retrospective,
 		// the plan's own status): the done news stays (docs/ux.md §8).
 		return true
 	}
-	a.flash("plan updated · "+news.text, "accent")
+	a.flash("plan updated · "+news.text, "text")
 	return true
 }
 
@@ -1201,24 +1201,24 @@ func doneToast(was *plan.Task, p *plan.Plan) StatusLine {
 		tail, short = " · the plan is done", " · plan done"
 	}
 	id := was.ID
-	return StatusLine{Text: "✓ " + id + " done" + tail, Kind: "accent", Fit: func(w int) string { return fitDone(id, tail, short, w) }}
+	return StatusLine{Text: doneMark + " " + id + " done" + tail, Kind: "text", Fit: func(w int) string { return fitDone(id, tail, short, w) }}
 }
 
 // fitDone fits the done toast to width cells. What is next matters more
 // than what just finished, so the done id clips from the left first
-// ("✓ …ghlight done · next up load-outline"), down to headPathMin cells,
+// ("✔ …ghlight done · next up load-outline"), down to headPathMin cells,
 // then the tail shortens.
 func fitDone(id, tail, short string, width int) string {
 	for _, t := range []string{tail, short} {
-		room := width - cellLen("✓  done"+t)
+		room := width - cellLen(doneMark+"  done"+t)
 		if cellLen(id) <= room {
-			return "✓ " + id + " done" + t
+			return doneMark + " " + id + " done" + t
 		}
 		if room >= headPathMin {
-			return "✓ …" + tailCells(id, room-1) + " done" + t
+			return doneMark + " …" + tailCells(id, room-1) + " done" + t
 		}
 	}
-	return "✓ done" + short
+	return doneMark + " done" + short
 }
 
 // overlayKey handles keys while Help covers the current place: Esc closes

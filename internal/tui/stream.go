@@ -322,7 +322,7 @@ func askLines(text string, width int) []LogLine {
 	var lines []LogLine
 	for i, row := range hang(lead, squash(text), width, cellLen(lead), 0) {
 		if i == 0 {
-			lines = append(lines, spanLine("question", append(pill("ASK", "pickbg", "error"), Span{Text: row[len("[ASK]"):], Role: "text"})...))
+			lines = append(lines, spanLine("question", append(pill("ASK", "text"), Span{Text: row[len("[ASK]"):], Role: "text"})...))
 			continue
 		}
 		lines = append(lines, spanLine("question", Span{Text: row, Role: "text"}))
@@ -339,17 +339,18 @@ func rexLine(kind, text string, width int) LogLine {
 
 // driftLines is the drift seen while one task was the pin (docs/ux.md
 // §9a): "rex › drift · <pin>", then a row per path or prompt laid out like
-// a failed tool call, "<level> <subject> · <why>", hard ones in the error
-// color and soft ones in the accent. The rows come from the event's
-// meta, which only Rex writes (the block never reaches the feed).
+// a failed tool call, "<level> <subject> · <why>", hard ones (off the pin)
+// in the pin's yellow and soft ones muted; drift is never an error's red.
+// The rows come from the event's meta, which only Rex writes (the block
+// never reaches the feed).
 func driftLines(ev watch.Event, width int) []LogLine {
 	pin, _ := ev.Meta["pin"].(string)
 	lines := []LogLine{rexLine("drift", "drift · "+squash(pin), width)}
 	rows, _ := ev.Meta["rows"].([]driftNote)
 	for _, n := range rows {
-		role := "accent"
+		role := "muted"
 		if n.d.Level == plan.Hard {
-			role = "error"
+			role = "accent"
 		}
 		row := whatWhy("  "+n.d.Level.String()+" ", squash(n.d.Subject), squash(n.d.Reason), width, n.rel != "")
 		lines = append(lines, spanLine("drift", Span{Text: row, Role: role}))

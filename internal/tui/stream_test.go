@@ -331,7 +331,7 @@ func TestReplyBlocks(t *testing.T) {
 
 // docs/ux.md §10, §9a: Rex's own lines start with "rex ›": a plan reload
 // is one row, with no "(file)"; drift is "rex › drift · <pin>" and a row
-// per path, hard ones red and soft ones yellow.
+// per path, hard ones the pin's yellow and soft ones muted.
 func TestRexLines(t *testing.T) {
 	log := []watch.Event{
 		watch.NewEvent("rex", "plan", "card-highlight → active · plan → active", nil),
@@ -350,8 +350,10 @@ func TestRexLines(t *testing.T) {
 	if !view[0].Spans[0].Bold || view[0].Spans[0].Text != "rex ›" || view[0].Spans[1].Role != "muted" {
 		t.Fatalf("rex › is bold, the line muted: %+v", view[0].Spans)
 	}
-	if view[2].Spans[0].Role != "error" || view[3].Spans[0].Role != "accent" {
-		t.Fatalf("hard red, soft yellow: %+v %+v", view[2].Spans, view[3].Spans)
+	// Drift is never an error's red: hard is off the pin, in its yellow,
+	// and soft is muted (docs/ux.md §5).
+	if view[2].Spans[0].Role != "accent" || view[3].Spans[0].Role != "muted" {
+		t.Fatalf("hard yellow, soft muted: %+v %+v", view[2].Spans, view[3].Spans)
 	}
 	// From the app: a reload's line and an attach's.
 	a, c, path := openDemo(t, demoPlan, 120, 32)

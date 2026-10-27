@@ -49,6 +49,8 @@ func FG(rgb RGB) string {
 	return fmt.Sprintf("\033[38;2;%d;%d;%dm", rgb[0], rgb[1], rgb[2])
 }
 
+// BG is a background, which only the mascot's half-block pixels paint:
+// the text column never fills a cell (docs/ux.md §5).
 func BG(rgb RGB) string {
 	if ColorDepth == Color256 {
 		return fmt.Sprintf("\033[48;5;%dm", Index256(rgb))
@@ -99,33 +101,16 @@ func Paint(text string, rgb RGB, enabled bool) string {
 	return FG(rgb) + text + Reset
 }
 
-func PaintFill(text string, fg, bg RGB, enabled bool) string {
+// PaintStyle is Paint with bold, the only attribute Rex adds (docs/ux.md
+// §5). There is no fill: the text column never paints a background.
+func PaintStyle(text string, fg RGB, bold, enabled bool) string {
 	if !enabled {
 		return text
-	}
-	return FG(fg) + BG(bg) + text + Reset
-}
-
-// PaintStyle is Paint with an optional fill and bold, the only attribute
-// Rex adds (docs/ux.md §5). Under 256 colors fg and bg go through the same
-// map, so text painted in its own fill stays invisible.
-func PaintStyle(text string, fg, bg *RGB, bold, enabled bool) string {
-	if !enabled {
-		return text
-	}
-	var b strings.Builder
-	if fg != nil {
-		b.WriteString(FG(*fg))
-	}
-	if bg != nil {
-		b.WriteString(BG(*bg))
 	}
 	if bold {
-		b.WriteString("\033[1m")
+		return FG(fg) + "\033[1m" + text + Reset
 	}
-	b.WriteString(text)
-	b.WriteString(Reset)
-	return b.String()
+	return FG(fg) + text + Reset
 }
 
 func pixelRGB(ch rune, palette Palette) (*RGB, error) {

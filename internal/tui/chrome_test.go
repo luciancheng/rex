@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/luciancheng/rex/internal/mascot"
 	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/watch"
@@ -294,16 +295,16 @@ func TestHeaderTabBar(t *testing.T) {
 			t.Errorf("38 cells, %s: %q", path, row)
 		}
 	}
-	// The pill is painted on its own fill, brackets included, so in color
-	// they vanish; without color they still say where you are.
+	// The pill has no fill (docs/ux.md §5): its brackets show in color
+	// too, in the word's role, so they say where you are either way.
 	var b strings.Builder
 	for _, s := range headerRow(78, PanePlans, "", "idle", "", "").Spans {
-		if s.Text == "[" || s.Text == "]" {
-			b.WriteString(s.Role + "/" + s.Fill + " ")
+		if s.Text == "[" || s.Text == "]" || s.Text == "PLAN" {
+			b.WriteString(s.Role + " ")
 		}
 	}
-	if got := b.String(); got != "text/text text/text " {
-		t.Errorf("brackets fill on fill: %q", got)
+	if got := b.String(); got != "text text text " {
+		t.Errorf("the pill's roles: %q", got)
 	}
 }
 
@@ -344,6 +345,32 @@ func TestShortPlanPath(t *testing.T) {
 // costs the line its words: it shows only where the line reads just as it
 // does across the whole width, trying "1/3" when "1/3 done" doesn't fit;
 // the pin line clips its title, and keeps only the id under 8 title cells.
+// docs/ux.md §4, §5: row 1's news is text, never the pin's yellow: the
+// done toast's ✔ is green and the rest text, and an offer is text; the
+// agent's pin's mark is yellow and a computed one's is not.
+func TestRowOneRoles(t *testing.T) {
+	yellow, green, text := mascot.FG(mascot.UI["accent"]), mascot.FG(mascot.UI["action"]), mascot.FG(mascot.UI["text"])
+	done, err := plan.Parse([]byte(`{"tasks": [{"id": "a", "status": "done"}, {"id": "b"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toast := doneToast(&plan.Task{ID: "a"}, done)
+	if row := statusRow(toast, 60, true); toast.Text != "✔ a done · next up b" || !strings.Contains(row, green+"✔") || !strings.Contains(row, text+" a done") || strings.Contains(row, yellow) {
+		t.Errorf("the done toast: %q", row)
+	}
+	offer := StatusLine{Text: "new plan cuj/next · enter switch", Kind: "text", Spans: keySpans}
+	if row := statusRow(offer, 60, true); strings.Contains(row, yellow) {
+		t.Errorf("the offer: %q", row)
+	}
+	if row := statusRow(pinStatus(done), 60, true); !strings.HasPrefix(stripSGR(row), "▸ b (next up)") || strings.Contains(row, yellow) {
+		t.Errorf("next up is not the pin's yellow: %q", row)
+	}
+	active, _ := plan.Parse([]byte(`{"tasks": [{"id": "a", "status": "active"}]}`))
+	if row := statusRow(pinStatus(active), 60, true); !strings.Contains(row, yellow) {
+		t.Errorf("the agent's pin is yellow: %q", row)
+	}
+}
+
 func TestStatusProgress(t *testing.T) {
 	p, err := plan.Parse([]byte(demoPlan))
 	if err != nil {
@@ -355,10 +382,10 @@ func TestStatusProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	offer := StatusLine{Text: "new plan cuj/next · enter switch", Kind: "accent", Spans: keySpans, Fit: func(w int) string { return fitNewPlan("cuj/next", " · enter switch", "", w) }}
+	offer := StatusLine{Text: "new plan cuj/next · enter switch", Kind: "text", Spans: keySpans, Fit: func(w int) string { return fitNewPlan("cuj/next", " · enter switch", "", w) }}
 	toast := doneToast(&plan.Task{ID: "card-highlight"}, next)
 	lines := []StatusLine{pinStatus(p), pinStatus(next), offer, toast,
-		{Text: "drift · hard: README.md · outside card-highlight files", Short: "drift · hard: README.md", Kind: "error"},
+		{Text: "drift · hard: README.md · outside card-highlight files", Short: "drift · hard: README.md", Kind: "accent"},
 		{Text: "plan JSON error 14:3 · showing last good", Kind: "error"}}
 	for i := range lines {
 		lines[i].Right = "1/3"
@@ -373,7 +400,7 @@ func TestStatusProgress(t *testing.T) {
 			"▸ card-highlight  Selected plan card is one block                     1/3 done",
 			"▸ load-outline  Outline view (next up)                                1/3 done",
 			"new plan cuj/next · enter switch                                      1/3 done",
-			"✓ card-highlight done · next up load-outline                          2/3 done",
+			"✔ card-highlight done · next up load-outline                          2/3 done",
 			"drift · hard: README.md · outside card-highlight files                1/3 done",
 			"plan JSON error 14:3 · showing last good                              1/3 done",
 		}},
@@ -381,7 +408,7 @@ func TestStatusProgress(t *testing.T) {
 			"▸ card-highlight  Selected plan…   1/3",
 			"▸ load-outline (next up)           1/3",
 			"new plan cuj/next · enter switch   1/3",
-			"✓ …ghlight done · next up load-outline",
+			"✔ …ghlight done · next up load-outline",
 			"drift · hard: README.md            1/3",
 			"plan JSON error 14:3 · showing last g…",
 		}},
@@ -438,12 +465,13 @@ func TestStatusProgress(t *testing.T) {
 			t.Errorf("%q", s.Text)
 		}
 	}
-	// enter is drawn as a key, in bold; the pin's mark is the pin's yellow.
+	// enter is drawn as a key, in bold; the agent's pin's mark is the pin's
+	// yellow.
 	painted := statusRow(offer, 78, true)
 	if !strings.Contains(painted, "\033[1menter") {
 		t.Errorf("enter is a key: %q", painted)
 	}
-	if spans := pinStatus(p).Spans("▸ card-highlight  Selected plan…"); len(spans) < 2 || spans[0].Text != "▸ card-highlight" || spans[0].Role != "title" || !spans[0].Bold {
+	if spans := pinStatus(p).Spans("▸ card-highlight  Selected plan…"); len(spans) < 2 || spans[0].Text != "▸ card-highlight" || spans[0].Role != "accent" || !spans[0].Bold {
 		t.Errorf("pin spans: %+v", spans)
 	}
 }
@@ -514,8 +542,18 @@ func TestPageTitle(t *testing.T) {
 			if got := plainRow(line, tc.width); got != tc.want[i] {
 				t.Errorf("%d cells:\n got %q\nwant %q", tc.width, got, tc.want[i])
 			}
-			if line.Fill != "border" {
-				t.Errorf("the page title is a slate bar: %q", line.Fill)
+			// No bar (docs/ux.md §5): the current crumb is the bright bold
+			// title, the crumbs before it and the meta muted.
+			for j, sp := range line.Spans {
+				switch {
+				case j == 0:
+				case sp.Text == p.Crumbs[len(p.Crumbs)-1] || strings.HasSuffix(sp.Text, "…") && sp.Bold:
+					if sp.Role != "title" || !sp.Bold {
+						t.Errorf("%d cells: the current crumb %+v", tc.width, sp)
+					}
+				case strings.TrimSpace(sp.Text) != "" && sp.Role != "muted":
+					t.Errorf("%d cells: %q is %q, not muted", tc.width, sp.Text, sp.Role)
+				}
 			}
 			// Only the last crumb is ever cut without a "…" of its own.
 			got := plainRow(line, tc.width)
@@ -526,13 +564,20 @@ func TestPageTitle(t *testing.T) {
 			}
 		}
 	}
+	// Selected, the title row is ❯ and the selection's purple, all of it.
 	sel := pageLine(Page{Crumbs: []string{"PLANS", "Send-off demo"}, Meta: "active", Selected: true}, 38)
-	if got := plainRow(sel, 38); got != "▌ PLANS › Send-off demo        active" || sel.Fill != "pickbg" {
-		t.Errorf("the selected title row: %q fill %q", got, sel.Fill)
+	if got := plainRow(sel, 38); got != "❯ PLANS › Send-off demo        active" || sel.Kind != "pick" {
+		t.Errorf("the selected title row: %q kind %q", got, sel.Kind)
 	}
-	// The current crumb is bold; under NO_COLOR it is the same text, no bar.
+	for _, sp := range sel.Spans {
+		if sp.Role != "" {
+			t.Errorf("the selected title row is all purple: %+v", sp)
+		}
+	}
+	// The current crumb is bold; under NO_COLOR it is the same text, and
+	// nothing is ever filled.
 	painted := paintLine(pageLine(pages[5], 38), 38, true)
-	if !strings.Contains(painted, "\033[1mSend-off demo") || stripSGR(painted) != paintLine(pageLine(pages[5], 38), 38, false) {
+	if !strings.Contains(painted, "\033[1mSend-off demo") || stripSGR(painted) != paintLine(pageLine(pages[5], 38), 38, false) || strings.Contains(painted, "\033[48") {
 		t.Errorf("%q", painted)
 	}
 }
@@ -1087,12 +1132,15 @@ func TestExitLine(t *testing.T) {
 	}
 }
 
+// docs/ux.md §4, §5: an ask is bold text and a turn's error bold red;
+// live work is text, never the pin's yellow.
 func TestHeaderColorsAskAndError(t *testing.T) {
-	opt := ComposeOptions{Enabled: true, Pane: PaneChat, Status: "ask", Log: []watch.Event{}}
-	opt.Columns, opt.Lines = 120, 32
-	row := composeRows("idle", "yellow", opt).Rows[0]
-	if !strings.Contains(row, "\033[38;2;232;78;78m\033[1mask") {
-		t.Fatalf("ask should use the error color, in bold: %q", row)
+	for state, want := range map[string]string{"ask": "\033[38;2;226;232;240m\033[1mask", "error": "\033[38;2;232;78;78m\033[1merror", "thinking": "\033[38;2;226;232;240mthinking"} {
+		opt := ComposeOptions{Enabled: true, Pane: PaneChat, Status: state, Log: []watch.Event{}}
+		opt.Columns, opt.Lines = 120, 32
+		if row := composeRows("idle", "yellow", opt).Rows[0]; !strings.Contains(row, want) {
+			t.Errorf("%s: %q", state, row)
+		}
 	}
 }
 
@@ -1105,7 +1153,7 @@ func TestH2AndFields(t *testing.T) {
 	lines = append(lines, fieldLines(h3{label: "needs", items: []string{"the pick and pickbg colors exist in mascot.UI"}}, 38, 8)...)
 	lines = append(lines, fieldLines(h3{label: "does", items: []string{"one", "two"}}, 38, 8)...)
 	lines = append(lines, fieldLines(h3{label: "files", items: []string{"internal/tui/plans.go", "internal/tui/live.go"}}, 38, 8)...)
-	lines = append(lines, fieldLines(h3{label: "after", items: []string{"✓ plans-ui  Home cards, folder browser, duplicate names refused"}, bare: true, rows: 2}, 38, 8)...)
+	lines = append(lines, fieldLines(h3{label: "after", items: []string{"✔ plans-ui  Home cards, folder browser, duplicate names refused"}, bare: true, rows: 2}, 38, 8)...)
 	lines = append(lines, fieldLines(h3{label: "changed", items: []string{"internal/tui/plans.go"}}, 38, h3Col(h3{label: "changed", items: []string{"x"}}))...)
 	var got []string
 	for _, l := range lines {
@@ -1120,7 +1168,7 @@ func TestH2AndFields(t *testing.T) {
 		"          • two",
 		"  files   internal/tui/plans.go",
 		"          internal/tui/live.go",
-		"  after   ✓ plans-ui  Home cards,",
+		"  after   ✔ plans-ui  Home cards,",
 		"          folder browser, duplicate n…",
 		"  changed  internal/tui/plans.go",
 	}

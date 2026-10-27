@@ -100,23 +100,24 @@ func headerRow(width int, pane PaneKind, cue, state, follow, planRel string) Log
 		spans = append(spans, Span{Text: "REX", Role: "title", Bold: true}, Span{Text: " "})
 		brand = cellLen("REX ")
 	}
+	// The cue's glyph says which; neither is yellow, which is only the
+	// pin's (docs/ux.md §5).
 	mark := Span{Text: " "}
-	switch cue {
-	case "•":
-		mark = Span{Text: "•", Role: "accent", Bold: true}
-	case "!":
-		mark = Span{Text: "!", Role: "error", Bold: true}
+	if cue == "•" || cue == "!" {
+		mark = Span{Text: cue, Role: "text", Bold: true}
 	}
 	if pane == PanePlans {
-		spans = append(append(spans, pill(tabWords[PanePlans], "pickbg", "text")...), mark, Span{Text: tabWords[PaneChat], Role: "muted"})
+		spans = append(append(spans, pill(tabWords[PanePlans], "text")...), mark, Span{Text: tabWords[PaneChat], Role: "muted"})
 	} else {
-		spans = append(append(spans, Span{Text: tabWords[PanePlans], Role: "muted"}, mark), pill(tabWords[PaneChat], "pickbg", "text")...)
+		spans = append(append(spans, Span{Text: tabWords[PanePlans], Role: "muted"}, mark), pill(tabWords[PaneChat], "text")...)
 	}
 	turn := Span{Text: state, Role: "muted"}
 	switch state {
 	case "thinking", "running":
-		turn.Role = "accent"
-	case "ask", "error":
+		turn.Role = "text"
+	case "ask":
+		turn.Role, turn.Bold = "text", true
+	case "error":
 		turn.Role, turn.Bold = "error", true
 	}
 	spans = append(spans, Span{Text: " "}, turn)

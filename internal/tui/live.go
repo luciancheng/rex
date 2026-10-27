@@ -30,10 +30,10 @@ var kindColor = map[string]string{
 	"plan":     "muted",
 	"drift":    "muted", // its rows carry hard's or soft's color
 	"thought":  "muted",
-	"command":  "accent",
-	"question": "error",
+	"command":  "muted",
+	"question": "text",
 	"text":     "text",
-	"user":     "you",
+	"user":     "text",
 	"result":   "muted",
 	"error":    "error",
 	"idle":     "muted",
@@ -210,7 +210,6 @@ func userRows(text string, width int, tall bool) []string {
 type LogLine struct {
 	Kind     string
 	Text     string
-	Fill     string
 	Spans    []Span // styled runs, when the line has more than one style; Text is their join
 	Selected bool   // part of the selected row; the plan pane keeps it in view
 	Head     bool   // leads a plan screen and stays put while the rest scrolls
@@ -586,7 +585,7 @@ func statusRow(s StatusLine, width int, enabled bool) string {
 	if spans == nil {
 		spans = []Span{{Text: text}}
 	}
-	row := paintSpans(spans, kind, "", room, enabled)
+	row := paintSpans(spans, kind, room, enabled)
 	if right != "" {
 		row += "  " + mascot.Paint(right, mascot.UI["muted"], enabled)
 	}
@@ -597,22 +596,11 @@ func paintLine(line LogLine, width int, enabled bool) string {
 	if line.Kind == "gap" {
 		return strings.Repeat(" ", width)
 	}
-	if len(line.Spans) > 0 {
-		return paintSpans(line.Spans, line.Kind, line.Fill, width, enabled)
+	spans := line.Spans
+	if len(spans) == 0 {
+		spans = []Span{{Text: line.Text}}
 	}
-	rgb, ok := mascot.UI[line.Kind]
-	if !ok {
-		colorName := kindColor[line.Kind]
-		if colorName == "" {
-			colorName = "text"
-		}
-		rgb = mascot.UI[colorName]
-	}
-	text := clip(line.Text, width)
-	if fill, ok := mascot.UI[line.Fill]; ok {
-		return mascot.PaintFill(text, rgb, fill, enabled)
-	}
-	return mascot.Paint(text, rgb, enabled)
+	return paintSpans(spans, line.Kind, width, enabled)
 }
 
 type ComposeOptions struct {

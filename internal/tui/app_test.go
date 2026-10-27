@@ -51,7 +51,7 @@ func TestAppStartsOnTheWaitScreen(t *testing.T) {
 		t.Fatalf("the footer says where to go\n%s", frame)
 	}
 	press(a, "esc")
-	if a.at != atLibrary || !strings.Contains(a.frame(), "▌ + New plan") {
+	if a.at != atLibrary || !strings.Contains(a.frame(), "❯ + New plan") {
 		t.Fatalf("Esc is the plan list, + New plan in it\n%s", a.frame())
 	}
 }

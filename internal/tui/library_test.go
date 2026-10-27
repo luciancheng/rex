@@ -165,17 +165,17 @@ func TestPlanListMockups(t *testing.T) {
   PLANS                       4 plans
 
 OPEN ─────────────────────── following
-▌ cuj/sendoff-demo                 1/3
-▌   Send-off demo · active
-▌   goal    A teammate opens this pla…
-▌   pinned  ▸ card-highlight  Selecte…
-▌   then    · load-outline
-▌   done    ✓ plans-ui  Home cards, f…
+❯ cuj/sendoff-demo                 1/3
+    Send-off demo · active
+    goal    A teammate opens this pla…
+    pinned  ▸ card-highlight  Selecte…
+    then    · load-outline
+    done    ✔ plans-ui  Home cards, f…
 
 RECENT ───────────────────────────────
   ux/redesign                      1/6
   auth-flow                        0/4
-  rex/v1-sendoff-loop          ✓ 13/13
+  rex/v1-sendoff-loop          ✔ 13/13
 
 FOLDERS ─────────────────── rex/plans/
   cuj/                          1 plan
@@ -187,32 +187,32 @@ FOLDERS ─────────────────── rex/plans/
   PLANS                       4 plans
   ↑ more
 RECENT ───────────────────────────────
-▌ ux/redesign                      1/6
-▌   Rex visual redesign · active
-▌   next up ▸ b
-▌   then    ○ c  ○ d
-▌   done    ✓ a
+❯ ux/redesign                      1/6
+    Rex visual redesign · active
+    next up ▸ b
+    then    ○ c  ○ d
+    done    ✔ a
   auth-flow                        0/4
   ↓ more`},
 		{80, 12, nil, `
   PLANS                       4 plans
 OPEN ─────────────────────── following
-▌ cuj/sendoff-demo                 1/3
-▌   Send-off demo · active
-▌   pinned  ▸ card-highlight  Selecte…
+❯ cuj/sendoff-demo                 1/3
+    Send-off demo · active
+    pinned  ▸ card-highlight  Selecte…
 RECENT ───────────────────────────────
   ux/redesign                      1/6
   ↓ more`},
 		{80, 7, nil, `
   PLANS                       4 plans
-▌ cuj/sendoff-demo          open · 1/3
+❯ cuj/sendoff-demo          open · 1/3
   ux/redesign                      1/6`},
 		{24, 12, nil, `
   PLANS         4 plans
 OPEN ───────── following
-▌ cuj/sendoff-demo   1/3
-▌   Send-off demo
-▌   ▸ card-highlight
+❯ cuj/sendoff-demo   1/3
+    Send-off demo
+    ▸ card-highlight
 RECENT ─────────────────
   ux/redesign        1/6
   ↓ more`},
@@ -236,10 +236,10 @@ RECENT ─────────────────
 	a.settle(120, 24)
 	got := body(a)
 	for _, want := range []string{
-		"▌ cuj/sendoff-demo      Send-off demo                                      1/3",
-		"▌   active · changed ",
-		"▌   then    · load-outline  Outline view",
-		"  rex/v1-sendoff-loop   Rex v1: the send-off loop                      ✓ 13/13",
+		"❯ cuj/sendoff-demo      Send-off demo                                      1/3",
+		"    active · changed ",
+		"    then    · load-outline  Outline view",
+		"  rex/v1-sendoff-loop   Rex v1: the send-off loop                      ✔ 13/13",
 		"  cuj/                                                                  1 plan",
 	} {
 		if !strings.Contains(got, want) {
@@ -285,10 +285,55 @@ func TestPlanListCursor(t *testing.T) {
 	}
 }
 
-// docs/ux.md §11: the selected plan opens in place. Its block has ▌ down
-// every line, only the plan's own row is filled, and its lines give way
-// as rows run short. Moving the cursor reads no files: every summary was
+// docs/ux.md §11: the selected plan opens in place. Only the plan's own
+// row has ❯ and the selection's purple, nothing is filled, and its lines
+// give way as rows run short. Moving the cursor reads no files: every summary was
 // read when the list was built.
+// docs/ux.md §5 on the plan list: the selected row is purple through and
+// through but for the marks that keep their meaning (the pin's yellow, an
+// error's red, done's green), and only the agent's pin is yellow in the
+// accordion: next up is never sent, so never yellow.
+func TestPlanListRoles(t *testing.T) {
+	a := listRepo(t)
+	press(a, "esc")
+	var row *LogLine
+	lines := planList(a.plans, a.layout().textW, listFit{body: a.layout().bodyH, tall: a.lines >= 16})
+	for i := range lines {
+		if lines[i].Selected {
+			row = &lines[i]
+			break
+		}
+	}
+	if row == nil || row.Kind != "pick" || !strings.HasPrefix(row.Text, selMark) {
+		t.Fatalf("the selected row: %+v", row)
+	}
+	for _, sp := range row.Spans {
+		if sp.Role != "" && sp.Role != "accent" && sp.Role != "error" && sp.Role != "action" {
+			t.Errorf("the selected row keeps %q in %q, not the selection's purple", sp.Text, sp.Role)
+		}
+	}
+
+	accent := func(lines []LogLine) bool {
+		for _, l := range lines {
+			if l.Kind == "accent" || slices.ContainsFunc(l.Spans, func(sp Span) bool { return sp.Role == "accent" }) {
+				return true
+			}
+		}
+		return false
+	}
+	nextUp, err := plan.Parse([]byte(`{"version": 1, "title": "Later", "tasks": [{"id": "a", "status": "pending"}, {"id": "b", "status": "pending"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accent(accordion(summarize(nextUp), 78, 5, time.Now())) {
+		t.Error("next up's ▸ is yellow in the accordion; only the agent's pin is")
+	}
+	pinned, _ := plan.Parse([]byte(`{"version": 1, "title": "Now", "tasks": [{"id": "a", "status": "active"}, {"id": "b", "status": "pending"}]}`))
+	if !accent(accordion(summarize(pinned), 78, 5, time.Now())) {
+		t.Error("the agent's pin is yellow in the accordion")
+	}
+}
+
 func TestAccordion(t *testing.T) {
 	a := listRepo(t)
 	press(a, "esc")
@@ -304,7 +349,7 @@ func TestAccordion(t *testing.T) {
 	labels := func() string {
 		var out []string
 		for _, line := range block()[1:] {
-			out = append(out, strings.TrimSpace(cutCells(strings.TrimPrefix(line.Text, "▌ "), 10)))
+			out = append(out, strings.TrimSpace(cutCells(strings.TrimPrefix(line.Text, "  "), 10)))
 		}
 		return strings.Join(out, ",")
 	}
@@ -334,18 +379,18 @@ func TestAccordion(t *testing.T) {
 
 	a.settle(80, 24)
 	for i, line := range block() {
-		if !strings.HasPrefix(line.Text, "▌ ") {
-			t.Errorf("line %d has no ▌: %q", i, line.Text)
+		if marked := strings.HasPrefix(line.Text, "❯ "); marked != (i == 0) || strings.Contains(line.Text, "▌") {
+			t.Errorf("line %d ❯=%v: only the plan's row has it: %q", i, marked, line.Text)
 		}
-		if filled := line.Fill == "pickbg"; filled != (i == 0) {
-			t.Errorf("line %d filled=%v: only the plan's row is", i, filled)
+		if picked := line.Kind == "pick"; picked != (i == 0) {
+			t.Errorf("line %d purple=%v: only the plan's row is", i, picked)
 		}
 	}
 	// The pin keeps its yellow inside the block.
 	pinned := false
 	for _, line := range block() {
 		for _, s := range line.Spans {
-			if s.Text == "▸ card-highlight" && s.Role == "title" && s.Bold {
+			if s.Text == "▸ card-highlight" && s.Role == "accent" && s.Bold {
 				pinned = true
 			}
 		}
@@ -383,7 +428,7 @@ func TestAccordion(t *testing.T) {
 // file that doesn't parse (docs/ux.md §11).
 func TestAccordionStates(t *testing.T) {
 	cases := []struct{ body, want string }{
-		{`{"version": 1, "title": "Shipped", "tasks": [{"id": "a", "status": "done", "accomplished": ["the thing"]}]}`, "✓ all done"},
+		{`{"version": 1, "title": "Shipped", "tasks": [{"id": "a", "status": "done", "accomplished": ["the thing"]}]}`, "✔ all done"},
 		{`{"version": 1, "title": "Stuck", "tasks": [{"id": "a", "status": "blocked"}]}`, "no pin · nothing unblocked"},
 		{`{"version": 1, "title": "Fresh", "tasks": []}`, "no tasks yet · the agent adds them"},
 		{`{"version": 1, "tasks": [`, "can't read: "},
@@ -395,7 +440,7 @@ func TestAccordionStates(t *testing.T) {
 		a.plans.walk = planWalk{}
 		a.plans.Rebuild()
 		pickRow(a, PlanRowPlan, "p.rex.json")
-		if v := viewText(BuildPlanView(a.plans, 38)); !strings.Contains(v, "▌ ") || !strings.Contains(v, tc.want) {
+		if v := viewText(BuildPlanView(a.plans, 38)); !strings.Contains(v, "❯ ") || !strings.Contains(v, tc.want) {
 			t.Errorf("%s: want %q\n%s", tc.body, tc.want, v)
 		}
 	}
@@ -406,10 +451,10 @@ func TestAccordionStates(t *testing.T) {
 	a.plans.Rebuild()
 	pickRow(a, PlanRowPlan, "p.rex.json")
 	v := viewText(BuildPlanView(a.plans, 38))
-	if !strings.Contains(v, "▌ p                         can't read\n▌   can't read: ") {
+	if !strings.Contains(v, "❯ p                         can't read\n    can't read: ") {
 		t.Fatalf("an unreadable plan's row says so, and its accordion why\n%s", v)
 	}
-	if line := lineWith(BuildPlanView(a.plans, 78), "▌ p "); strings.Join(strings.Fields(line), " ") != "▌ p can't read" {
+	if line := lineWith(BuildPlanView(a.plans, 78), "❯ p "); strings.Join(strings.Fields(line), " ") != "❯ p can't read" {
 		t.Fatalf("an unreadable plan has no title beside its name: %q", line)
 	}
 }
@@ -426,7 +471,7 @@ func lineWith(view []LogLine, prefix string) string {
 
 // A plan with no title, as every new stub is, doesn't repeat its name: the
 // title column is blank and the accordion's first line is its status. A
-// finished plan's ✓ all done sits under the other values (docs/ux.md §11).
+// finished plan's ✔ all done sits under the other values (docs/ux.md §11).
 func TestAccordionUntitledAndFinished(t *testing.T) {
 	a, root := libraryApp(t)
 	os.MkdirAll(filepath.Join(root, "cuj"), 0o755)
@@ -435,15 +480,15 @@ func TestAccordionUntitledAndFinished(t *testing.T) {
 	a.plans.walk = planWalk{}
 	a.plans.Rebuild()
 	pickRow(a, PlanRowPlan, "cuj/fresh.rex.json")
-	if v := viewText(BuildPlanView(a.plans, 38)); !strings.Contains(v, "▌   pending\n▌   no tasks yet · the agent adds them\n") {
+	if v := viewText(BuildPlanView(a.plans, 38)); !strings.Contains(v, "    pending\n    no tasks yet · the agent adds them\n") {
 		t.Fatalf("38 cells: the status alone, then what's next\n%s", v)
 	}
-	if line := lineWith(BuildPlanView(a.plans, 78), "▌ cuj/fresh"); strings.Join(strings.Fields(line), " ") != "▌ cuj/fresh no tasks" {
+	if line := lineWith(BuildPlanView(a.plans, 78), "❯ cuj/fresh"); strings.Join(strings.Fields(line), " ") != "❯ cuj/fresh no tasks" {
 		t.Fatalf("78 cells: no title beside the name: %q", line)
 	}
 	pickRow(a, PlanRowPlan, "shipped.rex.json")
-	if v := viewText(BuildPlanView(a.plans, 78)); !strings.Contains(v, "\n▌           ✓ all done\n▌   done    ✓ b  Tagged v1.0") {
-		t.Fatalf("✓ all done in the value column\n%s", v)
+	if v := viewText(BuildPlanView(a.plans, 78)); !strings.Contains(v, "\n            ✔ all done\n    done    ✔ b  Tagged v1.0") {
+		t.Fatalf("✔ all done in the value column\n%s", v)
 	}
 }
 
@@ -509,7 +554,7 @@ func TestUnreadablePlansSayWhy(t *testing.T) {
 	for _, name := range []string{"cuj/sendoff-demo.rex.json", "other.rex.json"} {
 		pickRow(a, PlanRowPlan, name)
 		view := BuildPlanView(a.plans, 78)
-		if line := strings.TrimRight(lineWith(view, "▌   can't read"), " "); line != "▌   can't read: permission denied" {
+		if line := strings.TrimRight(lineWith(view, "    can't read"), " "); line != "    can't read: permission denied" {
 			t.Errorf("%s: %q\n%s", name, line, viewText(view))
 		}
 	}
@@ -601,10 +646,16 @@ func TestAccordionNeverShrinksAsRowsGrow(t *testing.T) {
 			was := 0
 			for rows := 7; rows <= 30; rows++ {
 				a.settle(cols, rows)
-				n := -1
+				// The block is the ❯ row and the indented lines under it.
+				n, in := 0, false
 				for _, r := range a.frameRows().Rows {
-					if strings.HasPrefix(textOf(r, cols), "▌ ") {
+					switch text := textOf(r, cols); {
+					case strings.HasPrefix(text, "❯ "):
+						in = true
+					case in && strings.HasPrefix(text, "    "):
 						n++
+					default:
+						in = false
 					}
 				}
 				if n < was {
@@ -636,21 +687,21 @@ func TestBrowseAccordionFillsItsRows(t *testing.T) {
 		want string
 	}{
 		{16, `  ../
-▌ a                         open · 1/3
-▌   Send-off demo · active
-▌   pinned  ▸ card-highlight  Selecte…
-▌   done    ✓ plans-ui  Home cards, b…
+❯ a                         open · 1/3
+    Send-off demo · active
+    pinned  ▸ card-highlight  Selecte…
+    done    ✔ plans-ui  Home cards, b…
   ──────────────────────────────────
   + New plan
   + New folder`},
 		{20, `
   ../
-▌ a                         open · 1/3
-▌   Send-off demo · active
-▌   goal    Show a plan, pin a task, …
-▌   pinned  ▸ card-highlight  Selecte…
-▌   then    · load-outline
-▌   done    ✓ plans-ui  Home cards, b…
+❯ a                         open · 1/3
+    Send-off demo · active
+    goal    Show a plan, pin a task, …
+    pinned  ▸ card-highlight  Selecte…
+    then    · load-outline
+    done    ✔ plans-ui  Home cards, b…
   ──────────────────────────────────
   + New plan
   + New folder
@@ -812,12 +863,12 @@ func TestFindFlat(t *testing.T) {
 	got := body(a)
 	// A find has no H2s: the accordion takes every row the rest leaves.
 	want := `  PLANS › find                1 match
-▌ cuj/sendoff-demo          open · 1/3
-▌   Send-off demo · active
-▌   goal    A teammate opens this pla…
-▌   pinned  ▸ card-highlight  Selecte…
-▌   then    · load-outline
-▌   done    ✓ plans-ui  Home cards, f…
+❯ cuj/sendoff-demo          open · 1/3
+    Send-off demo · active
+    goal    A teammate opens this pla…
+    pinned  ▸ card-highlight  Selecte…
+    then    · load-outline
+    done    ✔ plans-ui  Home cards, f…
   + Create 'demo'`
 	if !strings.HasPrefix(got, want) {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
@@ -870,7 +921,7 @@ func TestBrowseUpFromTopFolder(t *testing.T) {
 	press(a, "esc")
 	browseTo(t, a, "cuj")
 	got := body(a)
-	for _, want := range []string{"  PLANS › cuj/", "\n  ../\n▌ sendoff-demo ", "open · 1/3", "\n  ────", "\n  + New plan\n  + New folder"} {
+	for _, want := range []string{"  PLANS › cuj/", "\n  ../\n❯ sendoff-demo ", "open · 1/3", "\n  ────", "\n  + New plan\n  + New folder"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Browse lacks %q\n%s", want, got)
 		}
@@ -916,7 +967,7 @@ func TestNoPlansYet(t *testing.T) {
   name below, or ask your agent to
   write one.
 
-▌ + New plan
+❯ + New plan
   + New folder`
 	if !strings.HasPrefix(got, want) {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
@@ -997,7 +1048,7 @@ func TestFindWithNoMatchCreatesInOneKey(t *testing.T) {
 	if len(a.plans.Rows) != 1 || a.plans.Rows[0].Kind != PlanRowCreateNamed {
 		t.Fatalf("%#v", a.plans.Rows)
 	}
-	if !strings.Contains(a.frame(), "▌ + Create 'fresh-idea'") {
+	if !strings.Contains(a.frame(), "❯ + Create 'fresh-idea'") {
 		t.Fatal("create row shown")
 	}
 	press(a, "\r")
@@ -1162,7 +1213,7 @@ func TestLongListScrollsWithTheSelection(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		press(a, "down")
 		frame := a.frame()
-		if !strings.Contains(frame, "▌") {
+		if !strings.Contains(frame, "❯") {
 			t.Fatalf("selection scrolled out of view after %d moves\n%s", i+1, frame)
 		}
 	}
@@ -1475,13 +1526,13 @@ func TestSevenRowsListOnlyRows(t *testing.T) {
 		a, _, _ := cujApp(t)
 		press(a, "esc")
 		a.settle(cols, 7)
-		if body := strings.Join(a.frameRows().Rows[3:5], "\n"); !strings.Contains(body, "▌ cuj/sendo") || !strings.Contains(body, "open · 1/3") || strings.Contains(body, "─") {
+		if body := strings.Join(a.frameRows().Rows[3:5], "\n"); !strings.Contains(body, "❯ cuj/sendo") || !strings.Contains(body, "open · 1/3") || strings.Contains(body, "─") {
 			t.Fatalf("%d×7: the open plan's row, marked open, and no heads\n%s", cols, a.frame())
 		}
 		empty := testApp(t)
 		press(empty, "esc")
 		empty.settle(cols, 7)
-		if body := strings.Join(empty.frameRows().Rows[3:5], "\n"); !strings.Contains(body, "▌ + New plan") || strings.Contains(body, "No plans") {
+		if body := strings.Join(empty.frameRows().Rows[3:5], "\n"); !strings.Contains(body, "❯ + New plan") || strings.Contains(body, "No plans") {
 			t.Fatalf("%d×7, no plans: + New plan, without the sentence\n%s", cols, empty.frame())
 		}
 	}
@@ -1499,7 +1550,7 @@ func TestShortListKeepsTheError(t *testing.T) {
 	pickRow(a, PlanRowFile, "")
 	press(a, "\r")
 	got := body(a)
-	if !strings.Contains(got, "notes.txt is not a .rex.json plan") || strings.Contains(got, "not in a git repo") || !strings.Contains(got, "▌ notes.txt") {
+	if !strings.Contains(got, "notes.txt is not a .rex.json plan") || strings.Contains(got, "not in a git repo") || !strings.Contains(got, "❯ notes.txt") {
 		t.Fatalf("the error and the selection stay, the notice goes\n%s", got)
 	}
 }

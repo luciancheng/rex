@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luciancheng/rex/internal/mascot"
 	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/skill"
 	"github.com/luciancheng/rex/internal/watch"
@@ -112,7 +113,7 @@ func TestCUJWholeLoop(t *testing.T) {
   "scope"`))
 	agent(planned)
 	k.spent(t, 0, "see the plan (Rex follows the write)")
-	if a.outline.sel != "card-highlight" || !strings.Contains(a.frame(), "▌ ▸ card-highlight") || !strings.Contains(a.frame(), "plan updated · +3 tasks") || !strings.Contains(a.frame(), "╭─[NEXT UP]─ card-highlight") {
+	if a.outline.sel != "card-highlight" || !strings.Contains(a.frame(), "❯ ▸ card-highlight") || !strings.Contains(a.frame(), "plan updated · +3 tasks") || !strings.Contains(a.frame(), "╭─[NEXT UP]─ card-highlight") {
 		t.Fatalf("B. the filled plan lands on its pin, next up on the card: sel=%q\n%s", a.outline.sel, a.frame())
 	}
 	c.t = c.t.Add(toastFor)
@@ -130,7 +131,7 @@ func TestCUJWholeLoop(t *testing.T) {
 		t.Fatalf("C. one plan line on the tape: %+v", last)
 	}
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; got != "▸ card-highlight  Selected plan card is one block" || !strings.Contains(a.frame(), "▌ ▸ card-highlight") || !strings.Contains(a.frame(), "╭─[PINNED]─ card-highlight · Selected plan card is one block") {
+	if got := a.statusLine().Text; got != "▸ card-highlight  Selected plan card is one block" || !strings.Contains(a.frame(), "❯ ▸ card-highlight") || !strings.Contains(a.frame(), "╭─[PINNED]─ card-highlight · Selected plan card is one block") {
 		t.Fatalf("C. row 1, the card and the outline follow the file: %q\n%s", got, a.frame())
 	}
 
@@ -170,12 +171,12 @@ func TestCUJWholeLoop(t *testing.T) {
 	agent(done)
 	a.ingest([]watch.Event{at(c, 6*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Done: one block now. card-highlight is marked done in the plan."})})
 	k.spent(t, 0, "mark done (the agent does)")
-	if got := a.statusLine().Text; got != "✓ card-highlight done · next up load-outline" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
 		t.Fatalf("E. the file finished the pin: %q", got)
 	}
 	// The card moves on to what is next up and names what it builds on:
 	// what a fresh chat needs, read from the plan (docs/ux.md §6, §9).
-	if frame := a.frame(); a.turn != TurnIdle || !strings.Contains(frame, "╭─[NEXT UP]─ load-outline · Outline view") || !strings.Contains(frame, "│ done    ✓ card-highlight  the selection bar, border and fill") {
+	if frame := a.frame(); a.turn != TurnIdle || !strings.Contains(frame, "╭─[NEXT UP]─ load-outline · Outline view") || !strings.Contains(frame, "│ done    ✔ card-highlight  the selection bar, border and fill") {
 		t.Fatalf("E. the reply ends the turn; the card moves on and says where we left off\n%s", frame)
 	}
 	k.press("\r") // the selection stayed on the task the agent finished
@@ -183,13 +184,13 @@ func TestCUJWholeLoop(t *testing.T) {
 		t.Fatalf("E. enter on the task opens its detail: at=%d sel=%q", a.at, a.outline.sel)
 	}
 	detail := viewText(taskDetail(a.doc, a.outline.sel, 78, true)) // it scrolls; all of it
-	for _, want := range []string{"  ✓ done", "DONE ─", "the selection bar, border and fill cover all three", "  changed  internal/tui/plans.go", "  checked  go test ./internal/tui -run PlanCardSelection (passed)", "  notes    the pick colors were already in mascot.UI", "INTENDED ─"} {
+	for _, want := range []string{"  ✔ done", "DONE ─", "the selection bar, border and fill cover all three", "  changed  internal/tui/plans.go", "  checked  go test ./internal/tui -run PlanCardSelection (passed)", "  notes    the pick colors were already in mascot.UI", "INTENDED ─"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("E. task detail shows %q\n%s", want, detail)
 		}
 	}
 	k.press("esc", "home", "\r") // About: its DONE is the send-off's, kept in the plan
-	if about := viewText(planDetail(a.doc, a.plans.CurrentRel(), 78, true)); a.at != atPlanDetail || !strings.Contains(about, "DONE ─") || !strings.Contains(about, "  ✓ card-highlight  the selection bar, border and fill") || !strings.Contains(about, "  ✓ plans-ui  Home cards") {
+	if about := viewText(planDetail(a.doc, a.plans.CurrentRel(), 78, true)); a.at != atPlanDetail || !strings.Contains(about, "DONE ─") || !strings.Contains(about, "  ✔ card-highlight  the selection bar, border and fill") || !strings.Contains(about, "  ✔ plans-ui  Home cards") {
 		t.Fatalf("E. About lists what is done\n%s", about)
 	}
 	k.press("esc")
@@ -234,7 +235,7 @@ func TestCUJWholeLoop(t *testing.T) {
 	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Group != groupOpen || !strings.Contains(a.frame(), "╭") {
 		t.Fatalf("G. Esc climbs to the plan list, on OPEN, where the composer is\n%s", a.frame())
 	}
-	if frame := a.frame(); !strings.Contains(frame, "OPEN ─") || !strings.Contains(frame, "─ following") || !strings.Contains(frame, "▌   done    ✓ card-highlight  the selection bar") {
+	if frame := a.frame(); !strings.Contains(frame, "OPEN ─") || !strings.Contains(frame, "─ following") || !strings.Contains(frame, "    done    ✔ card-highlight  the selection bar") {
 		t.Fatalf("G. the open plan opens in place under OPEN\n%s", frame)
 	}
 	k.press("\r")
@@ -608,7 +609,7 @@ func TestFrameMatrix(t *testing.T) {
 						t.Errorf("%s: Help's page title %q", name, title)
 					}
 				case a.pane == PanePlans:
-					if !strings.HasPrefix(title, "  PLANS") && !strings.HasPrefix(title, "▌ PLANS") && !strings.HasPrefix(title, "  …") && !strings.HasPrefix(title, "▌ …") {
+					if !strings.HasPrefix(title, "  PLANS") && !strings.HasPrefix(title, "❯ PLANS") && !strings.HasPrefix(title, "  …") && !strings.HasPrefix(title, "❯ …") {
 						t.Errorf("%s: page title %q", name, title)
 					}
 				case strings.HasPrefix(title, "  AGENT") != (size[1] >= agentTitleRows):
@@ -647,6 +648,70 @@ func TestColorFrameSameText(t *testing.T) {
 			}
 			if !strings.Contains(strings.Join(color, ""), "\033[1m") {
 				t.Errorf("%s: no bold anywhere", s.name)
+			}
+		}
+	}
+}
+
+// docs/ux.md §5: quiet roles on every screen of the matrix. The text
+// column never paints a background (the mascot's half-block pixels are
+// its own); every ✔ is done's green; yellow is only on the pin's marks
+// (its ▸ id, [PINNED], its tag, its card's box) and hard drift; purple is
+// only the selection, one block from its ❯; and a list screen has exactly
+// one ❯, the rest none.
+func TestFrameMatrixQuietRoles(t *testing.T) {
+	green, purple, yellow := mascot.FG(mascot.UI["action"]), mascot.FG(mascot.UI["pick"]), mascot.FG(mascot.UI["accent"])
+	pinMark := func(row string) bool {
+		trimmed := strings.TrimSpace(row)
+		for _, mark := range []string{"▸ ", "[PINNED]", "pinned", "hard"} {
+			if strings.Contains(row, mark) {
+				return true
+			}
+		}
+		return strings.HasPrefix(trimmed, "│") || strings.HasPrefix(trimmed, "╰")
+	}
+	for _, size := range [][2]int{{24, 7}, {24, 12}, {24, 24}, {80, 7}, {80, 12}, {80, 16}, {80, 20}, {80, 24}, {120, 7}, {120, 12}, {120, 24}} {
+		for _, s := range matrixScreens(t) {
+			a := matrixApp(t, s, size[0], size[1])
+			name := fmt.Sprintf("%s %d×%d", s.name, size[0], size[1])
+			a.enabled = true
+			marks, block, from := 0, false, -1
+			help := a.overlay[a.pane] != overlayNone
+			for i, row := range textColumn(a.layout(), a.lines, a.composeOptions()) {
+				if strings.Contains(row, yellow) && !help && !pinMark(stripSGR(row)) {
+					t.Errorf("%s: row %d is yellow and isn't the pin: %q", name, i, stripSGR(row))
+				}
+				if strings.Contains(row, "\033[48") {
+					t.Errorf("%s: row %d paints a background: %q", name, i, row)
+				}
+				for at := 0; ; {
+					j := strings.Index(row[at:], doneMark)
+					if j < 0 {
+						break
+					}
+					if head := strings.TrimSuffix(row[:at+j], "\033[1m"); !strings.HasSuffix(head, green) {
+						t.Errorf("%s: row %d has a ✔ that isn't green: %q", name, i, row)
+					}
+					at += j + len(doneMark)
+				}
+				if n := strings.Count(stripSGR(row), "❯"); n > 0 {
+					marks += n
+					block, from = true, i
+				}
+				switch picked := strings.Contains(row, purple); {
+				case picked && !block:
+					t.Errorf("%s: row %d is purple off the selection: %q", name, i, stripSGR(row))
+				case !picked:
+					block = false
+				}
+			}
+			list := !help && a.pane == PanePlans && (a.at == atOutline || a.at == atLibrary && len(a.plans.Rows) > 0 && !a.plans.Prompting())
+			switch {
+			case help:
+			case list && marks != 1:
+				t.Errorf("%s: a list screen has %d ❯ (from row %d)\n%s", name, marks, from, stripSGR(strings.Join(a.frameRows().Rows, "\n")))
+			case !list && marks != 0:
+				t.Errorf("%s: %d ❯ on a screen with no list", name, marks)
 			}
 		}
 	}

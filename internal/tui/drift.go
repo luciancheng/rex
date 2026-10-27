@@ -315,9 +315,9 @@ func (a *app) driftStatus(level plan.DriftLevel) (StatusLine, bool) {
 		return StatusLine{}, false
 	}
 	d := n.d
-	kind := "accent"
+	kind := "muted"
 	if d.Level == plan.Hard {
-		kind = "error"
+		kind = "accent" // off the pin: the pin's yellow, never an error's red
 	}
 	// Short: a prompt's reason (its words are on AGENT below), or an
 	// edit's file name (the end of the path matters most).

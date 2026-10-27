@@ -140,14 +140,14 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{name: "ctrl+c ×2", what: "quit"},
 	})
 	section("MARKS", "", []helpKey{
-		{what: "pinned: the active task, or next up", key: []Span{{Text: "▸", Role: "title", Bold: true}}},
-		{what: "the task your agent set active", key: pill("PINNED", "pickbg", "title")},
-		{what: "nothing active: the first ready task", key: pill("NEXT UP", "title", "border")},
-		{name: "○ · ✓", what: "ready · waiting on another task · done"},
+		{what: "pinned: the active task, or next up", key: []Span{{Text: "▸", Role: "text", Bold: true}}},
+		{what: "the task your agent set active", key: pill("PINNED", "accent")},
+		{what: "nothing active: the first ready task", key: pill("NEXT UP", "muted")},
+		{name: "○ · " + doneMark, what: "ready · waiting on another task · done"},
 		{name: "– !", what: "skipped · blocked"},
 		{name: "1/3", what: "a parent's progress; on row 1, the plan's"},
-		{what: "your cursor", key: []Span{{Text: "▌", Role: "pick"}}},
-		{what: "news on the other tab (! an ask or an error)", key: []Span{{Text: "•", Role: "accent", Bold: true}, {Text: " "}, {Text: "!", Role: "error", Bold: true}}},
+		{what: "your cursor", key: []Span{{Text: "❯", Role: "pick"}}},
+		{what: "news on the other tab (! an ask or an error)", key: []Span{{Text: "• !", Role: "text", Bold: true}}},
 		{name: "following", what: "Rex opens each plan your agent writes"},
 		{name: "latched", what: "you picked this plan; another the agent writes shows on row 1, and enter switches"},
 	})
@@ -155,7 +155,7 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{name: "thinking", what: "a run of N thoughts (×N); the latest shows"},
 		{name: "$", what: "a command; over 5 in a row, all but the last 4 fold into one line"},
 		{name: "✗", what: "a failed step, or the turn's own error"},
-		{what: "the agent waits on you", key: pill("ASK", "pickbg", "error")},
+		{what: "the agent waits on you", key: pill("ASK", "text")},
 		{name: "reply ───", what: "the agent's reply"},
 		{name: "rex ›", what: "Rex's own line, plan news or drift, never sent"},
 	})

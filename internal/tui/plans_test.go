@@ -313,7 +313,7 @@ func TestPlanBrowseFoldersAndCreateFolder(t *testing.T) {
 		t.Fatal("a folder under FOLDERS opens in Browse")
 	}
 	view := viewText(BuildPlanView(b, 48))
-	for _, want := range []string{"  ../", "▌ old/ ", "  sprint ", "  notes.txt", "  + New plan", "  + New folder"} {
+	for _, want := range []string{"  ../", "❯ old/ ", "  sprint ", "  notes.txt", "  + New plan", "  + New folder"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q\n%s", want, view)
 		}
@@ -406,7 +406,7 @@ func TestComposeFramePlansPane(t *testing.T) {
 		Enabled: false, Columns: 80, Lines: 24,
 		Pane: PanePlans, Plans: b, Composer: true, Page: &page,
 	})
-	if !strings.Contains(frame, "  PLANS                       0 plans") || !strings.Contains(frame, "▌ + New plan") {
+	if !strings.Contains(frame, "  PLANS                       0 plans") || !strings.Contains(frame, "❯ + New plan") {
 		t.Fatalf("%s", frame)
 	}
 }

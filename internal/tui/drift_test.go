@@ -40,6 +40,9 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 	if got := a.statusLine().Text; got != "drift · hard: README.md · outside card-highlight files" {
 		t.Fatalf("row 1 %q", got)
 	}
+	if k := a.statusLine().Kind; k != "accent" {
+		t.Fatalf("hard drift is off the pin, so the pin's yellow, never an error's red: %q", k)
+	}
 	a.ingest([]watch.Event{edit(a, c, 2*time.Second, "internal/tui/live_view.go"), edit(a, c, 3*time.Second, "README.md")})
 	view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true}))
 	if strings.Count(view, "rex › drift · card-highlight") != 1 || strings.Count(view, "README.md") != 1 ||
@@ -281,7 +284,7 @@ func TestABatchThatMovesThePinIsJudgedAgainstTheNewPin(t *testing.T) {
 		at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Write", "path": path, "ok": true, "cwd": repo}}),
 		at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + code, Meta: map[string]any{"tool": "Edit", "path": code, "ok": true, "cwd": repo}}),
 	})
-	if got := a.statusLine().Text; got != "✓ card-highlight done · now load-outline" {
+	if got := a.statusLine().Text; got != "✔ card-highlight done · now load-outline" {
 		t.Fatalf("row 1 after the batch: %q", got)
 	}
 	later(a, c)
@@ -315,7 +318,7 @@ func TestTheFinishedTasksLastEditIsNotDrift(t *testing.T) {
 			evs = []watch.Event{at(c, 0, watch.Event{Source: "codex", Kind: "result", Text: "wrote " + code, Meta: map[string]any{"tool": "apply_patch", "path": code, "paths": []any{code, path}, "ok": true, "cwd": repo}})}
 		}
 		a.ingest(evs)
-		if got := a.statusLine().Text; !strings.HasPrefix(got, "✓ card-highlight done") {
+		if got := a.statusLine().Text; !strings.HasPrefix(got, "✔ card-highlight done") {
 			t.Fatalf("patch=%v: row 1 after the batch: %q", patch, got)
 		}
 		later(a, c)
@@ -382,6 +385,9 @@ func TestNamingAnotherTaskDriftsWhenThePinStays(t *testing.T) {
 	a.ingest([]watch.Event{at(c, 2*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Let's finish the passkey button first."})})
 	if got := a.statusLine().Text; got != "drift · soft: start recovery · names recovery, not the pin" {
 		t.Fatalf("the turn ended on the old pin: %q", got)
+	}
+	if k := a.statusLine().Kind; k != "muted" {
+		t.Fatalf("soft drift is muted, never yellow: %q", k)
 	}
 	if tape := viewText(BuildLogView(a.log, 100, viewOpt{tall: true})); !strings.Contains(tape, "rex › drift · passkey-ui") || !strings.Contains(tape, "soft start recovery · names recovery, not the pin") {
 		t.Fatalf("recorded as before\n%s", tape)

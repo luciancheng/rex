@@ -8,13 +8,14 @@ import (
 	"github.com/luciancheng/rex/internal/watch"
 )
 
-// Span is one styled run of a line (docs/ux.md §5). Role and Fill name
-// mascot.UI (or kindColor) roles; a span without them takes its line's
-// Kind and Fill. Bold is the only attribute Rex adds. A line's Text stays
-// the plain join of its spans, so text tests read it as before.
+// Span is one styled run of a line (docs/ux.md §5). Role names a
+// mascot.UI (or kindColor) role; a span without one takes its line's
+// Kind. Bold is the only attribute Rex adds, and nothing is filled. A
+// line's Text stays the plain join of its spans, so text tests read it as
+// before.
 type Span struct {
-	Text, Role, Fill string
-	Bold             bool
+	Text, Role string
+	Bold       bool
 }
 
 func spanText(spans []Span) string {
@@ -82,8 +83,8 @@ func roleRGB(role string) mascot.RGB {
 
 // paintSpans paints spans into exactly width cells, as clip would: each
 // span is cleaned, the whole is cut by cells with a trailing "…" when it
-// doesn't fit, and the rest is padded in fill.
-func paintSpans(spans []Span, kind, fill string, width int, enabled bool) string {
+// doesn't fit, and the rest is padded with blanks.
+func paintSpans(spans []Span, kind string, width int, enabled bool) string {
 	if width <= 0 {
 		return ""
 	}
@@ -105,14 +106,14 @@ func paintSpans(spans []Span, kind, fill string, width int, enabled bool) string
 		if cut {
 			t = cutCells(t, room-used) + "…"
 		}
-		b.WriteString(paintRun(t, s, kind, fill, enabled))
+		b.WriteString(paintRun(t, s, kind, enabled))
 		used += cellLen(t)
 		if cut {
 			break
 		}
 	}
 	if used < width {
-		b.WriteString(paintRun(strings.Repeat(" ", width-used), Span{}, kind, fill, enabled))
+		b.WriteString(strings.Repeat(" ", width-used))
 	}
 	return b.String()
 }
@@ -165,32 +166,49 @@ func sideSpans(left []Span, meta Span, width int) []Span {
 	return append(padSpans(cutSpans(left, room), width-cellLen(meta.Text)), meta)
 }
 
-func paintRun(text string, s Span, kind, fill string, enabled bool) string {
-	if text == "" {
-		return ""
+// doneMark is done (docs/ux.md §5), the one thing green paints: it keeps
+// its green in any run, the selection's included.
+const doneMark = "✔"
+
+func paintRun(text string, s Span, kind string, enabled bool) string {
+	if text == "" || strings.TrimSpace(text) == "" && !s.Bold {
+		return text // blank: no color to set
 	}
-	role, f := s.Role, s.Fill
+	role := s.Role
 	if role == "" {
 		role = kind
 	}
-	if f == "" {
-		f = fill
+	if i := strings.Index(text, doneMark); i >= 0 && role != "action" {
+		done := Span{Text: doneMark, Role: "action", Bold: s.Bold}
+		return paintRun(text[:i], s, kind, enabled) + paintRun(doneMark, done, kind, enabled) + paintRun(text[i+len(doneMark):], s, kind, enabled)
 	}
-	var bg *mascot.RGB
-	if rgb, ok := mascot.UI[f]; ok {
-		bg = &rgb
-	} else if strings.TrimSpace(text) == "" && !s.Bold {
-		return text // blank and unfilled: no color to set
-	}
-	fg := roleRGB(role)
-	return mascot.PaintStyle(text, &fg, bg, s.Bold, enabled)
+	return mascot.PaintStyle(text, roleRGB(role), s.Bold, enabled)
 }
 
-// pill marks the place or page you are on: "[WORD]" with the word in
-// bold ink on fill and the brackets painted fill on fill, so in color
-// they vanish and under NO_COLOR they still say "here" (docs/ux.md §5).
-func pill(word, ink, fill string) []Span {
-	return []Span{{Text: "[", Role: fill, Fill: fill}, {Text: word, Role: ink, Fill: fill, Bold: true}, {Text: "]", Role: fill, Fill: fill}}
+// pill is a mark in brackets, "[WORD]", the word bold, all of it in role;
+// the brackets show in color too, so the characters never change
+// (docs/ux.md §5).
+func pill(word, role string) []Span {
+	return []Span{{Text: "[", Role: role}, {Text: word, Role: role, Bold: true}, {Text: "]", Role: role}}
+}
+
+// selMark is the selection's gutter (docs/ux.md §5): ❯ and a blank, on
+// one row of a screen.
+const selMark = "❯ "
+
+// picked is a row's spans as the selection draws them (docs/ux.md §5):
+// in the line's kind, the selection's purple, but for the marks that keep
+// their meaning there, the pin's yellow and an error's red (✔ keeps its
+// green in paintRun).
+func picked(spans []Span) []Span {
+	out := make([]Span, len(spans))
+	for i, s := range spans {
+		if s.Role != "accent" && s.Role != "error" {
+			s.Role = ""
+		}
+		out[i] = s
+	}
+	return out
 }
 
 // keySpans draws the keys in a row-1 line as keys, bold in text: a key
@@ -336,7 +354,7 @@ func paraRows(text string, width, most int) []string {
 
 // wrapMost wraps text to width cells in at most most rows (0: as many as
 // it takes), the last cut with "…" when there is more. Unlike wrap it
-// keeps the spaces inside a row: "✓ plans-ui  Home cards". Each row costs
+// keeps the spaces inside a row: "✔ plans-ui  Home cards". Each row costs
 // its own cells, never the rest of the text's.
 func wrapMost(text string, width, most int) []string {
 	if width <= 0 {
@@ -464,34 +482,35 @@ func fitCrumbs(crumbs []string, width int, metas ...string) ([]string, string) {
 
 const crumbSep = " › "
 
-// pageLine draws a page title as a full-width slate bar (the selection's
-// fill when the outline's title row is selected): crumbs from column 2,
-// the current one bold, and the meta ending one cell from the edge.
-// Under NO_COLOR it is the same text with no bar.
+// pageLine draws a page title: crumbs from column 2, the current one a
+// bright bold title and the ones before it muted, and the meta, muted,
+// ending one cell from the edge. Selected (the outline's title row under
+// the cursor) it is ❯ in the gutter and the selection's purple.
 func pageLine(p Page, width int) LogLine {
 	crumbs, meta := fitCrumbs(p.Crumbs, width, p.Meta, p.MetaShort)
-	fill, lead := "border", Span{Text: "  "}
-	if p.Selected {
-		fill, lead = "pickbg", Span{Text: "▌ ", Role: "pick"}
-	}
-	spans := []Span{lead}
+	spans := []Span{{Text: "  "}}
 	for i, c := range crumbs {
 		if i > 0 {
-			spans = append(spans, Span{Text: crumbSep})
+			spans = append(spans, Span{Text: crumbSep, Role: "muted"})
 		}
-		spans = append(spans, Span{Text: c, Bold: i == len(crumbs)-1})
+		if i == len(crumbs)-1 {
+			spans = append(spans, Span{Text: c, Role: "title", Bold: true})
+		} else {
+			spans = append(spans, Span{Text: c, Role: "muted"})
+		}
 	}
 	if meta != "" {
 		role := p.MetaRole
 		if role == "" {
-			role = "text"
+			role = "muted"
 		}
 		gap := width - cellLen(spanText(spans)) - cellLen(meta) - 1
 		spans = append(spans, Span{Text: strings.Repeat(" ", gap)}, Span{Text: meta, Role: role}, Span{Text: " "})
 	}
-	line := spanLine("text", spans...)
-	line.Fill = fill
-	return line
+	if p.Selected {
+		return spanLine("pick", append([]Span{{Text: selMark}}, picked(spans[1:])...)...)
+	}
+	return spanLine("text", spans...)
 }
 
 // FooterSeg is one footer segment, a key and what it does: "enter open".

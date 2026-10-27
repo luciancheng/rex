@@ -271,9 +271,9 @@ func planTitle(p *plan.Plan, path string) string {
 }
 
 // glyph is a task's mark in the outline (docs/ux.md §5), the tag that
-// goes on the right of its row and the tag's role: the pin's "pinned" or
-// "next up" in the pin's yellow, a parent's rollup and a wait muted, and
-// what needs you red.
+// goes on the right of its row and the tag's role: the agent's "pinned"
+// in the pin's yellow, "next up", a parent's rollup, a block and a wait
+// muted, and a problem in the plan red.
 func glyph(t *plan.Task, g *plan.Graph, pin *plan.Task) (mark, tag, tagKind string) {
 	if !g.Leaf(t) {
 		done, total := g.Rollup(t)
@@ -284,15 +284,15 @@ func glyph(t *plan.Task, g *plan.Graph, pin *plan.Task) (mark, tag, tagKind stri
 	}
 	switch {
 	case pin != nil && t == pin && t.Status == plan.Active:
-		return "▸", "pinned", "title"
+		return "▸", "pinned", "accent"
 	case pin != nil && t == pin:
-		return "▸", "next up", "title"
+		return "▸", "next up", "muted"
 	case t.Status == plan.Done:
-		return "✓", "", ""
+		return doneMark, "", ""
 	case t.Status == plan.Skipped:
 		return "–", "skipped", "muted"
 	case t.Status == plan.Blocked:
-		return "!", "blocked", "error"
+		return "!", "blocked", "muted"
 	case t.Status == plan.Active && pin != nil && pin.Status == plan.Active:
 		return "▸", "also active", "error" // a second active task; row 1 warns
 	case t.Status == plan.Active:
@@ -331,10 +331,10 @@ func rowBlurb(t *plan.Task, cells int) string {
 	return flatHead(t.Description, cells)
 }
 
-// doneRef is a done task as a card or About names it: "✓ <id>  <what it
+// doneRef is a done task as a card or About names it: "✔ <id>  <what it
 // accomplished>".
 func doneRef(t *plan.Task) string {
-	return strings.TrimSpace("✓ " + taskKey(t) + "  " + flat(t.DoneWhat()))
+	return strings.TrimSpace(doneMark + " " + taskKey(t) + "  " + flat(t.DoneWhat()))
 }
 
 // filesLine is the pin's files on one row of room cells (docs/ux.md §6):
@@ -772,7 +772,7 @@ func (o *outline) drawCard(f outlineFit) []LogLine {
 		if done, total := o.g.Progress(); len(o.p.Tasks) == 0 {
 			text = "No tasks yet · your agent fills this file"
 		} else if done == total {
-			text = "✓ all tasks done"
+			text = doneMark + " all tasks done"
 		}
 		var lines []LogLine
 		for _, row := range wrapMost(text, max(1, w-2), 2) {
@@ -780,11 +780,13 @@ func (o *outline) drawCard(f outlineFit) []LogLine {
 		}
 		return lines
 	}
-	badge := pill("PINNED", "pickbg", "title")
+	// The agent's pin is yellow, edge to edge; a pin Rex worked out is not
+	// the agent's and is never sent, so its box is slate (docs/ux.md §5,
+	// §7).
+	edgeRole, badge, id := "accent", pill("PINNED", "accent"), Span{Text: flat(pin.ID), Role: "accent", Bold: true}
 	if pin.Status != plan.Active {
-		badge = pill("NEXT UP", "title", "border") // worked out, not the agent's (docs/ux.md §7)
+		edgeRole, badge, id = "border", pill("NEXT UP", "muted"), Span{Text: flat(pin.ID), Bold: true}
 	}
-	id := Span{Text: flat(pin.ID), Role: "title", Bold: true}
 	title := strings.TrimSpace(flat(pin.Title))
 	if f.card == cardStrip {
 		spans := append(append([]Span{}, badge...), Span{Text: " "}, id)
@@ -793,7 +795,7 @@ func (o *outline) drawCard(f outlineFit) []LogLine {
 		}
 		return []LogLine{spanLine("text", cutSpans(spans, w)...)}
 	}
-	edge := func(s string) Span { return Span{Text: s, Role: "title"} }
+	edge := func(s string) Span { return Span{Text: s, Role: edgeRole} }
 	lead := append(append([]Span{edge("╭─")}, badge...), edge("─ "))
 	room := max(1, w-spansLen(lead)-3)
 	// From 60 cells the title joins the edge where pinTitleMin cells of it
@@ -801,21 +803,21 @@ func (o *outline) drawCard(f outlineFit) []LogLine {
 	inEdge := w >= progressWide && title != "" && room-cellLen(id.Text)-3 >= pinTitleMin
 	label := []Span{id}
 	if inEdge {
-		label = append(label, Span{Text: " · "}, Span{Text: title, Bold: true})
+		label = append(label, Span{Text: " · "}, Span{Text: title, Role: "title", Bold: true})
 	}
 	label = cutSpans(label, room)
 	top := append(append(lead, label...), Span{Text: " "}, edge(strings.Repeat("─", max(1, w-spansLen(lead)-spansLen(label)-2))+"╮"))
 	lines := []LogLine{spanLine("text", top...)}
 	inside := func(spans ...Span) {
-		lines = append(lines, boxed(spanLine("text", append([]Span{{Text: "  "}}, spans...)...), w))
+		lines = append(lines, boxed(spanLine("text", append([]Span{{Text: "  "}}, spans...)...), w, edgeRole))
 	}
 	if !inEdge && title != "" {
-		inside(Span{Text: title, Bold: true})
+		inside(Span{Text: title, Role: "title", Bold: true})
 	}
 	empty := len(lines)
 	for _, fl := range o.cardFields(f) {
 		for _, l := range fieldLines(fl, w-2, 8) {
-			lines = append(lines, boxed(l, w))
+			lines = append(lines, boxed(l, w, edgeRole))
 		}
 	}
 	if len(lines) == empty {
@@ -875,19 +877,20 @@ func (o *outline) cardFields(f outlineFit) []h3 {
 
 // boxed puts a field line inside the PINNED card: its 2-cell lead becomes
 // the card's left edge, and the right edge closes it at width.
-func boxed(l LogLine, width int) LogLine {
-	spans := append([]Span{{Text: "│ ", Role: "title"}}, l.Spans[1:]...)
-	return spanLine("text", append(padSpans(cutSpans(spans, width-2), width-2), Span{Text: " │", Role: "title"})...)
+func boxed(l LogLine, width int, edge string) LogLine {
+	spans := append([]Span{{Text: "│ ", Role: edge}}, l.Spans[1:]...)
+	return spanLine("text", append(padSpans(cutSpans(spans, width-2), width-2), Span{Text: " │", Role: edge})...)
 }
 
 // tasks is the outline's list (docs/ux.md §6): a row per task in file
-// order, parent as indent. The pin's ▸ and id are the only yellow on it;
-// parents are bold with a muted rollup; done rows are quiet, with what
-// they accomplished as their blurb from 60 cells. The selection gets ▌
-// and the fill and keeps the pin's yellow; under 60 cells it gets its
-// blurb on a row of its own, except the pin while the card shows what it
-// does. A blank row goes between top-level groups. listOf takes the blank
-// rows and the blurb row out where the layout has no room for them.
+// order, parent as indent. The agent's pin's ▸, id and tag are the only
+// yellow on it; parents are bold with a muted rollup; done rows are
+// quiet, with what they accomplished as their blurb from 60 cells. The
+// selection gets ❯ and purple text and keeps the pin's yellow; under 60
+// cells it gets its blurb on a row of its own, except the pin while the
+// card shows what it does. A blank row goes between top-level groups.
+// listOf takes the blank rows and the blurb row out where the layout has
+// no room for them.
 func (o *outline) tasks(sel string, cardDoes bool) []LogLine {
 	p, g, pin := o.p, o.g, o.pin
 	inner := max(1, o.width-2)
@@ -933,7 +936,10 @@ func (o *outline) tasks(sel string, cardDoes bool) []LogLine {
 		}
 		indent := indents[i]
 		mark, tag, tagKind := glyph(t, g, pin)
-		if !wide && tagKind != "error" && !parent {
+		// A block needs you as a problem does, so its tag shows at every
+		// width too, though only a problem is red.
+		needs := tagKind == "error" || t.Status == plan.Blocked && !parent
+		if !wide && !needs && !parent {
 			tag = "" // narrow rows keep the title; the glyph still says it, and a parent keeps its rollup
 		}
 		// A row shows at most inner cells of its title and blurb: one cell
@@ -953,8 +959,10 @@ func (o *outline) tasks(sel string, cardDoes bool) []LogLine {
 		switch {
 		case parent:
 			head.Bold = true
+		case t == pin && t.Status == plan.Active:
+			head.Role, head.Bold = "accent", true
 		case t == pin:
-			head.Role, head.Bold = "title", true
+			head.Bold = true
 		case plan.Finished(t.Status):
 			kind = "muted"
 		}
@@ -968,22 +976,19 @@ func (o *outline) tasks(sel string, cardDoes bool) []LogLine {
 		row := cutSpans(left, inner)
 		// A red tag needs you, so it shows at every width, down to 6 cells
 		// of the row's left side (docs/ux.md §6, Rows).
-		if tag != "" && (inner >= cellLen(tag)+12 || tagKind == "error" && inner >= cellLen(tag)+8) {
+		if tag != "" && (inner >= cellLen(tag)+12 || needs && inner >= cellLen(tag)+8) {
 			row = sideSpans(left, Span{Text: tag, Role: tagKind}, inner)
 		}
 		lead := Span{Text: "  "}
 		selected := key == sel
 		if selected {
-			kind, lead = "pick", Span{Text: "▌ "}
+			kind, lead, row = "pick", Span{Text: selMark}, picked(row)
 		}
 		line := spanLine(kind, append([]Span{lead}, row...)...)
 		line.Selected = selected
-		if selected {
-			line.Fill = "pickbg"
-		}
 		lines = append(lines, line)
 		if selected && !wide && b != "" && !(t == pin && cardDoes) {
-			lines = append(lines, LogLine{Kind: "pick", Fill: "pickbg", Selected: true, Text: "▌ " + ellipsis(indent+"    "+b, inner)})
+			lines = append(lines, LogLine{Kind: "pick", Selected: true, Text: "  " + ellipsis(indent+"    "+b, inner)})
 		}
 	}
 	return lines
@@ -1042,10 +1047,10 @@ func (b *detailBody) para(f h3) []LogLine {
 	return fieldLines(f, b.width-2, 0)
 }
 
-// title is a bold title, wrapped.
+// title is a bright bold title, wrapped.
 func (b *detailBody) title(text string) {
 	for _, row := range wrapMost(flat(text), max(1, b.width-2), 0) {
-		b.lines = append(b.lines, spanLine("text", Span{Text: "  "}, Span{Text: row, Bold: true}))
+		b.lines = append(b.lines, spanLine("text", Span{Text: "  "}, Span{Text: row, Role: "title", Bold: true}))
 	}
 }
 
@@ -1130,13 +1135,13 @@ func taskState(t *plan.Task, g *plan.Graph, pin *plan.Task) []Span {
 	spans := []Span{{Text: "  "}}
 	switch mark, tag, kind := glyph(t, g, pin); {
 	case t == pin && t.Status == plan.Active:
-		spans = append(append(spans, pill("PINNED", "pickbg", "title")...), Span{Text: " active", Role: "muted"})
+		spans = append(append(spans, pill("PINNED", "accent")...), Span{Text: " active", Role: "muted"})
 	case t == pin:
-		spans = append(append(spans, pill("NEXT UP", "title", "border")...), Span{Text: " " + string(t.Status), Role: "muted"})
+		spans = append(append(spans, pill("NEXT UP", "muted")...), Span{Text: " " + string(t.Status), Role: "muted"})
 	case !g.Leaf(t):
 		spans = append(spans, Span{Text: tag + " done", Role: "muted"})
 	default:
-		words := map[string]string{"✓": "done", "–": "skipped", "!": "blocked", "▸": "active", "○": "ready"}[mark]
+		words := map[string]string{doneMark: "done", "–": "skipped", "!": "blocked", "▸": "active", "○": "ready"}[mark]
 		switch {
 		case tag == "cycle":
 			words = "cycle"
@@ -1301,16 +1306,16 @@ func pinStatus(p *plan.Plan) StatusLine {
 		}
 		return StatusLine{Text: "no pin · nothing unblocked", Kind: "muted"}
 	}
-	// The agent's active task needs no word; a pin Rex worked out says
-	// "(next up)" (docs/ux.md §4, §7).
-	mark, tail := "▸ "+flat(pin.ID), ""
+	// The agent's active task needs no word and is the pin's yellow; a pin
+	// Rex worked out says "(next up)" and is not (docs/ux.md §4, §5, §7).
+	mark, tail, role := "▸ "+flat(pin.ID), "", "accent"
 	if pin.Status != plan.Active {
-		tail = " (next up)"
+		tail, role = " (next up)", "text"
 	}
 	title := flat(pin.Title)
 	if strings.TrimSpace(title) == "" {
 		return StatusLine{Text: mark + tail, Kind: "text", Spans: func(text string) []Span {
-			return []Span{{Text: mark, Role: "title", Bold: true}, {Text: strings.TrimPrefix(text, mark), Role: "muted"}}
+			return []Span{{Text: mark, Role: role, Bold: true}, {Text: strings.TrimPrefix(text, mark), Role: "muted"}}
 		}}
 	}
 	return StatusLine{
@@ -1330,7 +1335,7 @@ func pinStatus(p *plan.Plan) StatusLine {
 			if !ok {
 				return nil
 			}
-			spans := []Span{{Text: mark, Role: "title", Bold: true}}
+			spans := []Span{{Text: mark, Role: role, Bold: true}}
 			if body, ok := strings.CutSuffix(rest, tail); ok && tail != "" {
 				return append(spans, Span{Text: body}, Span{Text: tail, Role: "muted"})
 			}

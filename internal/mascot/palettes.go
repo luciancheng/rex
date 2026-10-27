@@ -32,18 +32,19 @@ var Palettes = map[string]Palette{
 	},
 }
 
+// UI is the text column's roles, one meaning each (docs/ux.md §5): title
+// is bright and drawn bold, accent (yellow) is only the pin, pick
+// (purple) only the selection, action (green) only ✔ and error (red)
+// only an error. None is ever a background.
 var UI = map[string]RGB{
-	"title":  {244, 196, 66},
+	"title":  {240, 244, 250},
 	"muted":  {132, 148, 172},
 	"text":   {226, 232, 240},
 	"border": {52, 68, 92},
 	"accent": {244, 196, 66},
 	"error":  {232, 78, 78},
-	"you":    {92, 196, 232},
-	"folder": {253, 150, 47},
 	"action": {88, 214, 108},
-	"pick":   {92, 196, 232},
-	"pickbg": {18, 42, 58},
+	"pick":   {175, 135, 255},
 }
 
 func PaletteFor(name string) (Palette, error) {

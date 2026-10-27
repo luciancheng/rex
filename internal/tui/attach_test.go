@@ -173,8 +173,8 @@ func TestEveryHarnessWriteOpensThePlan(t *testing.T) {
 		if a.pane != PaneChat {
 			t.Fatalf("%s: an attach moved you: pane=%d", tc.source, a.pane)
 		}
-		if !strings.Contains(a.statusLine().Text, "following "+planStem(tc.name)) {
-			t.Fatalf("%s: row 1 says why the plan changed: %q", tc.source, a.statusLine().Text)
+		if s := a.statusLine(); !strings.Contains(s.Text, "following "+planStem(tc.name)) || s.Kind != "text" {
+			t.Fatalf("%s: row 1 says why the plan changed, in text, not the pin's yellow: %q %q", tc.source, s.Text, s.Kind)
 		}
 		if last := a.log[len(a.log)-1]; last.Source != "rex" || last.Kind != "plan" || last.Text != "following "+planStem(tc.name) {
 			t.Fatalf("%s: the tape keeps a record of the move: %+v", tc.source, last)
@@ -1333,8 +1333,8 @@ func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, "SKILL.md"), old, 0o644)
 	}
 	a := start()
-	if got := a.statusLine().Text; got != "rex-plan skill is out of date · rex ingest --install-skill" {
-		t.Fatalf("row 1 on the first frame: %q", got)
+	if s := a.statusLine(); s.Text != "rex-plan skill is out of date · rex ingest --install-skill" || s.Kind != "text" {
+		t.Fatalf("row 1 on the first frame, in text: %q %q", s.Text, s.Kind)
 	}
 	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "rex-plan skill is out of date · rex ingest --install-skill            1/3 done" {
 		t.Fatalf("drawn: %q", row)

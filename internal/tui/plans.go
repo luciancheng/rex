@@ -756,7 +756,7 @@ func (b *PlanBrowser) remember(path string) {
 // showDoc hands the list the open plan as Rex shows it (docs/ux.md §6):
 // its last good copy, or the error the notice row shows. OPEN's row and accordion
 // read it, not the file, so a save caught half-written never puts
-// "can't read" under OPEN while the outline still shows the plan.
+// "can't read" under OPEN while the task list still shows the plan.
 func (b *PlanBrowser) showDoc(d *planDoc) {
 	b.doc, b.docPath = nil, b.Current
 	switch {
@@ -839,7 +839,7 @@ func readSum(path string) planSummary {
 	return summarize(p)
 }
 
-// unreadable leads the outline's error for a plan Rex can't open; the
+// unreadable leads the task list's error for a plan Rex can't open; the
 // notice row and the plan list show only the cause after it.
 const unreadable = "can't read the file: "
 
@@ -854,11 +854,11 @@ func cause(err error) string {
 	return err.Error()
 }
 
-// summarize is a plan as the list sums it up: the pin as the outline has
+// summarize is a plan as the list sums it up: the pin as the task list has
 // it (docs/ux.md §7), the next one or two unfinished leaves after it, and
-// the done task the PINNED card names (Graph.BuildsOn), so the list and the
-// outline never disagree. A plan with no title (a new stub has only an id,
-// its name) has none here: its name is already on the row.
+// the done task the pin's details build on (Graph.BuildsOn), so the plan
+// list and the task list never disagree. A plan with no title (a new stub
+// has only an id, its name) has none here: its name is already on the row.
 func summarize(p *plan.Plan) planSummary {
 	g := p.Graph()
 	s := planSummary{status: string(p.Status), goal: p.Goal}

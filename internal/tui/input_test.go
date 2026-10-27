@@ -145,7 +145,8 @@ func TestHelpOverlay(t *testing.T) {
 	}
 	// Help lists keys, not verbs: Rex has no pin, done, send-off, brief or
 	// note (docs/ux.md §13). No row's key is a lone letter but o, which
-	// opens the plan the notice row offers (§3), and no key is an icon.
+	// opens the plan the notice row offers (§3), and the task list's i,
+	// About; no key is an icon.
 	for _, width := range []int{30, 38, 80} {
 		body := viewText(a.helpBody(width))
 		for _, never := range []string{"p⏎", "d⏎", "s⏎", "b⏎", "o⏎", "⏎", "↔", "tape", "sendoff", "send-off", "brief", "note", "clipboard", "what you typed", "pin the", "mark the"} {
@@ -153,10 +154,10 @@ func TestHelpOverlay(t *testing.T) {
 				t.Fatalf("help at %d offers %q\n%s", width, never, body)
 			}
 		}
-		if m := regexp.MustCompile(`(?m)^  [a-np-z]( |$)`).FindString(body); m != "" {
+		if m := regexp.MustCompile(`(?m)^  [a-hj-np-z]( |$)`).FindString(body); m != "" {
 			t.Fatalf("help at %d has a one-letter key %q\n%s", width, m, body)
 		}
-		for _, want := range []string{"THIS PAGE", "MARKS", "[PINNED]", "[NEXT UP]", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
+		for _, want := range []string{"THIS PAGE", "MARKS", "pinned", "next up", "also active", "cycle", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("help at %d lacks %q\n%s", width, want, body)
 			}
@@ -204,9 +205,9 @@ func TestHelpOverlay(t *testing.T) {
 		keys        []string
 		page, crumb string
 	}{
-		{nil, "outline", "Send-off demo › Help"},
+		{nil, "tasks", "Send-off demo › Help"},
 		{[]string{"esc", "\r"}, "task", "Send-off demo › card-highlight › Help"},
-		{[]string{"esc", "esc", "home", "\r"}, "about", "Send-off demo › About › Help"},
+		{[]string{"esc", "esc", "i"}, "about", "Send-off demo › About › Help"},
 		{[]string{"esc", "esc", "esc"}, "plans", "Plans › Help"},
 	} {
 		press(b, step.keys...)
@@ -377,7 +378,7 @@ func TestCtrlCClosesHelp(t *testing.T) {
 	}
 }
 
-// docs/ux.md §2, §3: the outline, both details, the tape and the wait
+// docs/ux.md §2, §3: the task list, both pages, the tape and the wait
 // screen have no composer. Letters (the old verbs too) and a paste change
 // nothing and write nothing, neither the plan nor ~/.rex/state.json; ? opens
 // Help at once; Esc, Tab and enter do what §3 says.
@@ -389,9 +390,9 @@ func TestComposerLessScreensIgnoreTyping(t *testing.T) {
 		pane  PaneKind
 	}
 	for _, s := range []screen{
-		{"outline", func(a *app) {}, atOutline, PanePlans},
+		{"task list", func(a *app) {}, atOutline, PanePlans},
 		{"task detail", func(a *app) { press(a, "\r") }, atTaskDetail, PanePlans},
-		{"plan detail", func(a *app) { press(a, "home", "\r") }, atPlanDetail, PanePlans},
+		{"plan detail", func(a *app) { press(a, "i") }, atPlanDetail, PanePlans},
 		{"tape", func(a *app) { press(a, "\t") }, atOutline, PaneChat},
 	} {
 		a, _, path := openDemo(t, demoPlan, 120, 32)

@@ -230,65 +230,6 @@ func h2Line(label, meta string, width int) LogLine {
 	return spanLine("text", spans...)
 }
 
-// h3 is a field (docs/ux.md §5, H3): a muted lowercase label and the
-// items it holds. With no label it is the text under an H2.
-type h3 struct {
-	label string
-	items []string
-	role  string // the values' role; "" is text
-	list  bool   // "• " bullets even for one item, as the field beside it has
-	bare  bool   // never "• " bullets: one row per item, or items that carry their own glyph
-	rows  int    // the rows each item may take, the last cut with "…"; 0 is all
-}
-
-// h3Col is the label column for fields shown together: 8 cells, wider
-// where a label needs two cells after it ("changed  ").
-func h3Col(fields ...h3) int {
-	col := 8
-	for _, f := range fields {
-		if len(f.items) > 0 {
-			col = max(col, cellLen(f.label)+2)
-		}
-	}
-	return col
-}
-
-// fieldLines draws a field from column 2: its label in a col-cell column
-// and its value beside it, wrapped values (and each line of one, as the
-// file breaks it) hanging under it. Several items get "• " bullets; paths
-// go one per line, bare. Each line's first span is its 2-cell lead, which
-// the PINNED card swaps for its edge.
-func fieldLines(f h3, width, col int) []LogLine {
-	if len(f.items) == 0 {
-		return nil
-	}
-	paths := true
-	for _, it := range f.items {
-		if strings.ContainsAny(it, " \t\n") || !strings.Contains(it, "/") {
-			paths = false
-		}
-	}
-	bullet := (len(f.items) > 1 || f.list) && !paths && !f.bare
-	room := max(1, width-2-col)
-	label := Span{Text: padRight(flat(f.label), col), Role: "muted"}
-	var lines []LogLine
-	for _, it := range f.items {
-		mark, hang := "", ""
-		if bullet {
-			mark, hang = "• ", "  "
-		}
-		for i, row := range paraRows(it, max(1, room-cellLen(mark)), f.rows) {
-			text := hang + row
-			if i == 0 {
-				text = mark + row
-			}
-			lines = append(lines, spanLine("text", Span{Text: "  "}, label, Span{Text: text, Role: f.role}))
-			label = Span{Text: strings.Repeat(" ", col)}
-		}
-	}
-	return lines
-}
-
 // paraRows is a value wrapped to width cells, each line of it starting a
 // row, so a description's paragraphs and lists keep their breaks; blank
 // lines are dropped. most caps the rows of the whole value: the line that
@@ -380,13 +321,11 @@ func cutRow(text string, width int) (row, rest string) {
 // Page is a screen's title, row 0 (docs/ux.md §4): a breadcrumb that is
 // also the Esc ladder (Esc goes to the crumb on the left), and meta on
 // the right, muted unless a span says otherwise. Short stands in for a
-// Meta that doesn't fit, as the list's position does for "16 of 30 · 1/3
-// done". Selectable is the outline's title row, which the cursor reaches;
-// Selected, that it is there.
+// Meta that doesn't fit, as the progress "1/3" does for "1/3 done ·
+// following". The cursor never reaches it.
 type Page struct {
-	Crumbs               []string
-	Meta, Short          []Span
-	Selectable, Selected bool
+	Crumbs      []string
+	Meta, Short []Span
 }
 
 // metaSpans is meta text in its muted role.
@@ -467,16 +406,9 @@ func fitCrumbs(crumbs []string, room int) ([]string, bool) {
 // from the edge. Short of room, the breadcrumb clips first, down to its
 // current crumb; then the meta goes (its short form first); then the label
 // shortens to the place on screen; under labelFrom cells there is no
-// label; and only then is the current crumb cut, to the room left. The
-// outline's title row keeps a 2-cell gutter, selected or not, so the
-// cursor changes only the gutter: selected, it holds ❯, and the row is the
-// selection's purple but for the label.
+// label; and only then is the current crumb cut, to the room left.
 func titleLine(p Page, width int, pane PaneKind) LogLine {
 	room := width - 1
-	lead := 0
-	if p.Selectable || p.Selected {
-		lead = cellLen(selMark)
-	}
 	var metas [][]Span
 	for _, m := range [][]Span{p.Meta, p.Short} {
 		if len(m) > 0 {
@@ -511,10 +443,10 @@ func titleLine(p Page, width int, pane PaneKind) LogLine {
 	pick := forms[len(forms)-1]
 	var crumbs []string
 	if n := len(p.Crumbs); n > 0 {
-		crumbs = []string{ellipsis(flat(p.Crumbs[n-1]), max(1, room-lead-side(pick)))}
+		crumbs = []string{ellipsis(flat(p.Crumbs[n-1]), max(1, room-side(pick)))}
 	}
 	for _, f := range forms {
-		if c, ok := fitCrumbs(p.Crumbs, room-lead-side(f)); ok {
+		if c, ok := fitCrumbs(p.Crumbs, room-side(f)); ok {
 			pick, crumbs = f, c
 			break
 		}
@@ -540,20 +472,10 @@ func titleLine(p Page, width int, pane PaneKind) LogLine {
 		}
 		right = append(right, pick.label...)
 	}
-	switch {
-	case p.Selected:
-		left = append([]Span{{Text: selMark}}, picked(left)...)
-		right = append(picked(right[:len(right)-len(pick.label)]), right[len(right)-len(pick.label):]...)
-	case lead > 0:
-		left = append([]Span{{Text: strings.Repeat(" ", lead)}}, left...)
-	}
 	spans := left
 	if len(right) > 0 {
 		gap := room - spansLen(left) - spansLen(right)
 		spans = append(append(spans, Span{Text: strings.Repeat(" ", max(2, gap))}), right...)
-	}
-	if p.Selected {
-		return spanLine("pick", spans...)
 	}
 	return spanLine("text", spans...)
 }

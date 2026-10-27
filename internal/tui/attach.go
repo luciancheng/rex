@@ -105,13 +105,15 @@ func (a *app) planWritten() bool {
 		a.offer, a.offerName = w, a.wroteName(w)
 		return true
 	}
-	a.attach(w)
+	a.attach(w, true)
 	return true
 }
 
 // attach opens path as the followed plan, or holds it until nothing you
-// are doing would be lost. It reports whether anything changed.
-func (a *app) attach(path string) bool {
+// are doing would be lost. It reports whether anything changed. byAgent
+// says your agent's write brought it, as the notice then says; the
+// cold-start scan's find is only opened.
+func (a *app) attach(path string, byAgent bool) bool {
 	if a.attachBlocked() {
 		changed := a.pending != path
 		if changed {
@@ -124,7 +126,12 @@ func (a *app) attach(path string) bool {
 	a.plans.open(path)
 	a.openedPlan()
 	name := a.planLabel(path)
-	a.flash("following "+name, "text")
+	if title, rel := a.planTitle(), a.plans.CurrentRel(); byAgent {
+		if title == "" {
+			title = name
+		}
+		a.show(openNotice(wrotePrefix+title+" · opened "+rel, wrotePrefix, rel))
+	}
 	// An event moved PLAN, so the AGENT tab keeps a record of it (Rex's
 	// own line, never the feed).
 	a.tapeLine("plan", "following "+name)
@@ -147,7 +154,7 @@ func (a *app) applyPending() bool {
 	p := a.pending
 	a.pending = ""
 	if f := a.planFile(p, ""); f != "" && !a.isOpen(f) {
-		return a.attach(f)
+		return a.attach(f, true) // only a write is ever held
 	}
 	return true
 }
@@ -351,7 +358,7 @@ func (a *app) scanPlans() bool {
 	}
 	a.scanned = a.now()
 	if p := a.newestPlan(); p != "" {
-		return a.attach(p)
+		return a.attach(p, false)
 	}
 	return false
 }

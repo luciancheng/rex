@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luciancheng/rex/internal/mascot"
 	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/watch"
 )
@@ -56,7 +57,8 @@ type clock struct{ t time.Time }
 
 func (c *clock) now() time.Time { return c.t }
 
-// openDemo opens src as cuj/demo.rex.json in a fresh app at cols×rows.
+// openDemo opens src as cuj/demo.rex.json in a fresh app at cols×rows,
+// from the plan list (latched), its Opened notice gone.
 func openDemo(t *testing.T, src string, cols, rows int) (*app, *clock, string) {
 	t.Helper()
 	a := testApp(t)
@@ -74,8 +76,12 @@ func openDemo(t *testing.T, src string, cols, rows int) (*app, *clock, string) {
 	typeText(a, "cuj/demo")
 	press(a, "\r")
 	if a.at != atOutline || a.doc == nil {
-		t.Fatalf("not on the outline: at=%d %q", a.at, a.plans.Err)
+		t.Fatalf("not on the task list: at=%d %q", a.at, a.plans.Err)
 	}
+	// The Opened notice has had its time: what a test does next shows on
+	// the notice row (TestOpenedNotice has it).
+	c.t = c.t.Add(toastFor)
+	a.tick()
 	return a, c, path
 }
 
@@ -87,140 +93,867 @@ func later(a *app, c *clock) {
 
 // docs/ux.md §4, §6: row 0 names the plan, its progress and (picked in
 // the list, latched) no follow word; row 1 is the pin line; the body is
-// the outline.
-func TestOutlineAtAGlance(t *testing.T) {
-	a, _, _ := openDemo(t, demoPlan, 120, 32)
-	frame := a.frame()
+
+// redesignPlan has parents and every kind of leaf (docs/ux.md §6): done
+// with its retrospective, the active pin with every card field, waiting,
+// blocked and skipped.
+const redesignPlan = `{
+  "version": 1,
+  "id": "redesign",
+  "title": "Rex visual redesign",
+  "goal": "A newcomer always knows which tab and page they are on, what is pinned, and which key gets them where.",
+  "status": "active",
+  "base": "dev",
+  "scope": {"in": ["chrome", "outline"], "out": ["extra palettes"]},
+  "tasks": [
+    {"id": "chrome", "title": "Chrome: tabs, page titles, keys"},
+    {"id": "tab-bar", "title": "Tab bar on row 0", "parent": "chrome", "status": "done", "does": ["Both tabs on row 0"],
+     "accomplished": ["Two tabs on row 0, the active one filled"], "modified": ["internal/tui/chrome.go"],
+     "verified_how": ["go test ./internal/tui -run TabBar"], "completed_notes": "the cue cell is fixed width"},
+    {"id": "page-titles", "title": "Page titles and footer keys", "parent": "chrome", "status": "active", "depends_on": ["tab-bar"],
+     "needs": ["the tab bar on row 0"], "does": ["Every screen opens with a title row that says where you are and where esc goes"],
+     "verify": ["go test ./internal/tui -run PageTitle", "tmux at 80×24: every screen names itself"],
+     "files": ["internal/tui/chrome.go", "internal/tui/outline.go", "internal/tui/plans.go"], "branch": "feature/page_titles"},
+    {"id": "agent-stream", "title": "Fold runs of thoughts", "depends_on": ["page-titles"], "does": ["One row per settled run of thinking"]},
+    {"id": "plan-views", "title": "Plan list and outline"},
+    {"id": "plan-list", "title": "Plan list groups and accordion", "parent": "plan-views", "depends_on": ["page-titles"], "does": ["OPEN, RECENT and FOLDERS"]},
+    {"id": "pin-card", "title": "Pinned card on the outline", "parent": "plan-views", "status": "blocked", "depends_on": ["plan-list"]},
+    {"id": "width-table", "title": "Glyph widths in width_test", "status": "skipped"}
+  ]
+}`
+
+// planBody is a frame's body: the text column under rows 0 and 1 (and
+// row 2, blank from blankFrom rows) and over the footer (and the notice
+// row, from blankFrom rows) (docs/ux.md §4).
+func planBody(a *app) string {
 	rows := a.frameRows().Rows
-	if got, want := textOf(rows[0], 120), sides("  Send-off demo", "1/3 done   plan · agent", 78); got != want {
-		t.Errorf("row 0:\n got %q\nwant %q", got, want)
+	top, bottom := 2, len(rows)-1
+	if a.lines >= blankFrom {
+		top, bottom = 3, len(rows)-2
 	}
-	if got := textOf(rows[1], 120); got != "pinned  card-highlight · Selected plan card is one block" {
+	var out []string
+	for _, r := range rows[top:bottom] {
+		out = append(out, textOf(r, a.columns))
+	}
+	return strings.Join(out, "\n")
+}
+
+// manyTasks is a plan of n tasks, t00 on, too many for most screens: the
+// first is the agent's pin, every third is done.
+func manyTasks(n int) string {
+	var tasks []string
+	for i := 0; i < n; i++ {
+		status := "pending"
+		switch {
+		case i == 0:
+			status = "active"
+		case i%3 == 0:
+			status = "done"
+		}
+		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "title": "Task number %d", "status": %q}`, i, i, status))
+	}
+	return `{"version": 1, "title": "Many", "goal": "a long list", "tasks": [` + strings.Join(tasks, ", ") + `]}`
+}
+
+// specPlan is the redesign spec's sample plan (docs/ux.md §6): a done
+// task, the agent's pin, what waits on it, a blocked and a skipped task,
+// a stack on dev.
+const specPlan = `{"version": 1, "title": "Rex visual redesign", "goal": "A newcomer always knows which page they are on, what is pinned, and which key gets them where.", "status": "active", "base": "dev",
+ "scope": {"in": ["chrome", "task list", "plan list"], "out": ["extra palettes", "web UI"]},
+ "tasks": [
+ {"id": "tab-bar", "title": "Tab bar on row 0", "status": "done", "does": ["Two places on row 0, the one on screen marked"], "accomplished": ["Two tabs on row 0, the active one filled", "Cue cell is fixed width"], "modified": ["internal/tui/chrome.go", "internal/tui/chrome_test.go"], "verified_how": ["go test ./internal/tui -run TabBar (passed)", "tmux at 80x24 and 120x32"], "completed_notes": "The cue cell must stay one cell wide; width_test pins it.", "branch": "feature/tab_bar"},
+ {"id": "page-titles", "title": "Page titles and footer keys", "status": "active", "depends_on": ["tab-bar"], "needs": ["the tab bar on row 0"], "does": ["Every screen opens with a title row that says where you are", "The footer lists keys only, in words"], "verify": ["go test ./internal/tui -run PageTitle", "tmux at 80x24: every screen names itself", "NO_COLOR frame matches"], "files": ["internal/tui/chrome.go", "internal/tui/outline.go", "internal/tui/plans.go"], "scope": {"out": ["web UI"]}, "branch": "feature/page_titles"},
+ {"id": "agent-stream", "title": "Fold runs of thoughts", "depends_on": ["page-titles"], "does": ["One row per run of thoughts on the Agent tab"], "files": ["internal/tui/stream.go"], "branch": "feature/agent_stream"},
+ {"id": "plan-list", "title": "Plan list groups"},
+ {"id": "pin-card", "title": "Pinned card on the outline"},
+ {"id": "width-table", "title": "Glyph widths in width_test", "status": "done"},
+ {"id": "help-page", "title": "Help lists every key", "status": "blocked"},
+ {"id": "readme", "title": "README screenshots", "status": "skipped"}
+ ]}`
+
+// groupsPlan has two groups, a parent nested in one, and tasks after them
+// that are in none (docs/ux.md §6).
+const groupsPlan = `{"version": 1, "title": "Rex visual redesign", "status": "active", "tasks": [
+ {"id": "chrome", "title": "Chrome"},
+ {"id": "tab-bar", "title": "Tab bar on row 0", "parent": "chrome", "status": "done"},
+ {"id": "page-titles", "title": "Page titles and footer keys", "parent": "chrome", "status": "active"},
+ {"id": "footer-keys", "title": "Footer keys in words", "parent": "chrome"},
+ {"id": "plan-views", "title": "Plan views"},
+ {"id": "plan-list-p", "title": "Plan list", "parent": "plan-views"},
+ {"id": "plan-list", "title": "Plan list groups", "parent": "plan-list-p"},
+ {"id": "pin-card", "title": "Pinned card on the outline", "parent": "plan-list-p"},
+ {"id": "help-page", "title": "Help lists every key", "parent": "plan-views", "status": "blocked"},
+ {"id": "agent-stream", "title": "Fold runs of thoughts"},
+ {"id": "width-table", "title": "Glyph widths in width_test", "status": "done"},
+ {"id": "readme", "title": "README screenshots", "status": "skipped"}
+ ]}`
+
+// trimmed is s's lines with their trailing blanks off and trailing blank
+// lines dropped.
+func trimmed(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " ")
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
+}
+
+// docs/ux.md §6: the open plan is one task list. Row 0 is its title and
+// progress, row 1 the pin line, then the tasks: the gutter, a glyph, the
+// id in its column, the title and one tag; nothing else on the screen.
+func TestTaskListAtAGlance(t *testing.T) {
+	a, _, _ := openDemo(t, specPlan, 80, 24)
+	rows := a.frameRows().Rows
+	if got := textOf(rows[0], 80); got != sides("Rex visual redesign", "2/8 done   plan · agent", 80) {
+		t.Errorf("row 0: %q", got)
+	}
+	if got := textOf(rows[1], 80); got != "pinned  page-titles · Page titles and footer keys" {
 		t.Errorf("row 1, the pin line: %q", got)
 	}
-	for _, want := range []string{
-		"  Show a plan, pin a task, and send it off.",
-		// The PINNED card: what a fresh chat needs, read from the plan
-		// (docs/ux.md §6).
-		"╭─[PINNED]─ card-highlight · Selected plan card is one block ─",
-		"│ does    Bar, border, and fill cover the whole selected card",
-		"│ needs   pick / pickbg colors exist",
-		"│ verify  Open latest: ▌ on all three card rows",
-		"│ files   internal/tui/plans.go",
-		"│ done    ✔ plans-ui  Home cards, browse, duplicate warn",
-		"╰───",
-		"TASKS ─",
-		"─ 1/3 done",
-		"✔ plans-ui        Plans navigator · Home cards, browse, duplicate warn",
-		"❯ ▸ card-highlight",
-		"Selected plan card is one block · Bar, border, an…  pinned",
-		"pinned",
-		"· load-outline",
-		"after card-highlight",
-		"↑↓ select · enter details · esc plans · tab agent · ? help",
-	} {
-		if !strings.Contains(frame, want) {
-			t.Errorf("missing %q\n%s", want, frame)
-		}
+	want := `  ✔ tab-bar       Tab bar on row 0
+❯   page-titles   Page titles and footer keys                            pinned
+    agent-stream  Fold runs of thoughts
+    plan-list     Plan list groups
+    pin-card      Pinned card on the outline
+  ✔ width-table   Glyph widths in width_test
+  ! help-page     Help lists every key
+  – readme        README screenshots`
+	if got := trimmed(planBody(a)); got != want {
+		t.Errorf("the body is the list and nothing else:\n%s\nwant\n%s", got, want)
 	}
-	for _, never := range []string{"╭──", "/ find", "last ✔", "p⏎", "d⏎", "s⏎", "b⏎", "?⏎"} {
-		if strings.Contains(frame, never) {
-			t.Errorf("the outline has no composer and no verbs: %q\n%s", never, frame)
-		}
+	if got := textOf(rows[23], 80); got != "↑↓ select · enter details · i about · esc plans · tab agent · ? help" {
+		t.Errorf("footer %q", got)
 	}
-	if a.outline.sel != "card-highlight" {
-		t.Fatalf("the pin is selected on open, got %q", a.outline.sel)
+	if a.outline.sel != "page-titles" {
+		t.Fatalf("the cursor lands on the pin: %q", a.outline.sel)
+	}
+	// Nothing previews the next screen: no card, goal, blurbs or TASKS.
+	for _, never := range []string{"╭", "[PINNED]", "TASKS", "A newcomer always", " · Every screen", "▸", "○"} {
+		if strings.Contains(a.frame(), never) {
+			t.Errorf("the list has no %q\n%s", never, a.frame())
+		}
 	}
 }
 
-// docs/ux.md §6: under 60 cells rows are title-only and the selected row
-// gets its blurb on a row of its own, except the pin while the card shows
-// what it does.
-func TestOutlineNarrowShowsTheBlurbUnderTheSelection(t *testing.T) {
-	a, _, _ := openDemo(t, demoPlan, 38, 24)
-	frame := a.frame()
-	if strings.Contains(frame, "Plans navigator · ") {
-		t.Fatal("rows are title-only below 60 columns")
+// docs/ux.md §5, §6: on the list only the pinned tag is yellow, a next up
+// tag muted and also active red; done and skipped rows are muted with ✔
+// green; the selection is ❯ and purple and keeps its tag's color; a group
+// label is bold text that is never selected.
+func TestTaskRowRoles(t *testing.T) {
+	a, _, _ := openDemo(t, `{"tasks": [{"id": "c", "title": "Group"}, {"id": "a", "title": "A", "status": "active", "parent": "c"}, {"id": "b", "title": "B", "status": "active"}, {"id": "d", "title": "D", "status": "done"}, {"id": "s", "title": "S", "status": "skipped"}]}`, 80, 24)
+	p := a.doc.plan
+	l := newTaskList(p, 80, 19, true)
+	role := func(line LogLine, text string) (string, bool) {
+		for _, s := range line.Spans {
+			if strings.TrimSpace(s.Text) == text {
+				return s.Role, s.Bold
+			}
+		}
+		t.Fatalf("no span %q in %+v", text, line)
+		return "", false
 	}
-	if !strings.Contains(frame, "❯ ▸ card-highlight Selected") || strings.Contains(frame, "      Bar, border") || !strings.Contains(frame, "│ does    Bar, border") || !strings.Contains(frame, "pinned  card-highlight · Selected pl…") {
-		t.Fatalf("the card says what the pin does, so its row has no blurb row\n%s", frame)
+	for i, want := range []struct {
+		text, kind string
+	}{{"  Group", "text"}, {"❯     a     A", "pick"}, {"", "gap"}, {"    b       B", "text"}, {"  ✔ d       D", "muted"}, {"  – s       S", "muted"}} {
+		line := l.draw(i, l.lines[i].t != nil && taskKey(l.lines[i].t) == a.outline.sel)
+		if !strings.HasPrefix(line.Text, want.text) || line.Kind != want.kind {
+			t.Errorf("line %d: %q kind %q, want %q kind %q", i, line.Text, line.Kind, want.text, want.kind)
+		}
 	}
-	press(a, "down")
-	if frame := a.frame(); !strings.Contains(frame, "❯ · load-outline   Outline view") || !strings.Contains(frame, "      Show tasks") {
-		t.Fatalf("another task's blurb is on its own row\n%s", frame)
+	if r, bold := role(l.draw(0, false), "Group"); r != "text" || !bold {
+		t.Errorf("a group label is bold text: %q %v", r, bold)
 	}
-	press(a, "up", "up")
-	if frame := a.frame(); !strings.Contains(frame, "❯ ✔ plans-ui") || !strings.Contains(frame, "      Home cards, browse, duplicate w…") {
-		t.Fatalf("a done task's blurb is what it accomplished\n%s", frame)
+	if r, _ := role(l.draw(1, true), "pinned"); r != "accent" {
+		t.Errorf("the pinned tag keeps its yellow on the selection: %q", r)
+	}
+	if r, _ := role(l.draw(3, false), "also active"); r != "error" {
+		t.Errorf("a second active task's tag is red: %q", r)
+	}
+	for _, s := range l.draw(1, true).Spans {
+		if s.Role != "" && s.Role != "accent" {
+			t.Errorf("the selection is purple but for its tag: %+v", s)
+		}
+	}
+	next, _, _ := openDemo(t, strings.Replace(demoPlan, `"status": "active",
+      "depends_on"`, `"status": "pending",
+      "depends_on"`, 1), 80, 24)
+	nl := newTaskList(next.doc.plan, 80, 19, true)
+	if r, _ := role(nl.draw(1, false), "next up"); r != "muted" {
+		t.Errorf("next up is muted, never the pin's yellow: %q", r)
+	}
+	// In color: the ✔ is green, the tag yellow, and nothing is filled.
+	a.enabled = true
+	frame := strings.Join(a.frameRows().Rows, "\n")
+	if !strings.Contains(frame, mascot.FG(mascot.UI["accent"])+"pinned") || strings.Contains(frame, "\033[48") {
+		t.Errorf("the pinned tag is yellow and nothing is filled\n%q", frame)
+	}
+}
+
+// docs/ux.md §6: a top-level parent is a group label the cursor skips,
+// with its progress; deeper parents have no line, their tasks sit in the
+// group; a blank row goes above each group and before the ungrouped tasks
+// after one, only when the whole list fits. Under 12 rows the labels go
+// and the indent keeps the grouping.
+func TestTaskListGroups(t *testing.T) {
+	a, _, _ := openDemo(t, groupsPlan, 80, 24)
+	want := `  Chrome                                                                    1/3
+    ✔ tab-bar      Tab bar on row 0
+❯     page-titles  Page titles and footer keys                           pinned
+      footer-keys  Footer keys in words
+
+  Plan views                                                                0/3
+      plan-list    Plan list groups
+      pin-card     Pinned card on the outline
+    ! help-page    Help lists every key
+
+    agent-stream   Fold runs of thoughts
+  ✔ width-table    Glyph widths in width_test
+  – readme         README screenshots`
+	if got := trimmed(planBody(a)); got != want {
+		t.Errorf("groups at 80×24:\n%s\nwant\n%s", got, want)
+	}
+	if keys := taskKeys(a.doc.plan); strings.Join(keys, " ") != "tab-bar page-titles footer-keys plan-list pin-card help-page agent-stream width-table readme" {
+		t.Errorf("the cursor reaches the leaves only: %v", keys)
+	}
+	press(a, "home", "up")
+	if a.outline.sel != "tab-bar" {
+		t.Errorf("home and ↑ stop on the first task, under its label: %q", a.outline.sel)
+	}
+	press(a, "down", "down", "down")
+	if a.outline.sel != "plan-list" {
+		t.Errorf("↓ skips the label: %q", a.outline.sel)
+	}
+	if got := taskPlace(a.doc.plan, "plan-list"); got != "task 4 of 9 · in Plan views › Plan list" {
+		t.Errorf("details name the nested parent: %q", got)
+	}
+	// Short: no labels, no blank rows, the indent stays.
+	a.settle(80, 11)
+	if body := planBody(a); strings.Contains(body, "Chrome") || strings.Contains(body, "\n\n") || !strings.Contains(body, "    ✔ tab-bar      Tab bar on row 0") {
+		t.Errorf("under 12 rows\n%s", body)
+	}
+	// A list that scrolls has no blank rows, wherever the cursor is.
+	b, _, _ := openDemo(t, groupsPlan, 80, 14)
+	for i := 0; i < 9; i++ {
+		if body := planBody(b); strings.Contains(strings.TrimRight(body, "\n "), "\n\n") || !strings.Contains(body, "Plan views") && !strings.Contains(body, "Chrome") {
+			t.Fatalf("row %d: a list that scrolls has labels and no blank rows\n%s", i, body)
+		}
+		press(b, "down")
+	}
+}
+
+// docs/ux.md §6: under 40 cells a row is its id and tag; from 40 the
+// title clips before the tag goes.
+func TestNarrowRowsAreIdAndTag(t *testing.T) {
+	a, _, _ := openDemo(t, specPlan, 30, 12)
+	if body := planBody(a); !strings.Contains(body, "❯   page-titles        pinned") || strings.Contains(body, "Page titles") || !strings.Contains(body, "  ✔ tab-bar\n") {
+		t.Errorf("30 cells\n%s", body)
+	}
+	a.settle(44, 16)
+	if body := planBody(a); !strings.Contains(body, "❯   page-titles   Page titles and …  pinned") || !strings.Contains(body, "    pin-card      Pinned card on the outli…") {
+		t.Errorf("44 cells\n%s", body)
+	}
+	a.settle(24, 7)
+	if body := planBody(a); !strings.Contains(body, "❯   page-titles  pinned") {
+		t.Errorf("24 cells\n%s", body)
 	}
 	for _, row := range a.frameRows().Rows {
-		if cellLen(row) > 38 {
+		if cellLen(row) > 24 {
 			t.Fatalf("row overflows: %q", row)
 		}
 	}
 }
 
-// docs/ux.md §4, §6: a detail's row 0 is the plan's title and the task's
-// id (or About) with its state as meta, and row 1 says where it is; the
-// body has what is left.
-func TestOutlineDetailAndBack(t *testing.T) {
-	a, _, _ := openDemo(t, demoPlan, 120, 32)
-	press(a, "\r")
-	if a.at != atTaskDetail {
-		t.Fatal("enter on a task opens its detail")
-	}
-	rows := func() (string, string) { r := a.frameRows().Rows; return textOf(r[0], 120), textOf(r[1], 120) }
-	if r0, r1 := rows(); r0 != sides("Send-off demo › card-highlight", "pinned   plan · agent", 78) || r1 != "task 2 of 3" {
-		t.Errorf("task detail's rows 0 and 1: %q / %q", r0, r1)
-	}
-	frame := a.frame()
-	for _, want := range []string{"DOES ─", "VERIFY ─", "FILES ─", "CONTEXT ─", "  after   ✔ plans-ui  Home cards, browse, duplicate warn", "  then    · load-outline  Outline view", "  needs   pick / pickbg colors exist", "↑↓ scroll · esc outline · tab agent · ? help"} {
-		if !strings.Contains(frame, want) {
-			t.Errorf("task detail missing %q\n%s", want, frame)
+// cursorKeys moves the cursor every way the task list takes.
+var cursorKeys = []string{"down", "down", "down", "pagedown", "down", "pagedown", "end", "up", "pageup", "up", "up", "pageup", "home", "down", "end", "pageup", "pageup", "pageup", "home"}
+
+// docs/ux.md §4.2: the cursor lands only on rows enter acts on: never a
+// group label, a blank row or a scroll marker, with any key, at any size,
+// and exactly one row has ❯.
+func TestCursorNeverLandsOnALabel(t *testing.T) {
+	var tasks []string
+	for g := 0; g < 6; g++ {
+		tasks = append(tasks, fmt.Sprintf(`{"id": "g%d", "title": "Group %d"}`, g, g))
+		tasks = append(tasks, fmt.Sprintf(`{"id": "g%dn", "title": "Nested %d", "parent": "g%d"}`, g, g, g))
+		for i := 0; i < 4; i++ {
+			parent := fmt.Sprintf("g%d", g)
+			if i%2 == 1 {
+				parent += "n"
+			}
+			tasks = append(tasks, fmt.Sprintf(`{"id": "t%d%d", "title": "Task %d.%d", "parent": %q, "status": %q}`, g, i, g, i, parent, []string{"pending", "done", "blocked", "skipped"}[i]))
 		}
+		tasks = append(tasks, fmt.Sprintf(`{"id": "u%d", "title": "Ungrouped %d"}`, g, g))
+	}
+	src := `{"title": "Groups", "tasks": [` + strings.Join(tasks, ",") + `]}`
+	for _, size := range [][2]int{{80, 24}, {80, 12}, {80, 10}, {44, 16}, {24, 7}, {120, 32}, {200, 60}} {
+		a, _, _ := openDemo(t, src, size[0], size[1])
+		keys := taskKeys(a.doc.plan)
+		for i, key := range cursorKeys {
+			press(a, key)
+			if !slices.Contains(keys, a.outline.sel) {
+				t.Fatalf("%v, key %d (%s): the cursor is on %q", size, i, key, a.outline.sel)
+			}
+			marks := 0
+			for _, row := range strings.Split(planBody(a), "\n") {
+				if strings.HasPrefix(row, "❯") {
+					marks++
+					if f := strings.Fields(strings.TrimLeft(row, "❯✔–! ")); len(f) == 0 || f[0] != a.outline.sel {
+						t.Fatalf("%v, key %d (%s): ❯ on %q, not the task %q", size, i, key, row, a.outline.sel)
+					}
+				}
+			}
+			if marks != 1 {
+				t.Fatalf("%v, key %d (%s): %d rows with ❯\n%s", size, i, key, marks, planBody(a))
+			}
+		}
+	}
+}
+
+// docs/ux.md §4.2: enter (or →) on a task opens its details on a page of
+// their own; on details, About, an empty plan and one Rex can't read it
+// does nothing.
+func TestEnterOnEveryRow(t *testing.T) {
+	a, _, _ := openDemo(t, specPlan, 80, 24)
+	for _, key := range []string{"\r", "right"} {
+		press(a, "home", key)
+		if a.at != atTaskDetail || a.outline.sel != "tab-bar" {
+			t.Fatalf("%q on a task: at=%d sel=%q", key, a.at, a.outline.sel)
+		}
+		frame := a.frame()
+		press(a, "\r", "right")
+		if a.frame() != frame || a.at != atTaskDetail {
+			t.Fatalf("enter and → on details do nothing\n%s", a.frame())
+		}
+		press(a, "esc")
+	}
+	press(a, "i")
+	frame := a.frame()
+	if press(a, "\r", "right"); a.at != atPlanDetail || a.frame() != frame {
+		t.Fatalf("enter on About does nothing: at=%d", a.at)
+	}
+	for _, src := range []string{string(plan.Stub("demo")), `{"tasks": [`} {
+		b, _, _ := openDemo(t, src, 80, 24)
+		frame := b.frame()
+		if press(b, "\r", "right", "down", "home"); b.at != atOutline || b.frame() != frame {
+			t.Fatalf("%s: nothing to act on\n%s", src, b.frame())
+		}
+		if strings.Contains(frame, "enter") || strings.Contains(frame, "❯") {
+			t.Fatalf("%s: no enter in the footer, no ❯\n%s", src, frame)
+		}
+	}
+}
+
+// docs/ux.md §4.3: Esc climbs one level and the footer names where:
+// details and About to the list, on the same task; the list, an empty
+// plan and one Rex can't read to the plan list. ← does the same.
+func TestPlanEscLadder(t *testing.T) {
+	a, _, _ := openDemo(t, specPlan, 80, 24)
+	footer := func() string { r := a.frameRows().Rows; return textOf(r[len(r)-1], 80) }
+	for _, back := range []string{"esc", "left"} {
+		press(a, "down", "\r")
+		if !strings.Contains(footer(), "esc tasks") || !strings.Contains(textOf(a.frameRows().Rows[0], 80), "Rex visual redesign › agent-stream") {
+			t.Fatalf("details: %q", footer())
+		}
+		if press(a, back); a.at != atOutline || a.outline.sel != "agent-stream" {
+			t.Fatalf("%s from details: at=%d sel=%q", back, a.at, a.outline.sel)
+		}
+		press(a, "i")
+		if !strings.Contains(footer(), "esc tasks") || !strings.Contains(textOf(a.frameRows().Rows[0], 80), "Rex visual redesign › About") {
+			t.Fatalf("About: %q", footer())
+		}
+		if press(a, back); a.at != atOutline || a.outline.sel != "agent-stream" {
+			t.Fatalf("%s from About: at=%d sel=%q", back, a.at, a.outline.sel)
+		}
+		if !strings.Contains(footer(), "esc plans") {
+			t.Fatalf("the list: %q", footer())
+		}
+		if press(a, back); a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Group != groupOpen {
+			t.Fatalf("%s from the list: the plan list, on the plan: at=%d", back, a.at)
+		}
+		press(a, "\r", "up")
+	}
+	for _, src := range []string{string(plan.Stub("demo")), `{"tasks": [`} {
+		b, _, _ := openDemo(t, src, 80, 24)
+		if r := b.frameRows().Rows; !strings.Contains(textOf(r[23], 80), "esc plans") {
+			t.Fatalf("%s: %q", src, textOf(r[23], 80))
+		}
+		if press(b, "esc"); b.at != atLibrary {
+			t.Fatalf("%s: esc is the plan list: at=%d", src, b.at)
+		}
+	}
+}
+
+// docs/ux.md §1: a reload keeps the selection on the same task by id,
+// wherever it moved in the file; a task that left, or became a parent,
+// gives way to the pin.
+func TestSelectionKeptByIDAcrossReloads(t *testing.T) {
+	a, c, path := openDemo(t, specPlan, 80, 24)
+	press(a, "down", "down", "down") // pin-card
+	moved := strings.Replace(specPlan, ` {"id": "pin-card", "title": "Pinned card on the outline"},
+`, "", 1)
+	moved = strings.Replace(moved, `"tasks": [
+`, `"tasks": [
+ {"id": "new", "title": "New first"},
+ {"id": "pin-card", "title": "Pinned card on the outline"},
+`, 1)
+	os.WriteFile(path, []byte(moved), 0o644)
+	later(a, c)
+	if a.outline.sel != "pin-card" || !strings.Contains(planBody(a), "❯   pin-card ") {
+		t.Fatalf("moved to the top, the task keeps the cursor: %q\n%s", a.outline.sel, planBody(a))
+	}
+	parent := strings.Replace(moved, `{"id": "readme",`, `{"id": "kid", "title": "Kid", "parent": "pin-card"}, {"id": "readme",`, 1)
+	os.WriteFile(path, []byte(parent), 0o644)
+	later(a, c)
+	if a.outline.sel != "page-titles" {
+		t.Fatalf("a task that became a group gives the cursor to the pin: %q", a.outline.sel)
+	}
+	press(a, "end")
+	os.WriteFile(path, []byte(strings.Replace(parent, `{"id": "readme", "title": "README screenshots", "status": "skipped"}`, `{"id": "other", "title": "Other"}`, 1)), 0o644)
+	later(a, c)
+	if a.outline.sel != "page-titles" {
+		t.Fatalf("a task that left gives the cursor to the pin: %q", a.outline.sel)
+	}
+}
+
+// A plan with no tasks has nothing to select; when the agent fills it,
+// the cursor lands on its pin, as an open does (docs/ux.md §1).
+func TestFilledPlanSelectsItsPin(t *testing.T) {
+	a, c, path := openDemo(t, string(plan.Stub("demo")), 120, 32)
+	if a.outline.sel != "" {
+		t.Fatal("an empty plan has nothing to select")
+	}
+	os.WriteFile(path, []byte(demoPlan), 0o644)
+	later(a, c)
+	if a.outline.sel != "card-highlight" {
+		t.Fatalf("when an agent fills the plan the cursor goes to the pin, got %q", a.outline.sel)
+	}
+}
+
+// noteLabels are the labels of a pin note's field lines, in order: every
+// line between the task line and the last.
+func noteLabels(note string) []string {
+	lines := strings.Split(note, "\n")
+	var labels []string
+	for _, l := range lines[2 : len(lines)-1] {
+		label, _, _ := strings.Cut(l, ": ")
+		labels = append(labels, label)
+	}
+	return labels
+}
+
+// pageField is one field of a page as it is drawn: its label, its
+// values (one per row: no value wraps at the widths these tests draw),
+// and whether they are muted.
+type pageField struct {
+	label  string
+	values []string
+	muted  bool
+}
+
+// pageFields are a page's fields, in order.
+func pageFields(lines []LogLine) []pageField {
+	var fields []pageField
+	for _, l := range lines {
+		if len(l.Spans) < 2 {
+			continue
+		}
+		if label := strings.TrimSpace(l.Spans[0].Text); label != "" {
+			fields = append(fields, pageField{label: label, muted: l.Spans[1].Role == "muted"})
+		}
+		if n := len(fields); n > 0 {
+			fields[n-1].values = append(fields[n-1].values, l.Spans[1].Text)
+		}
+	}
+	return fields
+}
+
+// pageLabels are a page's field labels, in order.
+func pageLabels(lines []LogLine) []string {
+	var labels []string
+	for _, f := range pageFields(lines) {
+		labels = append(labels, f.label)
+	}
+	return labels
+}
+
+var moreInFile = regexp.MustCompile(`^\(\+[0-9]+ more in the file\)$`)
+
+// asNote is a page field worded as the pin note words its line: its
+// values joined as the note joins them, then "(+N more in the file)",
+// then Waits on's "(not done)".
+func asNote(f pageField) string {
+	values, more, tail := f.values, "", ""
+	if n := len(values); n > 0 && moreInFile.MatchString(values[n-1]) {
+		values, more = values[:n-1], " "+values[n-1]
+	}
+	if f.label == "Waits on" {
+		var ids []string
+		for _, v := range values {
+			ids = append(ids, strings.TrimSuffix(v, " (not done)"))
+		}
+		values, tail = ids, " (not done)"
+	}
+	return f.label + ": " + strings.Join(values, plan.NoteField{Label: f.label}.Sep()) + more + tail
+}
+
+// docs/ux.md §6, §7a: a task's details are the fields of the note that
+// pins it, in the note's order, as the note sends them: what isn't muted
+// on the page is the note's field lines, word for word, values cut and
+// lists trimmed as the note cuts them; what the note drops to stay under
+// its 1,500 bytes is muted, named on a line of its own, and never in the
+// note. For the CUJ fixture, a plan with every field, and one that runs
+// past the cap.
+func TestDetailsMirrorThePinNote(t *testing.T) {
+	rich := `{"version": 1, "title": "Rich", "goal": "Everything", "base": "dev", "scope": {"out": ["plan out"]}, "tasks": [
+ {"id": "base", "title": "Base", "status": "done", "branch": "feature/base", "accomplished": ["laid it"]},
+ {"id": "dep", "title": "Dep"},
+ {"id": "pin", "title": "Pin", "status": "active", "depends_on": ["base", "dep"], "does": ["d1", "d2"], "description": "desc", "needs": ["n1"], "verify": ["v1"], "files": ["a/b.go"], "scope": {"out": ["task out"]}, "branch": "feature/pin"},
+ {"id": "other", "title": "Other", "status": "active"}]}`
+	long := func(word string, n int) string { return strings.Repeat(word+" ", n/(len(word)+1)+1)[:n] }
+	over, _ := json.Marshal(map[string]any{"version": 1, "title": "Over", "goal": long("goal", 180), "base": "dev", "scope": map[string]any{"out": []string{"web UI", "palettes"}},
+		"tasks": []any{
+			map[string]any{"id": "base", "title": "Base", "status": "done", "accomplished": []string{long("built", 120)}, "branch": "feature/base"},
+			map[string]any{"id": "pin", "title": "The pinned task", "status": "active", "depends_on": []string{"base"}, "branch": "feature/pin",
+				"does":        []string{long("does", 120), long("more", 120), long("also", 120)},
+				"description": long("desc", 250), "needs": []string{long("need", 80)},
+				"verify": []string{long("check", 200), long("test", 100), long("look", 100)},
+				"files":  []string{"internal/tui/a.go", "internal/tui/b.go", "internal/tui/c.go", "internal/tui/d.go", "internal/tui/e.go", "internal/tui/f.go"}},
+		}})
+	const rel = "rex/plans/x.rex.json"
+	for name, src := range map[string]string{"cuj": string(cujFixture(t)), "rich": rich, "over": string(over)} {
+		p, err := plan.Parse([]byte(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pin := p.Graph().Pin()
+		note := plan.PinNote(&plan.Pinned{Rel: rel, Plan: p, Task: pin}, false)
+		page := taskPage(&planDoc{plan: p}, rel, pin.ID, 400)
+		lines := strings.Split(note, "\n")
+		var sent, dropped []string
+		for _, f := range pageFields(page) {
+			if f.muted {
+				dropped = append(dropped, f.label)
+				continue
+			}
+			sent = append(sent, asNote(f))
+		}
+		if want := lines[2 : len(lines)-1]; !slices.Equal(sent, want) {
+			t.Errorf("%s: what the page doesn't mute is the note\npage %q\nnote %q", name, sent, want)
+		}
+		all := pageLabels(page)
+		if want := noteLabels(plan.PinNote(&plan.Pinned{Rel: rel, Plan: p, Task: pin}, false)); len(dropped) == 0 && !slices.Equal(all, want) {
+			t.Errorf("%s: every field, in the note's order: %q, want %q", name, all, want)
+		}
+		notSent := ""
+		for _, l := range page {
+			if strings.HasPrefix(l.Text, "  Not sent (the note is capped at 1,500 bytes): ") {
+				notSent = strings.TrimPrefix(l.Text, "  Not sent (the note is capped at 1,500 bytes): ")
+			}
+		}
+		if notSent != strings.Join(dropped, ", ") {
+			t.Errorf("%s: the page names what isn't sent: %q, muted %q", name, notSent, dropped)
+		}
+		if name == "over" && (len(note) > 1500 || len(dropped) == 0 || !strings.Contains(viewText(page), "more in the file)") || !strings.Contains(viewText(page), "…")) {
+			t.Errorf("over: the note runs past its cap, so the page drops, trims and cuts (%d bytes)\n%s", len(note), viewText(page))
+		}
+	}
+	p, _ := plan.Parse([]byte(rich))
+	text := viewText(taskPage(&planDoc{plan: p}, rel, "pin", 100))
+	for _, want := range []string{"  Also active   other\n", "  Waits on      dep (not done)\n", "  Builds on     base (done): laid it\n", "  Out of scope  plan out\n                task out\n", "  Branch        feature/pin, stacked on feature/base\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the rich pin's details have %q\n%s", want, text)
+		}
+	}
+}
+
+// docs/ux.md §6: a task's details (enter on it): row 0 is <plan> › <id>
+// with its state, row 1 where it is; its title, a muted line saying
+// whether its fields reach your agent, then the fields in a 14-cell label
+// column. A done task leads with what your agent wrote when it finished
+// it, then what was planned.
+func TestTaskDetails(t *testing.T) {
+	a, _, _ := openDemo(t, specPlan, 80, 24)
+	rows := func() (string, string) { r := a.frameRows().Rows; return textOf(r[0], 80), textOf(r[1], 80) }
+	press(a, "\r")
+	if r0, r1 := rows(); r0 != sides("Rex visual redesign › page-titles", "pinned   plan · agent", 80) || r1 != "task 2 of 8" {
+		t.Errorf("the pin's rows 0 and 1: %q / %q", r0, r1)
+	}
+	want := `  Page titles and footer keys
+  Your agent gets these fields with every prompt.
+  Does          Every screen opens with a title row that says where you are
+                The footer lists keys only, in words
+  Needs         the tab bar on row 0
+  Verify        go test ./internal/tui -run PageTitle
+                tmux at 80x24: every screen names itself
+                NO_COLOR frame matches
+  Files         internal/tui/chrome.go
+                internal/tui/outline.go
+                internal/tui/plans.go
+  Builds on     tab-bar (done): Two tabs on row 0, the active one filled · Cue
+                cell is fixed width
+  Out of scope  extra palettes
+                web UI
+  Branch        feature/page_titles, stacked on feature/tab_bar
+  Plan goal     A newcomer always knows which page they are on, what is pinned,
+                and which key gets them where.`
+	if got := trimmed(planBody(a)); got != want {
+		t.Errorf("the pin's details:\n%s\nwant\n%s", got, want)
+	}
+	press(a, "esc", "down", "\r")
+	if r0, r1 := rows(); r0 != sides("Rex visual redesign › agent-stream", "pending   plan · agent", 80) || r1 != "task 3 of 8" {
+		t.Errorf("a pending task's rows 0 and 1: %q / %q", r0, r1)
+	}
+	if body := planBody(a); !strings.Contains(body, "  Once this task is pinned, your agent gets these fields with every prompt.\n  Does          One row per run of thoughts on the Agent tab\n  Waits on      page-titles (not done)\n") {
+		t.Errorf("a pending task's details\n%s", body)
+	}
+	press(a, "esc", "home", "\r")
+	if r0, _ := rows(); r0 != sides("Rex visual redesign › tab-bar", "✔ done   plan · agent", 80) {
+		t.Errorf("a done task's row 0: %q", r0)
+	}
+	want = `  Tab bar on row 0
+  ✔ Done · what your agent wrote when it finished it
+  Did           Two tabs on row 0, the active one filled
+                Cue cell is fixed width
+  Changed       internal/tui/chrome.go
+                internal/tui/chrome_test.go
+  Checked       go test ./internal/tui -run TabBar (passed)
+                tmux at 80x24 and 120x32
+  Notes         The cue cell must stay one cell wide; width_test pins it.
+  Planned       Two places on row 0, the one on screen marked
+  Branch        feature/tab_bar, stacked on dev`
+	if got := trimmed(planBody(a)); got != want {
+		t.Errorf("a done task's details:\n%s\nwant\n%s", got, want)
+	}
+	for _, line := range taskPage(a.doc, a.plans.CurrentRel(), "tab-bar", 80) {
+		if strings.Contains(line.Text, "Planned") && line.Spans[1].Role != "muted" {
+			t.Errorf("what was planned is muted: %+v", line)
+		}
+	}
+	// Every state on row 0, and a task in a group on row 1.
+	g, _, _ := openDemo(t, groupsPlan, 80, 24)
+	pg := g.doc.plan
+	for key, want := range map[string]string{"page-titles": "pinned · task 2 of 9 · in Chrome", "help-page": "blocked · task 6 of 9 · in Plan views", "readme": "skipped · task 9 of 9", "plan-list": "pending · task 4 of 9 · in Plan views › Plan list", "tab-bar": "✔ done · task 1 of 9 · in Chrome"} {
+		word, _ := taskState(findTask(pg, key), pg.Graph(), pg.Graph().Pin())
+		if got := word + " · " + taskPlace(pg, key); got != want {
+			t.Errorf("%s: %q, want %q", key, got, want)
+		}
+	}
+	// A done task with no notes yet; a read-only plan sends nothing; under
+	// 50 body cells labels sit above their values.
+	n, _, _ := openDemo(t, `{"version": 2, "tasks": [{"id": "a", "title": "A", "status": "done", "does": ["the work"]}, {"id": "b", "title": "B", "status": "active", "does": ["more work"]}]}`, 80, 24)
+	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "a", 80)); !strings.HasPrefix(got, "  A\n  ✔ Done · no notes yet\n  Planned       the work") {
+		t.Errorf("done with no notes\n%s", got)
+	}
+	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "b", 80)); !strings.Contains(got, "  A read-only plan sends your agent nothing.\n") {
+		t.Errorf("read-only\n%s", got)
+	}
+	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "b", 40)); !strings.Contains(got, "\n  Does\n    more work") {
+		t.Errorf("40 cells: the label above its value\n%s", got)
+	}
+	// The line under the title wraps, as the title does, never cut.
+	var intro []string
+	for _, l := range taskPage(a.doc, a.plans.CurrentRel(), "agent-stream", 40) {
+		if l.Text == "  Does" { // the first field's label, over its value under 50 cells
+			break
+		}
+		if l.Kind == "muted" {
+			intro = append(intro, strings.TrimSpace(l.Text))
+			if cellLen(l.Text) > 39 {
+				t.Errorf("40 cells: %q runs past the row", l.Text)
+			}
+		}
+	}
+	if got := strings.Join(intro, " "); got != "Once this task is pinned, your agent gets these fields with every prompt." {
+		t.Errorf("40 cells: the line under the title, wrapped: %q", intro)
+	}
+}
+
+// docs/ux.md §6: About is on i from the task list: the goal, scope,
+// progress and stack, then problems and why the plan is read-only, in
+// red. Enter does nothing there and Esc is the list.
+func TestAboutOnI(t *testing.T) {
+	a, _, _ := openDemo(t, specPlan, 80, 24)
+	press(a, "down", "i")
+	if a.at != atPlanDetail {
+		t.Fatalf("i opens About: at=%d", a.at)
+	}
+	r := a.frameRows().Rows
+	if got := textOf(r[0], 80); got != sides("Rex visual redesign › About", "active · 2/8 done   plan · agent", 80) || textOf(r[1], 80) != "rex/plans/cuj/demo.rex.json" {
+		t.Errorf("About's rows 0 and 1: %q / %q", got, textOf(r[1], 80))
+	}
+	want := `  Goal          A newcomer always knows which page they are on, what is pinned,
+                and which key gets them where.
+  In scope      chrome · task list · plan list
+  Out of scope  extra palettes · web UI
+  Progress      2/8 done · 1 skipped · 1 blocked · 4 to go
+  Stack         lands on dev · 3 branches`
+	if got := trimmed(planBody(a)); got != want {
+		t.Errorf("About:\n%s\nwant\n%s", got, want)
+	}
+	if press(a, "i", "esc"); a.at != atOutline || a.outline.sel != "agent-stream" {
+		t.Fatalf("i does nothing on About, esc is the list on the same task: at=%d sel=%q", a.at, a.outline.sel)
+	}
+	press(a, "\r", "i")
+	if a.at != atTaskDetail {
+		t.Fatal("i does nothing on details")
+	}
+	b, _, _ := openDemo(t, `{"version": 2, "title": "Odd", "tasks": [{"id": "a", "depends_on": ["zz"]}]}`, 80, 24)
+	press(b, "i")
+	about := aboutPage(b.doc, 80)
+	text := viewText(about)
+	if !strings.Contains(text, "  Progress      0/1 done · 1 to go\n  Problems      plan: version 2 is newer than this Rex reads (1)\n                a: depends on \"zz\", which is not a task here\n  Read-only     version 2") {
+		t.Errorf("problems and read-only come last\n%s", text)
+	}
+	for _, l := range about {
+		if (strings.Contains(l.Text, "Problems") || strings.Contains(l.Text, "Read-only")) && l.Spans[1].Role != "error" {
+			t.Errorf("in red: %+v", l)
+		}
+	}
+	e, _, _ := openDemo(t, string(plan.Stub("demo")), 80, 24)
+	if press(e, "i"); e.at != atPlanDetail || !strings.Contains(planBody(e), "  Progress      no tasks yet") {
+		t.Errorf("an empty plan's About\n%s", planBody(e))
+	}
+}
+
+// docs/ux.md §4, §6: opening a plan says which file opened on the notice
+// row: picked, "Opened <title> · <path>"; written by your agent, "Your
+// agent wrote <title> · opened <path>"; created, "✔ Created <path>".
+// Narrow, the path stays and clips from the left.
+func TestOpenedNotice(t *testing.T) {
+	a := testApp(t)
+	c := &clock{t: time.Unix(1_800_000_000, 0)}
+	a.now = c.now
+	path := writePlan(t, a.plans.Repo, "cuj/demo.rex.json", demoPlan)
+	a.plans.walk = planWalk{}
+	press(a, "esc")
+	typeText(a, "cuj/demo")
+	press(a, "\r")
+	if got := a.notice(); got.Text != "Opened Send-off demo · rex/plans/cuj/demo.rex.json" || got.Kind != "text" || a.plans.Current != path {
+		t.Fatalf("a pick: %q %q", got.Text, got.Kind)
+	}
+	for w, want := range map[int]string{38: "Opened rex/plans/cuj/demo.rex.json", 30: "Opened …lans/cuj/demo.rex.json"} {
+		if got := a.notice().Fit(w); got != want || cellLen(got) > w {
+			t.Errorf("%d cells: %q, want %q", w, got, want)
+		}
+	}
+	c.t = c.t.Add(toastFor)
+	if a.tick(); a.notice().Text != "" {
+		t.Fatalf("it is a toast: %q", a.notice().Text)
 	}
 	press(a, "esc")
-	if a.at != atOutline || a.outline.sel != "card-highlight" {
-		t.Fatal("Esc goes back to the outline, selection kept")
-	}
-	press(a, "up", "up", "up")
-	if r0, _ := rows(); a.outline.sel != "" || !strings.HasPrefix(r0, "❯ Send-off demo ") {
-		t.Fatalf("the title row, row 0, is the top row, got %q\n%s", a.outline.sel, a.frame())
-	}
+	typeText(a, "fresh")
 	press(a, "\r")
-	if r0, r1 := rows(); r0 != sides("Send-off demo › About", "active · 1/3 done   plan · agent", 78) || r1 != "rex/plans/cuj/demo.rex.json" {
-		t.Errorf("About's rows 0 and 1: %q / %q", r0, r1)
+	if got := a.notice().Text; got != "✔ Created rex/plans/fresh.rex.json" {
+		t.Fatalf("a create: %q", got)
 	}
-	frame = a.frame()
-	if strings.Contains(frame, "  Send-off demo\n") || strings.Contains(frame, "━") {
-		t.Errorf("About's body no longer repeats its title and progress\n%s", frame)
+	b := testApp(t)
+	b.now = c.now
+	other := writePlan(t, b.plans.Repo, "auth/reset.rex.json", strings.Replace(demoPlan, "Send-off demo", "Password reset", 1))
+	b.ingest([]watch.Event{wrote(b.plans.Repo, other)})
+	if got := b.notice().Text; got != "Your agent wrote Password reset · opened rex/plans/auth/reset.rex.json" {
+		t.Fatalf("an attach: %q", got)
 	}
-	for _, want := range []string{"GOAL ─", "  Show a plan, pin a task", "SCOPE ─", "  in   • outline view", "  out  • extra palettes", "DONE ─", "  ✔ plans-ui  Home cards, browse, duplicate warn"} {
-		if !strings.Contains(frame, want) {
-			t.Errorf("plan detail missing %q\n%s", want, frame)
+	again := newApp("yellow", false, "idle", NewPlanBrowser(b.plans.Repo), 120, 32)
+	if got := again.notice().Text; got != "Opened Password reset · rex/plans/auth/reset.rex.json" {
+		t.Fatalf("start: %q", got)
+	}
+}
+
+// docs/ux.md §4, §6: a list that goes on past its window says so: ↑ N more
+// at row 2's right end from 12 rows, costing no row, or under 12 on a row
+// of its own; ↓ N more on the list's last row. N counts the rows past it.
+func TestListScrollMarkers(t *testing.T) {
+	a, _, _ := openDemo(t, manyTasks(30), 80, 24)
+	press(a, "end")
+	rows := a.frameRows().Rows
+	if got := textOf(rows[2], 80); got != strings.Repeat(" ", 70)+"↑ 11 more" {
+		t.Errorf("row 2: %q", got)
+	}
+	if body := planBody(a); !strings.HasPrefix(body, "    t11 ") || !strings.Contains(body, "❯   t29 ") || strings.Contains(body, "more") {
+		t.Errorf("the window ends on the last task\n%s", body)
+	}
+	press(a, "home")
+	if got := textOf(a.frameRows().Rows[2], 80); got != "" || !strings.Contains(planBody(a), "\n  ↓ 12 more") {
+		t.Errorf("at the top, only ↓: %q\n%s", got, planBody(a))
+	}
+	a.settle(80, 10)
+	press(a, "end")
+	if body := planBody(a); !strings.HasPrefix(body, "  ↑ 24 more\n") || !strings.HasSuffix(strings.TrimRight(body, "\n "), "❯   t29     Task number 29") {
+		t.Errorf("under 12 rows ↑ takes a row\n%s", body)
+	}
+	press(a, "pageup")
+	if body := planBody(a); !strings.HasPrefix(body, "  ↑ ") || !strings.Contains(body, "\n  ↓ ") {
+		t.Errorf("both markers\n%s", body)
+	}
+}
+
+// docs/ux.md §6: the list holds still as the cursor moves. While it fits,
+// moving ↓ and ↑ over every task changes only which row has ❯; while it
+// scrolls, the window moves only when the cursor would leave its margin.
+func TestListHoldsStillAsTheCursorMoves(t *testing.T) {
+	a, _, _ := openDemo(t, groupsPlan, 80, 24)
+	blank := func() string { return strings.ReplaceAll(planBody(a), "❯", " ") }
+	first := blank()
+	for _, key := range cursorKeys {
+		if press(a, key); blank() != first {
+			t.Fatalf("%s moved the list\n%s\n--\n%s", key, first, blank())
 		}
 	}
-	press(a, "left")
-	press(a, "down", "right")
-	if a.at != atTaskDetail || a.outline.sel != "plans-ui" {
-		t.Fatal("→ opens task detail")
+	b, _, _ := openDemo(t, manyTasks(40), 80, 24)
+	press(b, "home")
+	top := planBody(b)
+	for i := 0; i < 15; i++ {
+		press(b, "down")
+		if got := strings.ReplaceAll(planBody(b), "❯", " "); got != strings.ReplaceAll(top, "❯", " ") {
+			t.Fatalf("down %d: the window moved before the cursor reached its margin\n%s", i+1, got)
+		}
 	}
-	if r0, _ := rows(); !strings.HasPrefix(r0, "Send-off demo › plans-ui ") || !strings.Contains(r0, " done   plan · agent") {
-		t.Errorf("a done task's state is row 0's meta: %q", r0)
+	press(b, "down")
+	if planBody(b) == top {
+		t.Fatal("at the margin, the window moves")
 	}
-	if frame := a.frame(); !strings.Contains(frame, "DONE ─") || !strings.Contains(frame, "  did      Home cards, browse, duplicate warn") || !strings.Contains(frame, "  changed  internal/tui/plans.go") || strings.Index(frame, "DONE ─") > strings.Index(frame, "INTENDED ─") {
-		t.Fatalf("a done task leads with what it did, then what it intended\n%s", frame)
-	}
-	press(a, "esc", "esc")
-	if a.at != atLibrary || a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Group != groupOpen {
-		t.Fatalf("Esc from the outline lands on OPEN: at=%d row=%+v", a.at, a.plans.Rows[a.plans.Cursor])
-	}
-	if !strings.Contains(a.frame(), "❯ cuj/demo ") {
-		t.Fatal("the plan stays open, under OPEN")
-	}
-	press(a, "\r")
-	if a.at != atOutline {
-		t.Fatal("enter on the open plan reopens the outline")
+}
+
+// docs/ux.md §3, §6: PgDn selects the task just past the window's last,
+// PgUp the one just before its first, so no page skips a task the window
+// didn't show; with nothing that way, the last or the first.
+func TestTaskListPagesByItsWindow(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {80, 10}, {44, 16}} {
+		a, _, _ := openDemo(t, manyTasks(60), size[0], size[1])
+		press(a, "home")
+		seen := map[string]bool{}
+		for i := 0; i < 20 && a.outline.sel != "t59"; i++ {
+			for _, row := range strings.Split(planBody(a), "\n") {
+				if f := strings.Fields(strings.TrimLeft(row, "❯✔ ")); len(f) > 0 && strings.HasPrefix(f[0], "t") {
+					seen[f[0]] = true
+				}
+			}
+			last := ""
+			for _, row := range strings.Split(planBody(a), "\n") {
+				if f := strings.Fields(strings.TrimLeft(row, "❯✔ ")); len(f) > 0 && strings.HasPrefix(f[0], "t") {
+					last = f[0]
+				}
+			}
+			press(a, "pagedown")
+			if last == "t59" {
+				break
+			}
+			if want := taskKeys(a.doc.plan)[slices.Index(taskKeys(a.doc.plan), last)+1]; a.outline.sel != want {
+				t.Fatalf("%v: PgDn from a window ending %s landed on %s", size, last, a.outline.sel)
+			}
+		}
+		if a.outline.sel != "t59" || len(seen) < 59 {
+			t.Fatalf("%v: paging down reached %s and showed %d tasks", size, a.outline.sel, len(seen))
+		}
+		press(a, "pagedown")
+		if a.outline.sel != "t59" {
+			t.Fatal("PgDn at the end stays")
+		}
+		for i := 0; i < 20 && a.outline.sel != "t00"; i++ {
+			press(a, "pageup")
+		}
+		if a.outline.sel != "t00" {
+			t.Fatalf("%v: paging up reached %s", size, a.outline.sel)
+		}
 	}
 }
 
@@ -236,7 +969,7 @@ func TestOutlineTabKeepsItsScreen(t *testing.T) {
 	}
 	press(a, "\t")
 	if a.at != atTaskDetail || a.outline.sel != "load-outline" {
-		t.Fatal("tab back returns to the same detail")
+		t.Fatal("tab back returns to the same details")
 	}
 }
 
@@ -260,7 +993,7 @@ func TestOutlineReloadsOutsideEdits(t *testing.T) {
 		t.Fatalf("tape line %+v", last)
 	}
 	if !strings.Contains(a.frame(), "– load-outline") || !strings.Contains(a.frame(), "extra") {
-		t.Fatal("the outline shows the new file")
+		t.Fatal("the list shows the new file")
 	}
 	c.t = c.t.Add(toastFor)
 	a.tick()
@@ -273,7 +1006,7 @@ func TestOutlineReloadsOutsideEdits(t *testing.T) {
 }
 
 // The agent pins and finishes tasks in the file, and Rex follows: row 1,
-// the outline and a toast (docs/ux.md §7, §8).
+// the list and a toast (docs/ux.md §7, §8).
 func TestTheAgentsPinAndDoneShow(t *testing.T) {
 	a, c, path := openDemo(t, demoPlan, 120, 32)
 	done := strings.Replace(demoPlan, `"status": "active",
@@ -300,18 +1033,18 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
 	if got := a.statusLine().Text; got != "nothing pinned · next up load-outline · Outline view" {
 		t.Fatalf("then the next up task, with no verb to type: %q", got)
 	}
-	// The card moves to what is next up, and names the task it builds on.
-	if frame := a.frame(); !strings.Contains(frame, "╭─[NEXT UP]─ load-outline · Outline view") || !strings.Contains(frame, "│ done    ✔ card-highlight  the bar spans all three card rows") || !strings.Contains(frame, "✔ card-highlight  Selected plan card is one block · the bar spans") {
-		t.Fatalf("the outline follows the file\n%s", frame)
+	// The list marks it done and tags what is next up; the cursor stays.
+	if body := planBody(a); !strings.Contains(body, "❯ ✔ card-highlight  Selected plan card is one block") || !strings.Contains(body, "    load-outline    Outline view") || !strings.HasSuffix(strings.Split(body, "\n")[2], "next up") {
+		t.Fatalf("the list follows the file\n%s", body)
 	}
-	press(a, "home", "down", "down", "\r")
+	press(a, "\r")
 	if a.at != atTaskDetail || a.outline.sel != "card-highlight" {
 		t.Fatalf("at=%d sel=%q", a.at, a.outline.sel)
 	}
-	detail := viewText(taskDetail(a.doc, a.outline.sel, 78, true)) // it scrolls; all of it
-	for _, want := range []string{"DONE ─", "  did      the bar spans all three card rows", "  checked  go test ./internal/tui/", "  notes    the pick colors were already there", "INTENDED ─", "  does     Bar, border, and fill cover the whole selected card"} {
+	detail := viewText(taskPage(a.doc, a.plans.CurrentRel(), a.outline.sel, 78))
+	for _, want := range []string{"  ✔ Done · what your agent wrote when it finished it", "  Did           the bar spans all three card rows", "  Checked       go test ./internal/tui/", "  Notes         the pick colors were already there", "  Planned       Bar, border, and fill cover the whole selected card"} {
 		if !strings.Contains(detail, want) {
-			t.Fatalf("task detail shows %q\n%s", want, detail)
+			t.Fatalf("the details show %q\n%s", want, detail)
 		}
 	}
 	active := strings.Replace(done, `"status": "pending"`, `"status": "active"`, 1)
@@ -471,8 +1204,8 @@ func TestOutlineInvalidJSONIsDebounced(t *testing.T) {
 	if got := a.statusLine().Text; !regexp.MustCompile(`^✗ plan JSON error \d+:\d+ · showing last good$`).MatchString(got) {
 		t.Fatalf("status %q", got)
 	}
-	if !strings.Contains(a.frame(), "▸ card-highlight") {
-		t.Fatal("the last good plan stays on screen")
+	if !strings.Contains(a.frame(), "❯   card-highlight") || !strings.Contains(textOf(a.frameRows().Rows[0], 120), "1/3 done · can't read") {
+		t.Fatalf("the last good plan stays on screen, and row 0 says it can't be read\n%s", a.frame())
 	}
 	os.WriteFile(path, []byte(demoPlan), 0o644)
 	later(a, c)
@@ -486,113 +1219,61 @@ func TestOutlineInvalidJSONIsDebounced(t *testing.T) {
 	}
 }
 
-// docs/ux.md §6, Plan states: what stands in for the PINNED card, and the
-// red line under the goal. A read-only plan says so in row 0's meta and on
-// the notice row (§4), not in the outline's head.
-func TestOutlineStates(t *testing.T) {
-	// headOf is what stays put over the tasks: the warnings are red.
-	head := func(a *app) []LogLine {
-		view := a.composeOptions().PlanView
-		return view[:headOf(view)]
-	}
+// docs/ux.md §6, Plan states: a read-only plan says so in row 0's meta and
+// on the notice row; a task in a loop and a second active task are tagged
+// in red; row 1 says why nothing is pinned; a plan Rex can't read says why,
+// and an empty one what happens next.
+func TestPlanStates(t *testing.T) {
 	a, _, _ := openDemo(t, `{"version": 2, "goal": "the goal", "tasks": [{"id": "a", "title": "A"}]}`, 120, 32)
-	frame := a.frame()
-	if rows := a.frameRows().Rows; textOf(rows[30], 120) != "read-only: version 2 · newer than this Rex reads" || !strings.Contains(textOf(rows[0], 120), "0/1 done · read-only   plan · agent") || strings.Contains(frame, "to edit") || !strings.Contains(frame, "↑↓ select · enter details · esc plans") {
-		t.Fatalf("%s", frame)
+	if rows := a.frameRows().Rows; textOf(rows[30], 120) != "read-only: version 2 · newer than this Rex reads" || !strings.Contains(textOf(rows[0], 120), "0/1 done · read-only   plan · agent") || strings.Contains(planBody(a), "the goal") {
+		t.Fatalf("%s", a.frame())
 	}
-	if h := head(a); strings.TrimRight(h[0].Text, " ") != "  the goal" || strings.Contains(viewText(h), "read-only") {
-		t.Fatalf("the goal heads the outline, and no read-only line: %+v", h)
-	}
-	b, _, _ := openDemo(t, `{"tasks": [{"id": "a", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]}]}`, 120, 32)
-	frame = b.frame()
-	for _, want := range []string{"after ?zz", "cycle", "! 2 problems · enter on the title lists them", "no pin · nothing unblocked", "TASKS ─"} {
-		if !strings.Contains(frame, want) {
-			t.Errorf("missing %q\n%s", want, frame)
-		}
-	}
-	if body := planBody(b); strings.Contains(body, "╭─[") || !strings.Contains("\n"+body, "\n  no pin · nothing unblocked") {
-		t.Errorf("no pin, no card: a quiet line stands in for it\n%s", body)
+	b, _, _ := openDemo(t, `{"tasks": [{"id": "a", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]}]}`, 80, 24)
+	if body := trimmed(planBody(b)); b.statusLine().Text != "nothing pinned · nothing unblocked" || body != "❯   a       (untitled)\n    b       (untitled)"+strings.Repeat(" ", 52)+"cycle\n    c       (untitled)"+strings.Repeat(" ", 52)+"cycle" {
+		t.Errorf("%q\n%q", b.statusLine().Text, body)
 	}
 	c, _, _ := openDemo(t, `{"tasks": [{"id": "a", "status": "done"}, {"id": "b", "status": "skipped"}]}`, 120, 32)
-	if frame := c.frame(); c.statusLine().Text != "✔ all tasks done" || !strings.Contains(frame, "  ✔ all tasks done") || !strings.Contains(frame, "– b") || !strings.Contains(frame, "skipped") {
-		t.Fatalf("%q\n%s", c.statusLine().Text, frame)
+	if c.statusLine().Text != "✔ all tasks done" || !strings.Contains(planBody(c), "  – b ") {
+		t.Fatalf("%q\n%s", c.statusLine().Text, c.frame())
 	}
-	d, _, _ := openDemo(t, `{"tasks": [`, 120, 32)
-	if frame := d.frame(); !strings.Contains(frame, "can't read this plan") || textOf(d.frameRows().Rows[0], 120) != sides("demo", "can't read   plan · agent", 78) || !strings.HasPrefix(d.statusLine().Text, "✗ plan JSON error 1:") || strings.Contains(frame, "╭─[") {
-		t.Fatalf("%q\n%s", d.statusLine().Text, frame)
+	d, _, _ := openDemo(t, `{"tasks": [`, 80, 24)
+	if body := planBody(d); !strings.HasPrefix(body, "  Can't read this plan.\n  1:") || !strings.Contains(body, "  Rex shows it as soon as the file is valid JSON again.") || textOf(d.frameRows().Rows[0], 80) != sides("demo", "can't read   plan · agent", 80) || !strings.HasPrefix(d.statusLine().Text, "✗ plan JSON error 1:") || textOf(d.frameRows().Rows[1], 80) != "rex/plans/cuj/demo.rex.json" {
+		t.Fatalf("%q\n%s", d.statusLine().Text, d.frame())
 	}
-	// Two active: the card shows the first, the second keeps ▸ and says so.
+	// Two active: the first is the pin, the second says so in red, at
+	// every width.
 	e, _, _ := openDemo(t, `{"tasks": [{"id": "a", "title": "A", "status": "active"}, {"id": "b", "title": "B", "status": "active"}]}`, 38, 24)
-	if frame := e.frame(); e.statusLine().Text != "pinned  a · A" || !strings.Contains(frame, "╭─[PINNED]─ a ─") || !strings.Contains(frame, "  ▸ b B") || !strings.Contains(frame, "also active") {
-		t.Fatalf("%q\n%s", e.statusLine().Text, frame)
+	if body := planBody(e); e.statusLine().Text != "pinned  a · A" || !strings.Contains(body, "❯   a"+strings.Repeat(" ", 26)+"pinned") || !strings.Contains(body, "    b"+strings.Repeat(" ", 21)+"also active") {
+		t.Fatalf("%q\n%q", e.statusLine().Text, body)
 	}
-	// A red tag shows at every width (docs/ux.md §6, Rows).
 	e.settle(24, 24)
-	if body := planBody(e); !strings.Contains("\n"+body+"\n", "\n  ▸ b B      also active\n") {
+	if body := planBody(e); !strings.Contains(body, "    b       also active") {
 		t.Errorf("24 cells keep also active\n%s", body)
 	}
 	// An active task with no id is never the pin, and the pin isn't
 	// active: "also active" would point at nothing.
 	n, _, _ := openDemo(t, `{"tasks": [{"title": "noid", "status": "active"}, {"id": "b", "title": "B"}]}`, 120, 24)
-	if body := planBody(n); n.statusLine().Text != "nothing pinned · next up b · B" || !strings.Contains(body, "[NEXT UP]─ b") || !strings.Contains("\n"+body, "\n  ▸ #0  noid\n") || strings.Contains(body, "also active") {
+	if body := planBody(n); n.statusLine().Text != "nothing pinned · next up b · B" || !strings.Contains(body, "    #0      noid\n") || strings.Contains(body, "also active") {
 		t.Errorf("%q\n%s", n.statusLine().Text, body)
 	}
-	press(n, "home")
-	if press(n, "down"); n.outline.sel != "#0" {
-		t.Fatalf("sel %q", n.outline.sel)
+	if press(n, "home", "\r"); n.outline.sel != "#0" || textOf(n.frameRows().Rows[0], 120) != sides("demo › #0", "active   plan · agent", 78) {
+		t.Errorf("details say active, not also active: %q", textOf(n.frameRows().Rows[0], 120))
 	}
-	if press(n, "\r"); textOf(n.frameRows().Rows[0], 120) != sides("demo › #0", "active   plan · agent", 78) {
-		t.Errorf("task detail says active, not also active: %q", textOf(n.frameRows().Rows[0], 120))
-	}
-	// The warning wraps to two rows and is the ladder's last step: at 38×9
-	// (a 6-row body) the goal and TASKS are gone, the strip stays under it;
-	// at 38×7 it goes, for the task rows, and the strip fits again.
-	w, _, _ := openDemo(t, `{"version": 2, "title": "Warned", "goal": "a goal", "tasks": [{"id": "a", "status": "active", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]}, {"id": "d"}, {"id": "e"}, {"id": "f"}]}`, 38, 9)
-	if body := planBody(w); !strings.HasPrefix(body, "  ! 3 problems · enter on the title\n    lists them\n[PINNED] a\n❯ ▸ a ") || strings.Contains(body, "a goal") || strings.Contains(body, "TASKS") {
-		t.Errorf("38×9: the warning, two rows, over the strip\n%s", body)
-	}
-	if w.settle(38, 7); strings.Contains(planBody(w), "problems") || !strings.HasPrefix(planBody(w), "[PINNED] a\n❯ ▸ a ") {
-		t.Errorf("38×7: the warning goes last, for the task rows, and the strip fits again\n%s", planBody(w))
-	}
+	// A parent is a group, never the pin.
 	f, _, _ := openDemo(t, `{"tasks": [{"id": "ui", "title": "UI"}, {"id": "x", "parent": "ui", "status": "done"}, {"id": "y", "parent": "ui"}]}`, 120, 32)
-	if frame := f.frame(); !strings.Contains(frame, "1/2") || f.outline.sel != "y" || !strings.Contains(frame, "[NEXT UP]─ y") {
-		t.Fatalf("a parent shows a rollup and is never the pin (sel %q)\n%s", f.outline.sel, frame)
+	if body := planBody(f); !strings.HasPrefix(body, sides("  UI", "1/2", 78)+"\n") || f.outline.sel != "y" || !strings.Contains(body, "next up") {
+		t.Fatalf("a parent is a group label with its rollup (sel %q)\n%q", f.outline.sel, body)
 	}
-	// An empty plan: one line, under the page title's blank row, no TASKS,
-	// the title row selected.
-	g, _, _ := openDemo(t, string(plan.Stub("demo")), 38, 24)
-	if frame := planBody(g); !strings.HasPrefix(frame, "  No tasks yet · your agent fills this\n  file\n") || strings.Contains(frame, "TASKS") || g.outline.sel != "" {
-		t.Fatalf("%s", frame)
-	}
-}
-
-func TestOutlineScrollsAndKeepsTheSelection(t *testing.T) {
-	var tasks []string
-	for i := 1; i <= 40; i++ {
-		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d"}`, i, i))
-	}
-	a, c, path := openDemo(t, `{"title": "Big", "tasks": [`+strings.Join(tasks, ",")+`]}`, 120, 24)
-	for i := 0; i < 11; i++ {
-		press(a, "down")
-	}
-	frame := a.frame()
-	if a.outline.sel != "t12" || !strings.Contains(frame, "─ 12 of 40") || !strings.Contains(frame, "↓ more") || !strings.Contains(frame, "❯ ○ t12") {
-		t.Fatalf("sel %q\n%s", a.outline.sel, frame)
-	}
-	press(a, "end")
-	if a.outline.sel != "t40" || !strings.Contains(a.frame(), "❯ ○ t40") {
-		t.Fatal("End goes to the last task")
-	}
-	os.WriteFile(path, []byte(`{"title": "Big", "tasks": [{"id": "new"},`+strings.Join(tasks, ",")+`]}`), 0o644)
-	later(a, c)
-	if a.outline.sel != "t40" || !strings.Contains(a.frame(), "❯ ○ t40") {
-		t.Fatal("a reload keeps the selection by id")
+	// An empty plan says what happens next, with nothing selected.
+	g, _, _ := openDemo(t, string(plan.Stub("demo")), 80, 24)
+	if body := trimmed(planBody(g)); body != "  No tasks yet.\n  Ask your agent to plan cuj/demo. It writes the tasks into\n  rex/plans/cuj/demo.rex.json, and they show up here as it saves." || g.outline.sel != "" {
+		t.Fatalf("%s", body)
 	}
 }
 
-// The outline has no composer: letters, Backspace and a paste do nothing,
-// ? opens Help at once, and Esc goes straight to the plan list (docs/ux.md
-// §2, §3).
+// The task list has no composer: letters, Backspace and a paste do
+// nothing, ? opens Help at once, and Esc goes straight to the plan list
+// (docs/ux.md §2, §3).
 func TestOutlineKeysActAtOnce(t *testing.T) {
 	a, _, path := openDemo(t, demoPlan, 120, 32)
 	before, _ := os.ReadFile(path)
@@ -603,10 +1284,13 @@ func TestOutlineKeysActAtOnce(t *testing.T) {
 		t.Fatalf("draft %q\n%s", a.draft, a.frame())
 	}
 	if after, _ := os.ReadFile(path); string(after) != string(before) {
-		t.Fatal("nothing typed on the outline writes the plan")
+		t.Fatal("nothing typed on the task list writes the plan")
 	}
 	if press(a, "?"); a.overlay[PanePlans] != overlayHelp {
 		t.Fatal("? opens Help at once")
+	}
+	if press(a, "i"); a.at != atOutline {
+		t.Fatal("i does nothing under Help")
 	}
 	if press(a, "esc", "esc"); a.at != atLibrary {
 		t.Fatalf("Esc closes Help, then goes up to the plan list: at=%d", a.at)
@@ -624,7 +1308,7 @@ func TestOpenGroupAfterRestart(t *testing.T) {
 	if again.at != atOutline || again.plans.Current != path || !again.follow || again.outline.sel != "card-highlight" {
 		t.Fatalf("at=%d current=%q follow=%v sel=%q", again.at, again.plans.Current, again.follow, again.outline.sel)
 	}
-	if got := textOf(again.frameRows().Rows[0], 120); got != sides("  Send-off demo", "1/3 done · following   plan · agent", 78) {
+	if got := textOf(again.frameRows().Rows[0], 120); got != sides("Send-off demo", "1/3 done · following   plan · agent", 78) {
 		t.Fatalf("row 0 names the plan and that Rex follows (docs/ux.md §4): %q", got)
 	}
 	press(again, "esc")
@@ -636,43 +1320,6 @@ func TestOpenGroupAfterRestart(t *testing.T) {
 		t.Fatalf("%s", frame)
 	}
 }
-
-// Row 0's title and the TASKS H2 stay as the list scrolls; TASKS says
-// where the selection is in it, and row 0 keeps the plan's progress alone
-// (docs/ux.md §4, §6).
-func TestOutlinePageTitleStaysAsTheListScrolls(t *testing.T) {
-	var tasks []string
-	for i := 1; i <= 40; i++ {
-		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d"}`, i, i))
-	}
-	a, _, _ := openDemo(t, `{"title": "Big", "tasks": [`+strings.Join(tasks, ",")+`]}`, 120, 24)
-	for i := 0; i < 30; i++ {
-		press(a, "down")
-	}
-	frame := a.frame()
-	if textOf(a.frameRows().Rows[0], 120) != sides("  Big", "0/40 done   plan · agent", 78) || !strings.Contains(frame, "TASKS ─") || !strings.Contains(frame, "─ 31 of 40") || !strings.Contains(frame, "↑ more") || !strings.Contains(frame, "❯ ○ t31") || !strings.Contains(frame, "[NEXT UP]─ t01") {
-		t.Fatalf("deep in the list, the page title, the card and the position stay on screen\n%s", frame)
-	}
-	b, _, _ := openDemo(t, `{"title": "Rex visual redesign", "status": "active", "tasks": [`+strings.Join(tasks, ",")+`]}`, 38, 24)
-	press(b, "down", "down", "down")
-	for cols, meta := range map[int]string{38: "", 120: "0/40 done   "} {
-		b.settle(cols, 24)
-		title := textOf(b.frameRows().Rows[0], cols)
-		if title != sides("  Rex visual redesign", meta+"plan · agent", PaneTextWidth(cols, 24)) || !strings.Contains(b.frame(), "─ 4 of 40") {
-			t.Fatalf("%d columns: row 0 %q\n%s", cols, title, b.frame())
-		}
-	}
-	press(b, "home")
-	if frame := b.frame(); !strings.Contains(frame, "─ 0/40 done") || strings.Contains(frame, " of 40") {
-		t.Fatalf("on the title row TASKS shows the progress\n%s", frame)
-	}
-	c, _, _ := cujApp(t)
-	c.settle(38, 7)
-	if title := textOf(c.frameRows().Rows[0], 38); title != sides("  Send-off demo", "1/3   plan · agent", 38) {
-		t.Fatalf("the CUJ outline at 38×7 keeps its progress: %q", title)
-	}
-}
-
 func TestReopeningKeepsTheOpenPlan(t *testing.T) {
 	a, c, path := openDemo(t, demoPlan, 120, 32)
 	press(a, "down") // load-outline
@@ -697,29 +1344,12 @@ func TestTaskDetailKeepsItsTaskWhenItLeaves(t *testing.T) {
 	}
 	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"id": "load-outline"`, `"id": "renamed"`, 1)), 0o644)
 	later(a, c)
-	if a.outline.sel != "load-outline" || !strings.Contains(a.frame(), "no longer in the file") {
-		t.Fatalf("the detail says its task left instead of showing another\n%s", a.frame())
+	if a.outline.sel != "load-outline" || !strings.Contains(a.frame(), "This task is no longer in the file.") {
+		t.Fatalf("the details say their task left instead of showing another\n%s", a.frame())
 	}
 	press(a, "esc")
 	if a.outline.sel == "load-outline" {
-		t.Fatal("back on the outline, the selection falls back to a task that exists")
-	}
-}
-
-func TestNarrowParentsKeepTheirRollup(t *testing.T) {
-	src := `{"tasks": [{"id": "ui", "title": "UI"}, {"id": "a", "parent": "ui", "status": "done"}, {"id": "b", "parent": "ui"}]}`
-	a, _, _ := openDemo(t, src, 38, 24)
-	found := false
-	for _, row := range a.frameRows().Rows {
-		if strings.Contains(row, " ui ") && strings.Contains(row, "UI") {
-			found = true
-			if !strings.Contains(row, "1/2") {
-				t.Fatalf("a parent shows its rollup at 38 columns: %q", row)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("no parent row\n%s", a.frame())
+		t.Fatal("back on the list, the selection falls back to a task that exists")
 	}
 }
 
@@ -761,7 +1391,7 @@ func TestATornSaveOfTheSameBytesIsQuiet(t *testing.T) {
 	}
 }
 
-// The outline's body takes the rows a composer would have used: every row
+// The task list's body takes the rows a composer would have used: every row
 // but rows 0 and 1, the footer, and from blankFrom rows the blank row 2
 // and the notice row (docs/ux.md §4).
 func TestOutlineHasNoComposer(t *testing.T) {
@@ -796,8 +1426,8 @@ func TestDependingOnAParentWaitsForItsLeaves(t *testing.T) {
 }
 
 // docs/ux.md §4: on row 0 the plan's title outranks its meta and the
-// places' label, which go before the title clips; the title row stays
-// selectable, and wider, the progress is back.
+// places' label, which go before the title clips; the cursor never moves
+// it, and wider, the progress is back.
 func TestNarrowOutlineTitleOutranksItsMeta(t *testing.T) {
 	var tasks []string
 	for i := 1; i <= 40; i++ {
@@ -807,33 +1437,16 @@ func TestNarrowOutlineTitleOutranksItsMeta(t *testing.T) {
 	src := `{"title": "A very long plan title that cannot fit", "status": "active", "tasks": [` + strings.Join(tasks, ",") + `]}`
 	a, _, _ := openDemo(t, src, 38, 24)
 	rows := a.frameRows().Rows
-	if textOf(rows[0], 38) != "  A very long plan title that…   plan" || textOf(rows[1], 38) != "nothing pinned · next up t40" {
+	if textOf(rows[0], 38) != sides("A very long plan title that c…", "plan", 38) || textOf(rows[1], 38) != "nothing pinned · next up t40" {
 		t.Fatalf("row 0 is the title, cut beside the short label, row 1 the pin line\n%s", a.frame())
 	}
 	press(a, "home")
-	if frame := a.frame(); textOf(a.frameRows().Rows[0], 38) != "❯ A very long plan title that…   plan" || !strings.Contains(frame, "✔ t01") {
-		t.Fatalf("scrolled to the top, the title row is selected and clips\n%s", frame)
+	if frame := a.frame(); textOf(a.frameRows().Rows[0], 38) != textOf(rows[0], 38) || !strings.Contains(frame, "❯ ✔ t01") {
+		t.Fatalf("scrolled to the top, row 0 holds still\n%s", frame)
 	}
 	a.settle(120, 24)
-	if got := textOf(a.frameRows().Rows[0], 120); got != sides("❯ A very long plan title that cannot fit", "39/40 done   plan · agent", 78) {
+	if got := textOf(a.frameRows().Rows[0], 120); got != sides("A very long plan title that cannot fit", "39/40 done   plan · agent", 78) {
 		t.Fatalf("wider, the progress is back: %q", got)
-	}
-}
-
-func TestNarrowestParentKeepsItsRollup(t *testing.T) {
-	src := `{"tasks": [{"id": "ui", "title": "UI"}, {"id": "a", "parent": "ui", "status": "done"}, {"id": "b", "parent": "ui"}]}`
-	a, _, _ := openDemo(t, src, 24, 24) // the narrowest text column
-	found := false
-	for _, row := range a.frameRows().Rows {
-		if strings.Contains(row, " ui ") {
-			found = true
-			if !strings.Contains(row, "1/2") {
-				t.Fatalf("rollup lost at 24 cells: %q", row)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("no parent row\n%s", a.frame())
 	}
 }
 
@@ -852,767 +1465,43 @@ func TestATaskNeverWaitsOnItselfThroughItsParent(t *testing.T) {
 	}
 }
 
-func TestFilledPlanSelectsItsPin(t *testing.T) {
-	a, c, path := openDemo(t, string(plan.Stub("demo")), 120, 32)
-	if a.outline.sel != "" {
-		t.Fatal("an empty plan has only the title")
-	}
-	os.WriteFile(path, []byte(demoPlan), 0o644)
-	later(a, c)
-	if a.outline.sel != "card-highlight" {
-		t.Fatalf("when an agent fills the plan the cursor goes to the pin, got %q", a.outline.sel)
-	}
-}
-
 // docs/ux.md §4: a long title on row 0 drops the meta and the label
 // first, and a frame row never runs past the terminal.
 func TestNarrowPageTitleClipsTheTitle(t *testing.T) {
 	a, _, _ := openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "A very long plan title that cannot fit"`, 1), 38, 24)
 	title := a.frameRows().Rows[0]
-	if textOf(title, 38) != "  A very long plan title that…   plan" || cellLen(title) != 38 || !strings.Contains(a.frameRows().Rows[1], "Selected pl…") {
+	if textOf(title, 38) != sides("A very long plan title that c…", "plan", 38) || cellLen(title) != 38 || !strings.Contains(a.frameRows().Rows[1], "Selected pl…") {
 		t.Fatalf("%q", title)
 	}
 	// a tab is painted as spaces, so it is measured as spaces
 	a, _, _ = openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Tabs\t\t\t\tin a long title"`, 1), 38, 24)
-	if title := a.frameRows().Rows[0]; !strings.Contains(title, "  Tabs ") || cellLen(title) != 38 || strings.Contains(title, "\t") {
+	if title := a.frameRows().Rows[0]; !strings.HasPrefix(title, "Tabs ") || cellLen(title) != 38 || strings.Contains(title, "\t") {
 		t.Fatalf("%q", title)
 	}
 }
 
+// docs/ux.md §6: About says where the stack lands; a task's details say
+// where its PR goes, as the pin note does (docs/plan-format.md, Stacks).
 func TestDetailShowsTheStackFields(t *testing.T) {
 	p, err := plan.Parse([]byte(`{"base": "dev", "tasks": [{"id": "a", "branch": "feature/a"}, {"id": "b"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := &planDoc{path: "rex/plans/x.rex.json", plan: p}
-	trim := regexp.MustCompile(` +\n`)
-	if got := trim.ReplaceAllString(viewText(planDetail(d, 60, false)), "\n"); !strings.Contains(got, "STACK ─") || !strings.Contains(got, "\n  base    dev\n") {
+	if got := trimmed(viewText(aboutPage(d, 60))); !strings.Contains(got, "\n  Stack         lands on dev · 1 branch") {
 		t.Fatal(got)
 	}
-	if got := trim.ReplaceAllString(viewText(taskDetail(d, "a", 60, false)), "\n"); !strings.Contains(got, "CONTEXT ─") || !strings.Contains(got, "\n  branch  feature/a\n") {
+	if got := trimmed(viewText(taskPage(d, "rex/plans/x.rex.json", "a", 60))); !strings.Contains(got, "\n  Branch        feature/a, stacked on dev") {
 		t.Fatal(got)
 	}
-	if got := viewText(taskDetail(d, "b", 60, false)); strings.Contains(got, "branch") {
+	if got := trimmed(viewText(taskPage(d, "rex/plans/x.rex.json", "b", 60))); !strings.Contains(got, "\n  Branch        not named yet, stacked on dev") {
 		t.Fatal(got)
 	}
 }
 
-// redesignPlan has parents and every kind of leaf (docs/ux.md §6): done
-// with its retrospective, the active pin with every card field, waiting,
-// blocked and skipped.
-const redesignPlan = `{
-  "version": 1,
-  "id": "redesign",
-  "title": "Rex visual redesign",
-  "goal": "A newcomer always knows which tab and page they are on, what is pinned, and which key gets them where.",
-  "status": "active",
-  "base": "dev",
-  "scope": {"in": ["chrome", "outline"], "out": ["extra palettes"]},
-  "tasks": [
-    {"id": "chrome", "title": "Chrome: tabs, page titles, keys"},
-    {"id": "tab-bar", "title": "Tab bar on row 0", "parent": "chrome", "status": "done", "does": ["Both tabs on row 0"],
-     "accomplished": ["Two tabs on row 0, the active one filled"], "modified": ["internal/tui/chrome.go"],
-     "verified_how": ["go test ./internal/tui -run TabBar"], "completed_notes": "the cue cell is fixed width"},
-    {"id": "page-titles", "title": "Page titles and footer keys", "parent": "chrome", "status": "active", "depends_on": ["tab-bar"],
-     "needs": ["the tab bar on row 0"], "does": ["Every screen opens with a title row that says where you are and where esc goes"],
-     "verify": ["go test ./internal/tui -run PageTitle", "tmux at 80×24: every screen names itself"],
-     "files": ["internal/tui/chrome.go", "internal/tui/outline.go", "internal/tui/plans.go"], "branch": "feature/page_titles"},
-    {"id": "agent-stream", "title": "Fold runs of thoughts", "depends_on": ["page-titles"], "does": ["One row per settled run of thinking"]},
-    {"id": "plan-views", "title": "Plan list and outline"},
-    {"id": "plan-list", "title": "Plan list groups and accordion", "parent": "plan-views", "depends_on": ["page-titles"], "does": ["OPEN, RECENT and FOLDERS"]},
-    {"id": "pin-card", "title": "Pinned card on the outline", "parent": "plan-views", "status": "blocked", "depends_on": ["plan-list"]},
-    {"id": "width-table", "title": "Glyph widths in width_test", "status": "skipped"}
-  ]
-}`
-
-// planBody is a frame's body: the text column under rows 0 and 1 (and
-// row 2, blank from blankFrom rows) and over the footer (and the notice
-// row, from blankFrom rows) (docs/ux.md §4).
-func planBody(a *app) string {
-	rows := a.frameRows().Rows
-	top, bottom := 2, len(rows)-1
-	if a.lines >= blankFrom {
-		top, bottom = 3, len(rows)-2
-	}
-	var out []string
-	for _, r := range rows[top:bottom] {
-		out = append(out, textOf(r, a.columns))
-	}
-	return strings.Join(out, "\n")
-}
-
-// docs/ux.md §6: the collapse ladder's card tiers on the CUJ plan, as
-// docs/ux.md §6's mockups draw them: the whole card at 80×24, then its
-// done row goes, then the second rows and the blank rows (needs comes
-// back once they are gone), then the compact card, the strip, and at 6
-// rows only three tasks under the title. What fits again after a bigger
-// step comes back. The body is the rows the chrome leaves (§4): from
-// blankFrom rows row 2 and the notice row take two, and 11 rows lay the
-// outline out as 12 do (§12), so a taller terminal never shows less.
-func TestOutlineCardTiers(t *testing.T) {
-	for _, tc := range []struct {
-		cols, rows int
-		want       string
-	}{
-		{38, 24, `  A teammate opens this plan in Rex a…
-
-╭─[PINNED]─ card-highlight ──────────╮
-│ Selected plan card is one block    │
-│ does    Bar, border and fill cover │
-│         all three rows of the sel… │
-│ needs   the pick and pickbg color… │
-│ verify  go test ./internal/tui -r… │
-│         Open latest: ▌ on all thr… │
-│ files   plans.go  live.go  +1      │
-│ done    ✔ plans-ui  Home cards, f… │
-╰────────────────────────────────────╯
-
-TASKS ─────────────────────── 1/3 done
-  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-  · load-outline   Outline view
-
-`},
-		{38, 21, `  A teammate opens this plan in Rex a…
-
-╭─[PINNED]─ card-highlight ──────────╮
-│ Selected plan card is one block    │
-│ does    Bar, border and fill cover │
-│         all three rows of the sel… │
-│ needs   the pick and pickbg color… │
-│ verify  go test ./internal/tui -r… │
-│         Open latest: ▌ on all thr… │
-│ files   plans.go  live.go  +1      │
-╰────────────────────────────────────╯
-
-TASKS ─────────────────────── 1/3 done
-  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-  · load-outline   Outline view`},
-		// The second rows and the blank rows make room for needs again;
-		// verify says what its one row leaves out.
-		{38, 17, `  A teammate opens this plan in Rex a…
-╭─[PINNED]─ card-highlight ──────────╮
-│ Selected plan card is one block    │
-│ does    Bar, border and fill cove… │
-│ needs   the pick and pickbg color… │
-│ verify  go test ./internal/tu…  +1 │
-│ files   plans.go  live.go  +1      │
-╰────────────────────────────────────╯
-TASKS ─────────────────────── 1/3 done
-  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-  · load-outline   Outline view`},
-		{38, 13, `╭─[PINNED]─ card-highlight ──────────╮
-│ Selected plan card is one block    │
-│ does    Bar, border and fill cove… │
-╰────────────────────────────────────╯
-TASKS ─────────────────────── 1/3 done
-  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-  · load-outline   Outline view`},
-		// The strip leaves the card's does to the pin's own blurb row, and
-		// makes room for the goal again. 11 rows lay the outline out as 12
-		// do (docs/ux.md §12), the row left over blank.
-		{38, 12, `  A teammate opens this plan in Rex a…
-[PINNED] card-highlight  Selected pla…
-TASKS ─────────────────────── 1/3 done
-  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-      Bar, border and fill cover all…
-  · load-outline   Outline view`},
-		{38, 11, `  A teammate opens this plan in Rex a…
-[PINNED] card-highlight  Selected pla…
-TASKS ─────────────────────── 1/3 done
-  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-      Bar, border and fill cover all…
-  · load-outline   Outline view
-`},
-		// TASKS goes before the strip (docs/ux.md §6, ladder steps 8 and 9).
-		{38, 7, `[PINNED] card-highlight  Selected pla…
-  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-  · load-outline   Outline view`},
-		{38, 6, `  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-  · load-outline   Outline view`},
-		{120, 24, `  A teammate opens this plan in Rex and sees what the work is and which task …
-
-╭─[PINNED]─ card-highlight · Selected plan card is one block ────────────────╮
-│ does    Bar, border and fill cover all three rows of the selected card     │
-│ needs   the pick and pickbg colors exist in mascot.UI                      │
-│ verify  go test ./internal/tui -run PlanCardSelection                      │
-│         Open latest: ▌ on all three card rows                              │
-│ files   plans.go  live.go  plans_test.go                                   │
-│ done    ✔ plans-ui  Home cards, folder browser, duplicate names refused    │
-╰────────────────────────────────────────────────────────────────────────────╯
-
-TASKS ─────────────────────────────────────────────────────────────── 1/3 done
-  ✔ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
-❯ ▸ card-highlight  Selected plan card is one block · Bar, border and…  pinned
-  · load-outline    Outline view · Opening a plan shows…  after card-highlight
-
-
-
-`},
-		// From 60 cells the title is in the card's edge: the compact card is
-		// 3 rows, and the goal fits over it.
-		{78, 13, `  A teammate opens this plan in Rex and sees what the work is and which task …
-╭─[PINNED]─ card-highlight · Selected plan card is one block ────────────────╮
-│ does    Bar, border and fill cover all three rows of the selected card     │
-╰────────────────────────────────────────────────────────────────────────────╯
-TASKS ─────────────────────────────────────────────────────────────── 1/3 done
-  ✔ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
-❯ ▸ card-highlight  Selected plan card is one block · Bar, border and…  pinned
-  · load-outline    Outline view · Opening a plan shows…  after card-highlight`},
-		// Under 30 cells the card is always the strip.
-		{24, 13, `  A teammate opens this…
-
-[PINNED] card-highlight
-
-TASKS ────────────── 1/3
-  ✔ plans-ui Plans navi…
-❯ ▸ card-hi… Selected p…
-  · load-ou… Outline vi…`},
-		{24, 6, `  ✔ plans-ui Plans navi…
-❯ ▸ card-hi… Selected p…
-  · load-ou… Outline vi…`},
-	} {
-		a, _, _ := cujApp(t)
-		a.settle(tc.cols, tc.rows)
-		if got := planBody(a); got != tc.want {
-			t.Errorf("%d×%d:\n%s\nwant\n%s", tc.cols, tc.rows, got, tc.want)
-		}
-	}
-	// A pin with nothing but a title, an agent's first save, says so inside
-	// its box, never an empty one; the compact card's one row is the first
-	// field the pin has.
-	bare := `{"version": 1, "title": "Fresh", "goal": "g", "tasks": [{"id": "a", "title": "First thing", "status": "active"}, {"id": "b", "title": "Second thing", "depends_on": ["a"]}]}`
-	untitled := `{"version": 1, "tasks": [{"id": "a", "status": "active"}, {"id": "b", "title": "B"}]}`
-	verifyOnly := strings.NewReplacer(`"does": ["Bar, border and fill cover all three rows of the selected card"],`, "", `"needs": ["the pick and pickbg colors exist in mascot.UI"],`, "").Replace(string(cujFixture(t)))
-	for _, tc := range []struct {
-		src        string
-		cols, rows int
-		want       string
-	}{
-		{bare, 78, 14, `  g
-
-╭─[PINNED]─ a · First thing ─────────────────────────────────────────────────╮
-│ no does, verify or files yet · the agent adds them                         │
-╰────────────────────────────────────────────────────────────────────────────╯
-
-TASKS ─────────────────────────────────────────────────────────────── 0/2 done
-❯ ▸ a  First thing                                                      pinned
-  · b  Second thing                                                    after a`},
-		{bare, 38, 13, `  g
-╭─[PINNED]─ a ───────────────────────╮
-│ First thing                        │
-│ no does, verify or files yet       │
-╰────────────────────────────────────╯
-TASKS ─────────────────────── 0/2 done
-❯ ▸ a First thing
-  · b Second thing`},
-		// With nothing over the card, its blank row is row 2 (docs/ux.md §4).
-		{untitled, 38, 13, `╭─[PINNED]─ a ───────────────────────╮
-│ no does, verify or files yet       │
-╰────────────────────────────────────╯
-
-TASKS ─────────────────────── 0/2 done
-❯ ▸ a (untitled)
-  ○ b B
-`},
-		{verifyOnly, 38, 13, `╭─[PINNED]─ card-highlight ──────────╮
-│ Selected plan card is one block    │
-│ verify  go test ./internal/tu…  +1 │
-╰────────────────────────────────────╯
-TASKS ─────────────────────── 1/3 done
-  ✔ plans-ui       Plans navigator
-❯ ▸ card-highlight Selected plan card…
-  · load-outline   Outline view`},
-		{verifyOnly, 78, 12, `╭─[PINNED]─ card-highlight · Selected plan card is one block ────────────────╮
-│ verify  go test ./internal/tui -run PlanCardSelection  +1                  │
-╰────────────────────────────────────────────────────────────────────────────╯
-TASKS ─────────────────────────────────────────────────────────────── 1/3 done
-  ✔ plans-ui        Plans navigator · Home cards, folder browser, duplicate n…
-❯ ▸ card-highlight  Selected plan card is one block                     pinned
-  · load-outline    Outline view · Opening a plan shows…  after card-highlight`},
-	} {
-		a, _, _ := openDemo(t, tc.src, tc.cols, tc.rows)
-		if got := planBody(a); got != tc.want {
-			t.Errorf("%d×%d:\n%s\nwant\n%s", tc.cols, tc.rows, got, tc.want)
-		}
-	}
-	// 30 text cells leave the box 26 inside: the hint shrinks, never cut.
-	if n, _, _ := openDemo(t, untitled, 30, 13); !strings.Contains(planBody(n), "│ no details yet ") || strings.Contains(planBody(n), "y…") {
-		t.Errorf("30×13:\n%s", planBody(n))
-	}
-}
-
-// docs/ux.md §4, §6: a plan with no goal, as Rex's own stub and many
-// agents' first saves have, still gets a blank row between the title and
-// the card: row 2, the chrome's own from blankFrom rows, so the head adds
-// none of its own over the card, as About and task detail do. On a short
-// screen the ladder drops the head's other blank rows for the task rows.
-func TestNoGoalKeepsTheTitlesBlankRow(t *testing.T) {
-	src := `{"title": "Cursor-made plan", "status": "active", "tasks": [{"id": "one", "title": "One", "status": "active", "does": ["the work"]}, {"id": "b", "title": "B"}, {"id": "c", "title": "C"}]}`
-	a, _, _ := openDemo(t, src, 120, 32)
-	if body := planBody(a); textOf(a.frameRows().Rows[2], 120) != "" || !strings.HasPrefix(body, "╭─[PINNED]─ one · One ─") || !strings.Contains(body, "╯\n\nTASKS ─") {
-		t.Errorf("120×32: row 2 is the blank row under the title, then the card\n%s", a.frame())
-	}
-	if a.settle(38, 13); !strings.HasPrefix(planBody(a), "╭─[PINNED]─ one ─") || strings.Contains(planBody(a), "\n\n") {
-		t.Errorf("38×13: the ladder drops the blank rows for the task rows\n%s", a.frame())
-	}
-	none, _, _ := openDemo(t, `{"title": "All done", "tasks": [{"id": "a", "title": "A", "status": "done"}]}`, 38, 24)
-	if body := planBody(none); !strings.HasPrefix(body, "  ✔ all tasks done\n\nTASKS ─") {
-		t.Errorf("38×24: the line that stands in for the card gets it too\n%s", body)
-	}
-}
-
-// docs/ux.md §6: whatever the size, the ladder drops head pieces before
-// task rows: at least 3 task rows are in view (5 from 16 rows, or every
-// one of a shorter list), wherever the cursor is, and ↑ more and ↓ more
-// never take one of them, but on the title row, where ↓ more takes the
-// window's last row.
-func TestOutlineKeepsTasks(t *testing.T) {
-	var many []string
-	for i := 1; i <= 40; i++ {
-		many = append(many, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d", "does": ["step %d"]}`, i, i, i))
-	}
-	plans := map[string]string{
-		"cuj":      string(cujFixture(t)),
-		"redesign": redesignPlan,
-		"many":     `{"title": "Big", "goal": "a long list", "tasks": [` + strings.Join(many, ",") + `]}`,
-		// read-only and problems: the ladder's last step drops the warnings.
-		"warned": `{"version": 2, "title": "Warned", "goal": "a goal", "tasks": [{"id": "a", "status": "active", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]},` + strings.Join(many[:6], ",") + `]}`,
-	}
-	for name, src := range plans {
-		for _, cols := range []int{24, 80, 120} {
-			a, _, _ := openDemo(t, src, cols, 24)
-			p := a.doc.plan
-			n := len(outlineRows(p)) - 1
-			for lines := 7; lines <= 30; lines++ {
-				a.settle(cols, lines)
-				for _, sel := range []string{defaultSel(p), "", outlineRows(p)[1], outlineRows(p)[n/2+1], outlineRows(p)[n]} {
-					a.outline.sel = sel
-					opt := a.composeOptions()
-					view, bodyH := opt.PlanView, a.layout().bodyH
-					head := headOf(view)
-					var tasks []LogLine
-					for _, l := range view[head:] {
-						if l.Kind != "idle" { // ↑ more, ↓ more
-							tasks = append(tasks, l)
-						}
-					}
-					want := min(n, 3)
-					if lines >= 16 {
-						want = min(n, 5)
-					}
-					if sel == "" && strings.Contains(viewText(view), "↓ more") {
-						want-- // the title row is selected: ↓ more takes the window's last row
-					}
-					if got := taskRows(tasks); got < want || len(view) > bodyH {
-						t.Errorf("%s %d×%d on %s: %d task rows in view, want %d (%d lines in %d rows)\n%s", name, cols, lines, sel, got, want, len(view), bodyH, a.frame())
-					}
-					if sel != "" && !slices.ContainsFunc(tasks, func(l LogLine) bool { return l.Selected }) {
-						t.Errorf("%s %d×%d: the selected row %s is dropped\n%s", name, cols, lines, sel, a.frame())
-					}
-					if f := a.frameRows(); len(f.Rows) != lines {
-						t.Errorf("%s %d×%d: %d rows", name, cols, lines, len(f.Rows))
-					}
-				}
-			}
-		}
-	}
-}
-
-// docs/ux.md §6: a blank row goes between top-level groups (a parent and
-// the tasks under it) only when the whole list fits; never inside a group.
-func TestOutlineGroupGaps(t *testing.T) {
-	gapBefore := func(body, row string) bool {
-		lines := strings.Split(body, "\n")
-		for i, l := range lines {
-			if strings.HasPrefix(l, row) {
-				return i > 0 && strings.TrimSpace(lines[i-1]) == ""
-			}
-		}
-		t.Fatalf("no row %q\n%s", row, body)
-		return false
-	}
-	for _, size := range [][2]int{{120, 40}, {24, 24}} {
-		a, _, _ := openDemo(t, redesignPlan, size[0], size[1])
-		body := planBody(a)
-		for _, row := range []string{"  · agent-s", "    plan-vi", "  – width-t"} {
-			if !gapBefore(body, row) {
-				t.Errorf("%dx%d: no blank row before %q\n%s", size[0], size[1], row, body)
-			}
-		}
-		for _, row := range []string{"    ✔ tab-bar", "❯   ▸ page-ti", "    · plan-li", "    ! pin-card"} {
-			if gapBefore(body, row) {
-				t.Errorf("%dx%d: a blank row inside a group, before %q\n%s", size[0], size[1], row, body)
-			}
-		}
-	}
-	// The list scrolls at 80×24: no blank rows in it.
-	a, _, _ := openDemo(t, redesignPlan, 80, 24)
-	body := strings.TrimRight(planBody(a), "\n ")
-	list := body[strings.Index(body, "TASKS ─"):]
-	if !strings.Contains(list, "3 of 8") || strings.Contains(list, "\n\n") {
-		t.Errorf("a list that scrolls has no blank rows\n%s", body)
-	}
-}
-
-// docs/ux.md §5, §6: the pin's ▸ and id are the only yellow on the list,
-// in bold, and keep their yellow on the selection's purple; the selection
-// is ❯ and purple, with no fill; parents are bold text; "pinned" tags the
-// pin's row only from 60 cells.
-func TestPinRowStyle(t *testing.T) {
-	for _, cols := range []int{38, 120} {
-		a, _, _ := openDemo(t, redesignPlan, cols, 32)
-		for _, sel := range []string{"page-titles", "agent-stream"} {
-			a.outline.sel = sel
-			view := a.composeOptions().PlanView
-			pins, marks := 0, 0
-			for _, l := range view[headOf(view):] {
-				role := func(s Span) string {
-					if s.Role != "" {
-						return s.Role
-					}
-					return l.Kind
-				}
-				name := strings.Fields(strings.TrimLeft(l.Text, "❯ "))
-				if picked := l.Kind == "pick"; picked != l.Selected || strings.HasPrefix(l.Text, "❯ ") && (!picked || sel != name[1]) {
-					t.Errorf("%d cols: the selection is ❯ and purple: %+v", cols, l)
-				}
-				if strings.HasPrefix(l.Text, "❯ ") {
-					marks++
-				}
-				switch {
-				case len(name) > 1 && name[1] == "page-titles":
-					pins++
-					if len(l.Spans) < 3 || l.Spans[2].Text != "▸ page-titles" || l.Spans[2].Role != "accent" || !l.Spans[2].Bold {
-						t.Errorf("%d cols: the pin's ▸ and id are bold yellow: %+v", cols, l.Spans)
-					}
-					if tagged := strings.HasSuffix(strings.TrimRight(l.Text, " "), "pinned"); tagged != (cols == 120) {
-						t.Errorf("%d cols: pinned tag %v: %q", cols, tagged, l.Text)
-					}
-					continue
-				case len(name) > 0 && (name[0] == "chrome" || name[0] == "plan-views"):
-					if l.Kind != "text" || !l.Spans[2].Bold || role(l.Spans[2]) != "text" || !l.Spans[4].Bold {
-						t.Errorf("%d cols: a parent is bold text: %+v", cols, l)
-					}
-				case len(name) > 1 && name[1] == sel:
-					for _, s := range l.Spans {
-						if role(s) != "pick" && role(s) != "error" {
-							t.Errorf("%d cols: the selected row is purple: %q in %q", cols, s.Text, l.Text)
-						}
-					}
-				}
-				if l.Kind == "title" || l.Kind == "accent" {
-					t.Errorf("%d cols: only the pin is yellow: %+v", cols, l)
-				}
-				for _, s := range l.Spans {
-					if role(s) == "title" || role(s) == "accent" {
-						t.Errorf("%d cols: only the pin is yellow: %q in %q", cols, s.Text, l.Text)
-					}
-				}
-			}
-			if pins != 1 || marks != 1 {
-				t.Errorf("%d cols: %d pin rows, %d ❯", cols, pins, marks)
-			}
-		}
-	}
-}
-
-// docs/ux.md §5, §6, §7: with no task active the pin is worked out: the
-// card says [NEXT UP], muted in a slate box, row 1 says (next up), and the
-// pin's row is tagged next up, muted; none of it is yellow, which is the
-// agent's pin's: [PINNED] and its box.
-func TestNextUpBadge(t *testing.T) {
-	planned := strings.Replace(demoPlan, `"status": "active",
-      "depends_on": ["plans-ui"],`, `"status": "pending",
-      "depends_on": ["plans-ui"],`, 1)
-	a, c, path := openDemo(t, planned, 120, 32)
-	frame := a.frame()
-	if !strings.Contains(frame, "╭─[NEXT UP]─ card-highlight · Selected plan card is one block ─") || !strings.Contains(frame, "next up") || a.statusLine().Text != "nothing pinned · next up card-highlight · Selected plan card is one block" {
-		t.Fatalf("%q\n%s", a.statusLine().Text, frame)
-	}
-	badge := func() []Span {
-		for _, l := range a.composeOptions().PlanView {
-			if strings.HasPrefix(l.Text, "╭─[") {
-				return l.Spans[1:4]
-			}
-		}
-		t.Fatal("no card")
-		return nil
-	}
-	if b := badge(); b[1].Text != "NEXT UP" || b[1].Role != "muted" || b[0].Role != "muted" || !b[1].Bold {
-		t.Fatalf("[NEXT UP] is muted: %+v", b)
-	}
-	if spans := a.statusLine().Spans(a.statusLine().Text); slices.ContainsFunc(spans, func(s Span) bool { return s.Role == "accent" }) {
-		t.Fatalf("row 1's next up is not the pin's yellow: %+v", spans)
-	}
-	// Row 1's "next up" would satisfy a frame-wide look, so the row's
-	// own tag is checked on the row: muted from 60 cells, none under.
-	pinRow := func(a *app) (LogLine, bool) {
-		view := a.composeOptions().PlanView
-		for _, l := range view[headOf(view):] {
-			if strings.HasPrefix(strings.TrimLeft(l.Text, "❯ "), "▸ card-highlight") {
-				return l, true
-			}
-		}
-		return LogLine{}, false
-	}
-	if l, ok := pinRow(a); !ok || len(l.Spans) == 0 || l.Spans[len(l.Spans)-1].Text != "next up" || slices.ContainsFunc(l.Spans, func(s Span) bool { return s.Role == "accent" }) {
-		t.Fatalf("the pin's row is tagged next up, never yellow: %+v\n%s", l, frame)
-	}
-	narrow, _, _ := openDemo(t, planned, 38, 32)
-	if l, ok := pinRow(narrow); !ok || strings.HasSuffix(strings.TrimRight(l.Text, " "), "next up") {
-		t.Fatalf("38 cols: the pin's row has no tag under 60 cells: %+v\n%s", l, narrow.frame())
-	}
-	os.WriteFile(path, []byte(demoPlan), 0o644)
-	later(a, c)
-	if b := badge(); b[1].Text != "PINNED" || b[1].Role != "accent" || b[0].Role != "accent" || !strings.Contains(a.frame(), "╭─[PINNED]─ card-highlight") {
-		t.Fatalf("[PINNED] is yellow: %+v\n%s", b, a.frame())
-	}
-	if a.enabled = true; !strings.Contains(stripSGR(a.frame()), "[PINNED]") {
-		t.Fatal("color never changes the characters: the brackets are painted, not dropped")
-	}
-}
-
-// docs/ux.md §6: task detail runs DOES, VERIFY, FILES and CONTEXT under
-// the pin's status line, and SO FAR for what a task not done yet says it
-// did; a done task leads with DONE, then INTENDED; About has GOAL, SCOPE,
-// STACK and DONE, the send-off's Done kept in the plan, its count saying
-// how many finished tasks were skipped.
-func TestDetailSections(t *testing.T) {
-	a, _, _ := openDemo(t, redesignPlan, 120, 40)
-	order := func(text string, h2s ...string) {
-		t.Helper()
-		at := -1
-		for _, h := range h2s {
-			i := strings.Index(text, "\n"+h+" ─")
-			if i <= at {
-				t.Fatalf("%s out of order in\n%s", h, text)
-			}
-			at = i
-		}
-	}
-	detail := func(key string) string {
-		return viewText(taskDetail(a.doc, key, 78, true))
-	}
-	// A detail's state is row 0's meta and where it is row 1 (docs/ux.md
-	// §4); its body leads with its title.
-	state := func(key string) string {
-		p := a.doc.plan
-		g := p.Graph()
-		word, _ := taskWord(findTask(p, key), g, g.Pin())
-		return word + " · " + taskPlace(p, key)
-	}
-	pin := detail("page-titles")
-	order(pin, "DOES", "VERIFY", "FILES", "CONTEXT")
-	if got := state("page-titles"); got != "pinned · task 3 of 8 · under chrome" || !strings.HasPrefix(pin, "  Page titles and footer keys\n") {
-		t.Errorf("the pin's state %q\n%s", got, pin)
-	}
-	for _, want := range []string{"VERIFY ─", "─ 2\n", "─ 3\n", "  • go test ./internal/tui -run PageTitle", "  internal/tui/outline.go\n",
-		"  needs   the tab bar on row 0", "  after   ✔ tab-bar  Two tabs on row 0, the active one filled", "  then    · agent-stream  Fold runs of thoughts", "  under   chrome  Chrome: tabs, page titles, keys", "  branch  feature/page_titles"} {
-		if !strings.Contains(pin, want) {
-			t.Errorf("the pin's detail has %q\n%s", want, pin)
-		}
-	}
-	done := detail("tab-bar")
-	order(done, "DONE", "INTENDED", "CONTEXT")
-	if got := state("tab-bar"); got != "done · task 2 of 8 · under chrome" {
-		t.Errorf("a done task's state %q", got)
-	}
-	for _, want := range []string{"  did      Two tabs on row 0, the active one filled", "  changed  internal/tui/chrome.go", "  checked  go test ./internal/tui -run TabBar", "  notes    the cue cell is fixed width", "  does     Both tabs on row 0", "  then     ▸ page-titles  Page titles and footer keys"} {
-		if !strings.Contains(done, want) {
-			t.Errorf("a done task's detail has %q\n%s", want, done)
-		}
-	}
-	for key, want := range map[string]string{
-		"agent-stream": "waiting · task 4 of 8",
-		"pin-card":     "blocked · task 7 of 8 · under plan-views",
-		"width-table":  "skipped · task 8 of 8",
-		"chrome":       "1/2 done · task 1 of 8",
-	} {
-		if got := state(key); got != want {
-			t.Errorf("%s's state is %q, want %q", key, got, want)
-		}
-	}
-	// About's title, status, progress and path are rows 0 and 1; its body
-	// starts with its sections.
-	about := viewText(planDetail(a.doc, 78, true))
-	order("\n"+about, "GOAL", "SCOPE", "STACK", "DONE")
-	press(a, "home", "\r")
-	if r := a.frameRows().Rows; textOf(r[0], 120) != sides("Rex visual redesign › About", "active · 2/6 done   plan · agent", 78) || textOf(r[1], 120) != "rex/plans/cuj/demo.rex.json" {
-		t.Errorf("About's rows 0 and 1: %q / %q", textOf(r[0], 120), textOf(r[1], 120))
-	}
-	if !strings.HasPrefix(about, "GOAL ─") || strings.Contains(about, "Rex visual redesign") || strings.Contains(about, "━") {
-		t.Errorf("About's body starts with its sections\n%s", about)
-	}
-	for _, want := range []string{"  in   • chrome\n       • outline\n  out  • extra palettes\n", "  base    dev", "─ 1 · 1 skipped\n  ✔ tab-bar  Two tabs on row 0, the active one filled"} {
-		if !strings.Contains(about, want) {
-			t.Errorf("About has %q\n%s", want, about)
-		}
-	}
-	// A task the agent has not set done yet, with completion fields: what
-	// it did so far, never DONE.
-	sofar, _, _ := openDemo(t, `{"tasks": [{"id": "a", "title": "A", "status": "active", "does": ["the work"], "accomplished": ["half of it"], "verified_how": ["ran it once"]}]}`, 120, 40)
-	if got := viewText(taskDetail(sofar.doc, "a", 78, true)); !strings.Contains(got, "\nSO FAR ─") || strings.Contains(got, "\nDONE ─") ||
-		!strings.Contains(got, "  did      half of it") || !strings.Contains(got, "  checked  ran it once") {
-		t.Errorf("an active task's completion fields are SO FAR\n%s", got)
-	} else {
-		order(got, "DOES", "SO FAR")
-	}
-	// A next up pin's status says so; under 16 rows details have no blank
-	// rows (docs/ux.md §12).
-	next, _, _ := openDemo(t, strings.Replace(demoPlan, `"status": "active",
-      "depends_on"`, `"status": "pending",
-      "depends_on"`, 1), 80, 12)
-	got := viewText(taskDetail(next.doc, "card-highlight", 38, false))
-	if word, _ := taskWord(next.doc.plan.Task("card-highlight"), next.doc.plan.Graph(), next.doc.plan.Graph().Pin()); word != "next up" || !strings.HasPrefix(got, "  Selected plan card is one block\n") || strings.Contains(got, "\n\n") {
-		t.Fatalf("%s: %s", word, got)
-	}
-}
-
-// docs/ux.md §3, §6: PgUp and PgDn move the selection by the task rows the
-// window shows under the card, so the first page, from the pin or the
-// title row, lands on the first task below the window and no page skips
-// a task the window never showed.
-func TestOutlinePagesByItsWindow(t *testing.T) {
-	tasks := []string{`{"id": "t00", "title": "Task 0", "status": "active", "depends_on": ["d"], "needs": ["a need"],
-		"does": ["one thing", "another thing that runs long enough to wrap"], "verify": ["check one", "check two"], "files": ["internal/tui/outline.go"]}`}
-	for i := 1; i < 40; i++ {
-		tasks = append(tasks, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d"}`, i, i))
-	}
-	tasks = append(tasks, `{"id": "d", "title": "Done", "status": "done", "accomplished": ["the base"]}`)
-	src := `{"title": "Big", "tasks": [` + strings.Join(tasks, ",") + `]}`
-	// shown is where in outlineRows the window's task rows are.
-	shown := func(a *app) []int {
-		view := a.composeOptions().PlanView
-		list := view[headOf(view):]
-		var at []int
-		for i, l := range list {
-			if l.Kind == "gap" || l.Kind == "idle" || (l.Selected && i > 0 && list[i-1].Selected) {
-				continue
-			}
-			at = append(at, slices.Index(outlineRows(a.doc.plan), strings.Fields(strings.TrimLeft(l.Text, "❯ "))[1]))
-		}
-		return at
-	}
-	for _, cols := range []int{80, 120} {
-		a, _, _ := openDemo(t, src, cols, 24)
-		rows := outlineRows(a.doc.plan)
-		win := shown(a)
-		if body := planBody(a); a.outline.sel != "t00" || win[0] != 1 || !strings.Contains(body, "│ done") {
-			t.Fatalf("%d cols: the whole card over the list's top, sel %q\n%s", cols, a.outline.sel, body)
-		}
-		seen := map[int]bool{}
-		for n := 0; a.outline.sel != rows[len(rows)-1]; n++ {
-			for _, i := range win {
-				seen[i] = true
-			}
-			press(a, "pagedown")
-			next := shown(a)
-			if n == 0 && a.outline.sel != rows[win[len(win)-1]+1] {
-				t.Errorf("%d cols: the first page lands on %s, the first task under %v", cols, a.outline.sel, win)
-			}
-			if next[0] > win[len(win)-1]+1 || n > len(rows) {
-				t.Fatalf("%d cols: a page skipped from %v to %v", cols, win, next)
-			}
-			win = next
-		}
-		for a.outline.sel != "" {
-			for _, i := range win {
-				seen[i] = true
-			}
-			press(a, "pageup")
-			next := shown(a)
-			if next[len(next)-1] < win[0]-1 {
-				t.Fatalf("%d cols: a page up skipped from %v to %v", cols, win, next)
-			}
-			win = next
-		}
-		if len(seen) != len(rows)-1 {
-			t.Errorf("%d cols: paging showed %d of %d tasks", cols, len(seen), len(rows)-1)
-		}
-	}
-	// From the title row, above the window, a page lands on the first task
-	// under the window too.
-	for _, size := range [][2]int{{80, 12}, {80, 24}, {120, 12}, {80, 7}} {
-		a, _, _ := openDemo(t, src, size[0], size[1])
-		rows := outlineRows(a.doc.plan)
-		press(a, "home")
-		win := shown(a)
-		if press(a, "pagedown"); win[0] != 1 || a.outline.sel != rows[win[len(win)-1]+1] {
-			t.Errorf("%d×%d: PgDn from the title row lands on %s, the window held %v", size[0], size[1], a.outline.sel, win)
-		}
-	}
-	// From the middle of the window, under 60 cells, where a selection gets
-	// a blurb row: PgDn from t09 lands on t12, just under the window's last
-	// task, t11, where a step of the window's size went past it.
-	mid := []string{`{"id": "t00", "title": "Task 0"}`}
-	for i := 1; i < 43; i++ {
-		switch {
-		case i == 8:
-			mid = append(mid, `{"id": "t08", "title": "Task 8", "status": "active", "verify": ["go test ./a", "go test ./b"]}`)
-		case i%9 == 8:
-			mid = append(mid, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d", "does": ["do it"]}`, i, i))
-		case i%7 == 0:
-			mid = append(mid, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d", "status": "done", "accomplished": ["did it"]}`, i, i))
-		default:
-			mid = append(mid, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d"}`, i, i))
-		}
-	}
-	src = `{"title": "Paging", "tasks": [` + strings.Join(mid, ",") + `]}`
-	a, _, _ := openDemo(t, src, 50, 22)
-	press(a, "down")
-	if win := shown(a); a.outline.sel != "t09" || win[len(win)-1] != 12 {
-		t.Fatalf("50×22: the cursor on t09 with t11 last in the window, got %q %v", a.outline.sel, win)
-	}
-	if press(a, "pagedown"); a.outline.sel != "t12" {
-		t.Errorf("50×22: PgDn from t09 lands on t12, just under the window, not %s", a.outline.sel)
-	}
-	// A bounded walk: from every row, reached with ↓ from the top and with
-	// ↑ from the bottom (each frame drawn, as the live loop draws them),
-	// PgDn lands just past the window's last task and PgUp just before its
-	// first, so neither skips a task the window didn't show.
-	for _, size := range [][2]int{{50, 22}, {34, 34}, {50, 12}, {40, 16}, {58, 24}} {
-		a, _, _ := openDemo(t, src, size[0], size[1])
-		rows := outlineRows(a.doc.plan)
-		check := func() {
-			win := shown(a)
-			at := a.outline
-			first, last := win[0], win[len(win)-1]
-			press(a, "pagedown")
-			if next := shown(a); a.outline.sel != rows[min(len(rows)-1, last+1)] || next[0] > last+1 {
-				t.Fatalf("%v: PgDn from %q with %v in the window lands on %q, showing %v", size, at.sel, win, a.outline.sel, next)
-			}
-			a.outline = at
-			shown(a)
-			press(a, "pageup")
-			if next := shown(a); a.outline.sel != rows[max(0, first-1)] || first > 1 && next[len(next)-1] < first-1 {
-				t.Fatalf("%v: PgUp from %q with %v in the window lands on %q, showing %v", size, at.sel, win, a.outline.sel, next)
-			}
-			a.outline = at
-			shown(a)
-		}
-		press(a, "home")
-		for range rows {
-			check()
-			press(a, "down")
-		}
-		for range rows {
-			check()
-			press(a, "up")
-		}
-	}
-}
-
-// docs/ux.md §6: a value keeps the file's line breaks, so a description's
-// paragraphs and lists, notes and the goal read as written; a capped field
-// takes the rest into its last row, cut with "…".
+// docs/ux.md §6: a value keeps the file's line breaks, each line starting
+// a row that hangs in the value column; but a field of the pin note shows
+// as the note sends it, on one line, as the note folds it.
 func TestDetailsKeepLineBreaks(t *testing.T) {
 	p, err := plan.Parse([]byte(`{"title": "T", "goal": "Goal line one.\nGoal line two.", "tasks": [
 		{"id": "a", "title": "A", "description": "para one.\n\n- item\n- item two", "needs": ["one\ntwo\nthree four five six seven eight nine ten eleven twelve"]},
@@ -1621,237 +1510,34 @@ func TestDetailsKeepLineBreaks(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := &planDoc{path: "rex/plans/x.rex.json", plan: p}
-	trim := regexp.MustCompile(` +\n`)
-	text := func(lines []LogLine) string { return trim.ReplaceAllString(viewText(lines), "\n") }
-	a := text(taskDetail(d, "a", 60, false))
-	for _, want := range []string{"─\n  para one.\n  - item\n  - item two\n", "\n  needs   one\n          two three four five six seven eight nine ten elev…\n"} {
+	text := func(lines []LogLine) string { return trimmed(viewText(lines)) + "\n" }
+	a := text(taskPage(d, "rex/plans/x.rex.json", "a", 60))
+	for _, want := range []string{"\n  Description   para one. - item - item two\n", "\n  Needs         one two three four five six seven eight\n                nine ten eleven twelve\n"} {
 		if !strings.Contains(a, want) {
-			t.Errorf("task detail has %q\n%s", want, a)
+			t.Errorf("details have %q\n%s", want, a)
 		}
 	}
-	if b := text(taskDetail(d, "b", 60, false)); !strings.Contains(b, "\n  notes   note one.\n          note two.\n") {
+	if b := text(taskPage(d, "rex/plans/x.rex.json", "b", 60)); !strings.Contains(b, "\n  Notes         note one.\n                note two.\n") {
 		t.Errorf("notes keep their paragraphs\n%s", b)
 	}
-	if about := text(planDetail(d, 60, false)); !strings.Contains(about, "─\n  Goal line one.\n  Goal line two.\n") {
+	if about := text(aboutPage(d, 60)); !strings.HasPrefix(about, "  Goal          Goal line one.\n                Goal line two.\n") {
 		t.Errorf("the goal keeps its lines\n%s", about)
 	}
 }
 
-// docs/ux.md §6, §11: the card's done row is what the pin builds on: its
-// last done dependency, said what it accomplished or not, not the plan's
-// last done task, which stands in only when the pin depends on nothing
-// done; the plan list's accordion names the same task. With nothing done
-// there is no done row. verify takes 2 rows at most, then +N, as files
-// does; a long id keeps the title inside the box.
-func TestCardFields(t *testing.T) {
-	a, _, _ := openDemo(t, `{"tasks": [
-		{"id": "x", "title": "X", "status": "done", "accomplished": ["built x"]},
-		{"id": "y", "title": "Y", "status": "done", "accomplished": ["built y"]},
-		{"id": "pin", "title": "Pin", "status": "active", "depends_on": ["x"], "does": ["the work"], "verify": ["check one", "check two", "check three"]}]}`, 120, 32)
-	if body := planBody(a); !strings.Contains(body, "│ done    ✔ x  built x") || strings.Contains(body, "✔ y  built y") ||
-		!strings.Contains(body, "│ verify  check one ") || !strings.Contains(body, "│         check two  +1 ") || strings.Contains(body, "check three") {
-		t.Errorf("the pin builds on x; two verify rows, then how many more\n%s", body)
-	}
-	// The done dependency names what the pin builds on even before it says
-	// what it accomplished, never an unrelated task done later.
-	early, _, _ := openDemo(t, `{"tasks": [
-		{"id": "x", "title": "Schema migration", "status": "done"},
-		{"id": "y", "title": "Unrelated docs", "status": "done", "accomplished": ["fixed README typos"]},
-		{"id": "pin", "title": "Pin", "status": "active", "depends_on": ["x"], "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(early); !strings.Contains(body, "│ done    ✔ x  Schema migration ") || strings.Contains(body, "│ done    ✔ y") {
-		t.Errorf("the pin builds on x, done without accomplished yet\n%s", body)
-	}
-	// The card and the plan list's accordion name the same task: the pin's
-	// done dependency, though another task is done later in the file.
-	same, _, _ := openDemo(t, `{"tasks": [
-		{"id": "x", "title": "X", "status": "done", "accomplished": ["built x"]},
-		{"id": "y", "title": "Y", "status": "done", "accomplished": ["built y"]},
-		{"id": "pin", "title": "Pin", "status": "active", "depends_on": ["x"], "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(same); !strings.Contains(body, "│ done    ✔ x  built x ") {
-		t.Errorf("the card names x\n%s", body)
-	}
-	press(same, "esc")
-	if row := same.plans.Rows[same.plans.Cursor]; row.Group != groupOpen {
-		t.Fatalf("cursor on %+v", row)
-	}
-	if body := planBody(same); !strings.Contains(body, "done    ✔ x  built x") || strings.Contains(body, "✔ y") {
-		t.Errorf("OPEN's accordion names x, as the card does\n%s", body)
-	}
-	b, _, _ := openDemo(t, `{"tasks": [{"id": "x", "title": "X", "status": "done"}, {"id": "y", "title": "Y", "status": "active", "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(b); !strings.Contains(body, "│ done    ✔ x  X") {
-		t.Errorf("no done dependency: the plan's last done task\n%s", body)
-	}
-	c, _, _ := openDemo(t, `{"tasks": [{"id": "pin", "title": "Pin", "status": "active", "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(c); strings.Contains(body, "│ done") || !strings.Contains(body, "│ does    the work") {
-		t.Errorf("nothing done, no done row\n%s", body)
-	}
-	// A parent's done is only a label: depending on one names the plan's
-	// last done task, as About's DONE and the plan list do.
-	parent, _, _ := openDemo(t, `{"tasks": [
-		{"id": "p", "title": "P", "status": "done", "accomplished": ["parent acc"]},
-		{"id": "k", "title": "K", "parent": "p", "status": "done", "accomplished": ["kid acc"]},
-		{"id": "z", "title": "Z", "status": "active", "depends_on": ["p"], "does": ["the work"]}]}`, 120, 32)
-	if body := planBody(parent); !strings.Contains(body, "│ done    ✔ k  kid acc") || strings.Contains(body, "✔ p") {
-		t.Errorf("a parent dependency falls through to the last done leaf\n%s", body)
-	}
-	long, _, _ := openDemo(t, `{"tasks": [{"id": "a-really-long-task-identifier-that-overflows", "title": "Short title", "status": "active", "does": ["x"]}]}`, 60, 32)
-	if body := planBody(long); !strings.Contains(body, "╭─[PINNED]─ a-really-long-task-identifier-that-overflows ─") || !strings.Contains(body, "\n│ Short title ") {
-		t.Errorf("a long id leaves the title to a row inside\n%s", body)
-	}
-	// files keeps its count when even the first name doesn't fit.
-	for _, tc := range []struct {
-		files []string
-		room  int
-		want  string
-	}{
-		{[]string{"internal/tui/session_handler_impl.go", "a.go", "b.go"}, 18, "session_handl…  +2"},
-		{[]string{"internal/tui/session_handler_impl.go"}, 18, "session_handler_impl.go"},
-		{[]string{"internal/tui/plans.go", "internal/tui/live.go", "internal/tui/plans_test.go"}, 26, "plans.go  live.go  +1"},
-	} {
-		if got := filesLine(tc.files, tc.room); got != tc.want || (len(tc.files) > 1 && cellLen(got) > tc.room) {
-			t.Errorf("filesLine(%q, %d) = %q, want %q", tc.files, tc.room, got, tc.want)
-		}
-	}
-	narrow, _, _ := openDemo(t, `{"tasks": [{"id": "a", "title": "A", "status": "active", "files": ["internal/tui/session_handler_impl.go", "a.go", "b.go"]}]}`, 30, 24)
-	if body := planBody(narrow); !strings.Contains(body, "│ files   session_handl…  +2 │") {
-		t.Errorf("a 30-cell card keeps +2\n%s", body)
-	}
-}
-
-// docs/ux.md §5, §6: the agent's pin's card is in the pin's yellow, its
-// box and its id (bold), its title a bright bold title, its done row
-// quiet with ✔ green; ✔ and – rows, parents' rollups and waits are muted,
-// the pinned tag yellow, a blocked row text with its tag muted at every
-// width (red is only an error), the goal quiet; the details' titles are
-// bright and bold.
-func TestCardStyle(t *testing.T) {
-	role := func(l LogLine, s Span) string {
-		if s.Role != "" {
-			return s.Role
-		}
-		return l.Kind
-	}
-	span := func(l LogLine, text string) (Span, bool) {
-		for _, s := range l.Spans {
-			if strings.TrimSpace(s.Text) == text {
-				return s, true
-			}
-		}
-		return Span{}, false
-	}
-	for _, cols := range []int{80, 120} {
-		a, _, _ := openDemo(t, redesignPlan, cols, 32)
-		view := a.composeOptions().PlanView
-		head := headOf(view)
-		found := map[string]bool{}
-		for i, l := range view {
-			text := strings.TrimRight(l.Text, " ")
-			if i < head && strings.ContainsAny(text, "╭│╰") {
-				for _, s := range l.Spans {
-					if strings.ContainsAny(s.Text, "╭╮│╰╯─") && role(l, s) != "accent" {
-						t.Errorf("%d cols: the card's edge is yellow: %q in %q", cols, s.Text, text)
-					}
-				}
-				if s, ok := span(l, "page-titles"); ok && (s.Role != "accent" || !s.Bold) {
-					t.Errorf("%d cols: the card's id is bold yellow: %+v", cols, s)
-				}
-				if s, ok := span(l, "Page titles and footer keys"); ok {
-					found["title"] = true
-					if !s.Bold || role(l, s) != "title" {
-						t.Errorf("%d cols: the card's title is a bold title: %+v", cols, s)
-					}
-				}
-				if strings.HasPrefix(text, "│ done") {
-					found["done"] = true
-					if k := slices.IndexFunc(l.Spans, func(s Span) bool { return strings.HasPrefix(s.Text, "✔ tab-bar") }); k < 0 || role(l, l.Spans[k]) != "muted" {
-						t.Errorf("%d cols: the done row is quiet: %+v", cols, l.Spans)
-					}
-				}
-				continue
-			}
-			if strings.HasPrefix(text, "  A newcomer") {
-				found["goal"] = true
-				if l.Kind != "muted" {
-					t.Errorf("%d cols: the goal is quiet: %+v", cols, l)
-				}
-			}
-			if i < head {
-				continue
-			}
-			name := strings.Fields(strings.TrimLeft(text, "❯ "))
-			if len(name) < 2 {
-				continue
-			}
-			last := l.Spans[len(l.Spans)-1]
-			switch id := name[1]; {
-			case id == "tab-bar" || id == "width-table":
-				found[id] = true
-				if l.Kind != "muted" || slices.ContainsFunc(l.Spans, func(s Span) bool { return role(l, s) != "muted" }) {
-					t.Errorf("%d cols: done and skipped rows are quiet: %+v", cols, l)
-				}
-			case name[0] == "chrome":
-				found["rollup"] = true
-				if last.Text != "1/2" || role(l, last) != "muted" {
-					t.Errorf("%d cols: a parent's rollup is muted: %+v", cols, last)
-				}
-			case id == "agent-stream" && cols == 120:
-				found["after"] = true
-				if last.Text != "after page-titles" || role(l, last) != "muted" {
-					t.Errorf("%d cols: a wait is muted: %+v", cols, last)
-				}
-			case id == "pin-card":
-				found["blocked"] = true
-				if l.Kind != "text" || last.Text != "blocked" || role(l, last) != "muted" {
-					t.Errorf("%d cols: a blocked row is text and tagged at every width: %+v", cols, l)
-				}
-			case id == "page-titles" && cols == 120:
-				found["pinned"] = true
-				if last.Text != "pinned" || role(l, last) != "accent" {
-					t.Errorf("%d cols: the pinned tag is yellow: %+v", cols, last)
-				}
-			}
-		}
-		for _, k := range []string{"title", "done", "goal", "tab-bar", "width-table", "rollup", "blocked"} {
-			if !found[k] {
-				t.Errorf("%d cols: no %s row\n%s", cols, k, a.frame())
-			}
-		}
-		if cols == 120 && (!found["after"] || !found["pinned"]) {
-			t.Errorf("%d cols: no tags\n%s", cols, a.frame())
-		}
-	}
-	a, _, _ := openDemo(t, redesignPlan, 120, 40)
-	for _, tc := range []struct {
-		lines []LogLine
-		title string
-	}{
-		{taskDetail(a.doc, "page-titles", 78, true), "Page titles and footer keys"},
-		{taskDetail(a.doc, "tab-bar", 78, true), "Tab bar on row 0"},
-		// About's title is row 0's current crumb (docs/ux.md §4).
-	} {
-		i := slices.IndexFunc(tc.lines, func(l LogLine) bool { return strings.TrimSpace(l.Text) == tc.title })
-		if i < 0 {
-			t.Fatalf("no title %q\n%s", tc.title, viewText(tc.lines))
-		}
-		if s, _ := span(tc.lines[i], tc.title); !s.Bold || role(tc.lines[i], s) != "title" {
-			t.Errorf("a detail's title is a bold title: %+v", tc.lines[i])
-		}
-	}
-}
-
 // docs/ux.md §6: a plan's text can be as long as a plan file (4 MB): the
-// outline, task detail and About lay out in time linear in it, never
+// task list, task details and About lay out in time linear in it, never
 // quadratic, so an agent that pastes a log into a description never
 // freezes Rex.
 func TestLongPlanTextLaysOutFast(t *testing.T) {
 	long := strings.Repeat("word ", 2<<20/5)
-	for _, field := range []string{"description", "does", "verify", "goal"} {
+	for _, field := range []string{"description", "does", "verify", "goal", "title"} {
 		task := map[string]any{"id": "a", "title": "A", "status": "active"}
 		doc := map[string]any{"title": "P", "tasks": []any{task, map[string]any{"id": "b", "title": "B"}}}
 		switch field {
 		case "goal":
 			doc["goal"] = long
-		case "description":
+		case "description", "title":
 			task[field] = long
 		default:
 			task[field] = []string{long}
@@ -1861,7 +1547,7 @@ func TestLongPlanTextLaysOutFast(t *testing.T) {
 		if a.doc.plan == nil {
 			t.Fatalf("2 MB %s: %s", field, a.doc.err)
 		}
-		for _, screen := range [][]string{nil, {"\r"}, {"esc", "home", "\r"}, {"esc", "end"}} {
+		for _, screen := range [][]string{nil, {"\r"}, {"pagedown", "end"}, {"esc", "i"}, {"esc", "end"}} {
 			press(a, screen...)
 			start := time.Now()
 			a.frameRows()
@@ -1880,12 +1566,13 @@ func TestLongPlanTextLaysOutFast(t *testing.T) {
 	}
 }
 
-// docs/ux.md §6: an outline frame costs the rows it shows, not the text
-// behind them, and the live loop draws one on every sprite change. The
-// PINNED card's files row reads only the files it can show, so a pin
-// listing 100k of them draws at once; 1200 tasks with 600-byte titles and
-// descriptions lay out and page in a few milliseconds here, held to a
-// bound loose enough for a slow CI runner.
+// docs/ux.md §6: a task list frame costs the rows it shows, not the text
+// behind them, and the live loop draws one on every sprite change: 1200
+// tasks with 600-byte titles and descriptions lay out and page in a few
+// milliseconds here. A pin listing 50k files shows the note's first
+// four; a done task listing them lays its details out once, and the
+// frames that follow, and its scroll, cost only the rows they show.
+// The bounds are loose enough for a slow CI runner.
 func TestBigPlansLayOutFast(t *testing.T) {
 	frame := func(a *app) time.Duration {
 		best := time.Hour
@@ -1897,13 +1584,28 @@ func TestBigPlansLayOutFast(t *testing.T) {
 		return best
 	}
 	var files []string
-	for i := 0; i < 100_000; i++ {
+	for i := 0; i < 50_000; i++ { // twice, in a plan under 4 MB
 		files = append(files, fmt.Sprintf("internal/pkg%d/file_%d.go", i%50, i))
 	}
-	src, _ := json.Marshal(map[string]any{"title": "P", "tasks": []any{map[string]any{"id": "a", "title": "A", "status": "active", "files": files}}})
+	src, _ := json.Marshal(map[string]any{"title": "P", "tasks": []any{map[string]any{"id": "a", "title": "A", "status": "active", "files": files}, map[string]any{"id": "b", "title": "B", "status": "done", "files": files}}})
 	a, _, _ := openDemo(t, string(src), 120, 40)
-	if took, body := frame(a), planBody(a); took > 250*time.Millisecond || !strings.Contains(body, "│ files   file_0.go  file_1.go  ") || !strings.Contains(body, "  +999") {
-		t.Errorf("a pin listing 100k files: a frame takes %v\n%s", took, body)
+	if took, body := frame(a), planBody(a); took > 250*time.Millisecond || !strings.Contains(body, "❯   a ") {
+		t.Errorf("a pin listing 50k files: a list frame takes %v\n%s", took, body)
+	}
+	press(a, "\r")
+	if took, body := frame(a), planBody(a); took > 250*time.Millisecond || !strings.Contains(body, "                (+49996 more in the file)") {
+		t.Errorf("its details, the note's first files: a frame takes %v\n%s", took, body)
+	}
+	// A done task's details list every file it planned.
+	press(a, "esc", "down", "\r")
+	start := time.Now()
+	a.frameRows()
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("a done task's details lay out in %v", took)
+	}
+	press(a, "pagedown", "end")
+	if took, body := frame(a), planBody(a); took > 250*time.Millisecond || !strings.Contains(body, "internal/pkg49/file_49999.go") || a.composeOptions().More == "" {
+		t.Errorf("a frame of its details takes %v once laid out\n%s", took, body)
 	}
 	long := func(i, n int) string {
 		w := fmt.Sprintf("word%d ", i)
@@ -1952,56 +1654,10 @@ func TestFlatHeadCutsAsTheWhole(t *testing.T) {
 	}
 }
 
-// filesLine's one pass picks what trying every count of names would: the
-// paths when they all fit, else the most names that fit beside their +N.
-func TestFilesLineIsTheLongestThatFits(t *testing.T) {
-	every := func(files []string, room int) string {
-		var paths, names []string
-		for _, f := range files {
-			paths = append(paths, flat(f))
-			name := filepath.Base(flat(f))
-			if strings.ContainsAny(name, "*?[") {
-				name = flat(f)
-			}
-			names = append(names, name)
-		}
-		if s := strings.Join(paths, "  "); cellLen(s) <= room {
-			return s
-		}
-		for k := len(names); k > 0; k-- {
-			s := strings.Join(names[:k], "  ")
-			if k < len(names) {
-				s += fmt.Sprintf("  +%d", len(names)-k)
-			}
-			if cellLen(s) <= room {
-				return s
-			}
-		}
-		if len(names) == 1 {
-			return names[0]
-		}
-		more := fmt.Sprintf("  +%d", len(names)-1)
-		return ellipsis(names[0], room-cellLen(more)) + more
-	}
-	var files []string
-	for i := 0; i < 14; i++ {
-		files = append(files, fmt.Sprintf("dir%d/%s.go", i, strings.Repeat("n", i%5+1)))
-	}
-	files = append(files, "internal/**/*.go", "a.go", "b", "漢字/漢.go")
-	for n := 1; n <= len(files); n++ {
-		for room := 1; room < 80; room++ {
-			if got, want := filesLine(files[:n], room), every(files[:n], room); got != want {
-				t.Errorf("filesLine(%d files, %d) = %q, want %q", n, room, got, want)
-			}
-		}
-	}
-}
-
-// docs/ux.md §4, §6: the outline's body is the outline, even when nothing
-// of it fits: an empty read-only plan with problems at 7 rows keeps the
-// first rows of its warning, and the plan list never shows through under
-// the outline's title. Read-only is the notice's, which takes row 1 under
-// blankFrom rows.
+// docs/ux.md §4, §6: the task list's body is its own, even when nothing
+// of it fits: an empty read-only plan at 7 rows says what happens next,
+// and the plan list never shows through under the plan's title.
+// Read-only is the notice's, which takes row 1 under blankFrom rows.
 func TestOutlineNeverDrawsThePlanList(t *testing.T) {
 	for _, src := range []string{
 		`{"version": 2, "title": "Newer", "goal": "a goal", "tasks": []}`,
@@ -2013,204 +1669,13 @@ func TestOutlineNeverDrawsThePlanList(t *testing.T) {
 		for _, size := range [][2]int{{80, 7}, {120, 7}, {24, 7}, {80, 8}} {
 			a, _, _ := openDemo(t, src, size[0], size[1])
 			body := planBody(a)
-			if strings.Contains(body, "cuj/demo") || strings.Contains(body, "no tasks yet · the") || strings.Contains(body, "OPEN ─") || strings.TrimSpace(body) == "" {
-				t.Errorf("%v: the outline's body, not the plan list's\n%s\nplan %s", size, a.frame(), src)
+			if !strings.HasPrefix(body, "  No tasks yet.") || strings.Contains(body, "+ New plan") || strings.Contains(body, "OPEN ─") {
+				t.Errorf("%v: the task list's body, not the plan list's\n%s\nplan %s", size, a.frame(), src)
 			}
 			if p := a.doc.plan; p.ReadOnly != "" && !strings.HasPrefix(textOf(a.frameRows().Rows[1], size[0]), "read-only: ") {
 				t.Errorf("%v: a read-only plan says why on row 1\n%s", size, a.frame())
 			}
 		}
-	}
-}
-
-// docs/ux.md §6: the outline holds still as the cursor moves. Whether the
-// list has blank rows between groups and whether it scrolls are decided
-// without the selection's blurb row, so moving ↓ and ↑ through every row
-// never changes the head, the blank rows, or a list that fits; ↓ more
-// marks a list that goes on below wherever a row is left for a marker,
-// ↑ more never takes the selection's margin row, and a frame drawn again
-// with nothing moved is the same frame.
-func TestOutlineHoldsStillAsTheCursorMoves(t *testing.T) {
-	var done7 []string
-	for i := 0; i < 7; i++ {
-		done7 = append(done7, fmt.Sprintf(`{"id": "t%d", "title": "Task %d", "status": "done", "accomplished": ["did %d"]}`, i, i, i))
-	}
-	plans := map[string]string{
-		"cuj":      string(cujFixture(t)),
-		"redesign": redesignPlan,
-		"done7":    `{"title": "P", "tasks": [` + strings.Join(done7, ",") + `]}`,
-	}
-	for name, src := range plans {
-		for _, cols := range []int{80, 120} {
-			a, _, _ := openDemo(t, src, cols, 24)
-			rows := outlineRows(a.doc.plan)
-			n, last := len(rows)-1, rows[len(rows)-1]
-			for lines := 7; lines <= 30; lines++ {
-				a.settle(cols, lines)
-				bodyH := a.planRows()
-				want := wantRows(bodyH, n)
-				type shape struct {
-					head       string
-					gaps       int
-					fits, more bool
-				}
-				var first shape
-				press(a, "home")
-				for step := 0; step < 2*len(rows)-1; step++ {
-					if step > 0 {
-						key := "down"
-						if step >= len(rows) {
-							key = "up"
-						}
-						press(a, key)
-					}
-					where := fmt.Sprintf("%s %d×%d on %q", name, cols, lines, a.outline.sel)
-					for _, view := range []int{a.outline.view, 1 << 20} { // the window where it was, and left past the list's end
-						a.outline.view = view
-						if frame := a.frame(); a.frame() != frame {
-							t.Errorf("%s: the next frame differs with nothing moved\n%s\n%s", where, frame, a.frame())
-						}
-					}
-					view := a.composeOptions().PlanView
-					h := headOf(view)
-					var s shape
-					for _, l := range view[:h] {
-						if l.Kind == "h2" {
-							s.head += "TASKS\n" // its meta is where the cursor is
-						} else {
-							s.head += l.Text + "\n"
-						}
-					}
-					list := view[h:]
-					below, blurb := true, 0
-					for i, l := range list {
-						switch {
-						case l.Kind == "gap":
-							s.gaps++
-						case l.Text == "  ↓ more" || l.Text == "  ↑ more":
-							s.more = true
-							if l.Text == "  ↑ more" && n >= 3 && i+1 < len(list) && list[i+1].Selected {
-								t.Errorf("%s: ↑ more takes the selection's margin row\n%s", where, a.frame())
-							}
-						case l.Selected && i > 0 && list[i-1].Selected:
-							blurb = 1
-						case strings.Contains(l.Text, " "+last+" "):
-							below = false
-						}
-					}
-					s.fits = !s.more && taskRows(list) == n
-					if below && !strings.Contains(viewText(list), "↓ more") && bodyH-h-want-blurb >= 1 {
-						t.Errorf("%s: tasks below the window and a row for ↓ more, but no ↓ more\n%s", where, a.frame())
-					}
-					if step == 0 {
-						first = s
-						continue
-					}
-					if s.head != first.head || s.gaps != first.gaps || s.fits != first.fits {
-						t.Errorf("%s: the layout moved with the cursor: head %v, gaps %d → %d, fits %v → %v\n%s", where, s.head == first.head, first.gaps, s.gaps, first.fits, s.fits, a.frame())
-						break
-					}
-				}
-			}
-		}
-	}
-}
-
-// docs/ux.md §4, §6: a short outline still says that its list scrolls and
-// where the cursor is in it: TASKS's meta while TASKS is on screen, else
-// row 0's, "16 of 30 · 0/30 done", just the position where that doesn't
-// fit beside the places' label. On the title row the list starts at its
-// top and ↓ more takes its last row.
-func TestShortOutlineSaysWhereItIs(t *testing.T) {
-	var ts []string
-	for i := 1; i <= 30; i++ {
-		ts = append(ts, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d", "does": ["does %d"]}`, i, i, i))
-	}
-	src := func(title string) string {
-		return `{"title": "` + title + `", "status": "active", "tasks": [` + strings.Join(ts, ",") + `]}`
-	}
-	for _, tc := range []struct {
-		cols, rows int
-		tasks      bool   // TASKS is on screen
-		at         string // row 0 with the cursor on t16
-	}{
-		{38, 7, false, "Many 16 of 30 plan · agent"},
-		{78, 7, false, "Many 16 of 30 · 0/30 done plan · agent"},
-		{38, 8, true, "Many 0/30 done plan · agent"},
-		{38, 12, true, "Many 0/30 done plan · agent"},
-	} {
-		a, _, _ := openDemo(t, src("Many"), tc.cols, tc.rows)
-		a.outline.sel = "t16"
-		words := func() string { return strings.Join(strings.Fields(textOf(a.frameRows().Rows[0], tc.cols)), " ") }
-		body, title := planBody(a), words()
-		switch {
-		case strings.Contains(body, "TASKS ─") != tc.tasks:
-			t.Errorf("%d×%d: TASKS on screen %v\n%s", tc.cols, tc.rows, !tc.tasks, body)
-		case tc.tasks && (!strings.Contains(body, "─ 16 of 30") || title != tc.at):
-			t.Errorf("%d×%d: TASKS says where the cursor is: %q\n%s", tc.cols, tc.rows, title, body)
-		case !tc.tasks && title != tc.at:
-			t.Errorf("%d×%d: with TASKS gone row 0 says where the cursor is: %q\n%s", tc.cols, tc.rows, title, body)
-		}
-		press(a, "home")
-		body, title = planBody(a), words()
-		lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
-		if lines[len(lines)-1] != "  ↓ more" || tc.tasks && !strings.Contains(body, "─ 0/30 done") || title != "❯ Many 0/30 done plan · agent" {
-			t.Errorf("%d×%d: the title row: the list from its top, then ↓ more: %q\n%s", tc.cols, tc.rows, title, body)
-		}
-	}
-	a, _, _ := openDemo(t, src("Thirty"), 38, 7)
-	a.outline.sel = "t16"
-	if title := strings.Join(strings.Fields(textOf(a.frameRows().Rows[0], 38)), " "); title != "Thirty 16 of 30 plan · agent" {
-		t.Errorf("the position, not the progress, where both don't fit: %q", title)
-	}
-}
-
-// docs/ux.md §6: the ladder leaves out nothing that fits. Once a big step
-// (the compact card, the strip, the warnings) frees rows, each smaller
-// piece that fits again comes back, so undoing any step it kept would
-// not fit: the CUJ plan's goal sits over the compact card at 80×14, and a
-// plan's problems line outranks its goal and TASKS over the strip.
-func TestLadderGivesBackWhatFits(t *testing.T) {
-	var six []string
-	for i := 1; i <= 6; i++ {
-		six = append(six, fmt.Sprintf(`{"id": "t%02d", "title": "Task %d", "does": ["step %d"]}`, i, i, i))
-	}
-	v2 := `{"version": 2, "title": "V2", "goal": "g", "status": "weird", "tasks": [{"id": "x", "title": "X", "status": "active", "does": ["x things"], "depends_on": ["nope"], "parent": "ghost"}, {"id": "y", "title": "Y", "status": "odd", "depends_on": ["y"]}]}`
-	plans := map[string]string{
-		"cuj":      string(cujFixture(t)),
-		"redesign": redesignPlan,
-		"warned":   `{"version": 2, "title": "Warned", "goal": "a goal", "tasks": [{"id": "a", "status": "active", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]},` + strings.Join(six, ",") + `]}`,
-		"v2":       v2,
-	}
-	for name, src := range plans {
-		for _, cols := range []int{24, 38, 78} { // 24, 38 and 78 text cells
-			a, _, _ := openDemo(t, src, cols, 24)
-			for lines := 7; lines <= 30; lines++ {
-				a.settle(cols, lines)
-				l := a.layout()
-				o := newOutline(a.doc.plan, l.textW)
-				want := wantRows(l.bodyH, o.rows)
-				on, head := o.collapse(l.bodyH, want)
-				for i, kept := range on {
-					if !kept {
-						continue
-					}
-					back := slices.Clone(on)
-					back[i] = false
-					if h := o.head(o.fitFor(back)); len(h) > len(head) && len(h)+want <= l.bodyH {
-						t.Errorf("%s %d×%d: ladder step %d is kept, but its piece fits: %d head rows and %d task rows in %d\n%s", name, cols, lines, i+1, len(h), want, l.bodyH, planBody(a))
-					}
-				}
-			}
-		}
-	}
-	c, _, _ := cujApp(t)
-	if c.settle(38, 14); !strings.HasPrefix(planBody(c), "  A teammate opens this plan in Rex a…\n╭─[PINNED]─ card-highlight ─") {
-		t.Errorf("38×14: the goal fits over the compact card\n%s", planBody(c))
-	}
-	w, _, _ := openDemo(t, v2, 38, 8)
-	if body := planBody(w); body != "  ! 6 problems · enter on the title\n    lists them\n[PINNED] x  X\n❯ ▸ x X\n  · y Y                          cycle" {
-		t.Errorf("38×8: the problems outrank the goal and TASKS and stay over the strip\n%s", body)
 	}
 }
 
@@ -2240,46 +1705,19 @@ func TestWrapBreaksWideText(t *testing.T) {
 	}
 }
 
-// docs/ux.md §12: as the terminal grows from 7 to 16 rows the outline
-// never shows fewer task rows or a smaller PINNED card. From 12 rows row 2
-// and the notice row take two rows an 11-row terminal gives the body, so
-// 11 rows lay the outline out as 12 do; a detail too. (A plan with more
-// tasks than 3 gets 5 task rows from 16 rows, for which its card may
-// give rows back: there it never fills fewer rows.)
+// docs/ux.md §12: as the terminal grows from 7 to 16 rows the task list
+// never shows fewer tasks (nor, with groups, fewer rows). From 12 rows
+// row 2 and the notice row take two rows an 11-row terminal gives the
+// body, so 11 rows lay the list out as 12 do; a page too.
 func TestTallerNeverShowsLessOfThePlan(t *testing.T) {
-	// The card's tier: its box's rows, 1 for the strip, 0 for none.
-	tier := func(body string) int {
-		top := -1
-		for i, line := range strings.Split(body, "\n") {
+	count := func(a *app, task bool) int {
+		keys := taskKeys(a.doc.plan)
+		n := 0
+		for _, line := range strings.Split(planBody(a), "\n") {
+			f := strings.Fields(strings.TrimLeft(line, "❯✔–! "))
 			switch {
-			case strings.HasPrefix(line, "╭"):
-				top = i
-			case strings.HasPrefix(line, "╰") && top >= 0:
-				return i - top + 1
-			case strings.HasPrefix(line, "[PINNED]") || strings.HasPrefix(line, "[NEXT UP]"):
-				return 1
-			}
-		}
-		return 0
-	}
-	tasks := func(body string) int {
-		n := 0
-		for _, line := range strings.Split(body, "\n") {
-			if rest, ok := strings.CutPrefix(line, "❯ "); ok || strings.HasPrefix(line, "  ") {
-				if !ok {
-					rest = line[2:]
-				}
-				if r := []rune(strings.TrimLeft(rest, " ")); len(r) > 1 && strings.ContainsRune("✔▸○·–!", r[0]) && r[1] == ' ' {
-					n++
-				}
-			}
-		}
-		return n
-	}
-	filled := func(body string) int {
-		n := 0
-		for _, line := range strings.Split(body, "\n") {
-			if strings.TrimSpace(line) != "" {
+			case len(f) == 0:
+			case !task || slices.Contains(keys, f[0]):
 				n++
 			}
 		}
@@ -2288,20 +1726,19 @@ func TestTallerNeverShowsLessOfThePlan(t *testing.T) {
 	for _, cols := range []int{38, 80, 120} {
 		a, _, _ := cujApp(t)
 		b, _, _ := cujApp(t)
-		os.WriteFile(b.plans.Current, []byte(redesignPlan), 0o644)
+		os.WriteFile(b.plans.Current, []byte(manyTasks(30)), 0o644)
 		b.reloadDoc()
-		wasTier, wasTasks, wasFilled := -1, -1, -1
+		wasTasks, wasFilled := -1, -1
 		for rows := 7; rows <= 16; rows++ {
 			a.settle(cols, rows)
-			body := planBody(a)
-			if c, n := tier(body), tasks(body); c < wasTier || n < wasTasks {
-				t.Errorf("%d×%d shows less than %d rows: card %d (was %d), %d task rows (was %d)\n%s", cols, rows, rows-1, c, wasTier, n, wasTasks, body)
+			if n := count(a, true); n < wasTasks {
+				t.Errorf("%d×%d shows %d tasks, fewer than %d at a row less\n%s", cols, rows, n, wasTasks, planBody(a))
 			} else {
-				wasTier, wasTasks = c, n
+				wasTasks = n
 			}
 			b.settle(cols, rows)
-			if n := filled(planBody(b)); n < wasFilled {
-				t.Errorf("redesign %d×%d fills %d rows, fewer than %d at a row less\n%s", cols, rows, n, wasFilled, planBody(b))
+			if n := count(b, false); n < wasFilled {
+				t.Errorf("many %d×%d fills %d rows, fewer than %d at a row less\n%s", cols, rows, n, wasFilled, planBody(b))
 			} else {
 				wasFilled = n
 			}
@@ -2313,6 +1750,142 @@ func TestTallerNeverShowsLessOfThePlan(t *testing.T) {
 	twelve := planBody(a)
 	a.settle(80, 11)
 	if eleven := planBody(a); eleven != twelve+"\n" {
-		t.Errorf("a detail at 11 rows shows what 12 do, the last row blank:\n%s\n--\n%s", eleven, twelve)
+		t.Errorf("details at 11 rows show what 12 do, the last row blank:\n%s\n--\n%s", eleven, twelve)
 	}
+}
+
+// docs/ux.md §6: a task in a parent loop has no top to sit under, so it
+// is a row of its own at the top, tagged cycle in red, and never the pin;
+// the plan has tasks, none done, and nothing pinned.
+func TestParentLoopIsListed(t *testing.T) {
+	a, _, _ := openDemo(t, `{"version":1,"title":"Loop","tasks":[{"id":"a","title":"A","parent":"b"},{"id":"b","title":"B","parent":"a"}]}`, 80, 24)
+	r := a.frameRows().Rows
+	if got := textOf(r[0], 80); got != sides("Loop", "0/2 done   plan · agent", 80) || textOf(r[1], 80) != "nothing pinned · nothing unblocked" {
+		t.Fatalf("rows 0 and 1: %q / %q", got, textOf(r[1], 80))
+	}
+	want := "❯   a       A" + strings.Repeat(" ", 61) + "cycle\n    b       B" + strings.Repeat(" ", 61) + "cycle"
+	if got := trimmed(planBody(a)); got != want {
+		t.Fatalf("the loop's tasks are rows at the top\n%q\nwant\n%q", got, want)
+	}
+	if press(a, "\r"); textOf(a.frameRows().Rows[1], 80) != "task 1 of 2" {
+		t.Errorf("in a loop, a task is in nothing: %q", textOf(a.frameRows().Rows[1], 80))
+	}
+	// A task under the loop sits inside it, and can be the pin.
+	b, _, _ := openDemo(t, `{"version":1,"title":"Loop","tasks":[{"id":"a","title":"A","parent":"b"},{"id":"b","title":"B","parent":"a"},{"id":"c","title":"C","parent":"a"}]}`, 80, 24)
+	if got := trimmed(planBody(b)); !strings.HasSuffix(got, "\n❯     c     C"+strings.Repeat(" ", 59)+"next up") || b.statusLine().Text != "nothing pinned · next up c · C" {
+		t.Fatalf("%q\n%s", b.statusLine().Text, got)
+	}
+}
+
+// docs/ux.md §4, §6: row 0's count is the done tasks of those the list
+// shows: a skipped task isn't done, and a repeated id is one row. About's
+// progress leads with the same count.
+func TestProgressCountsTheListedTasks(t *testing.T) {
+	a, _, _ := openDemo(t, `{"tasks":[{"id":"a","status":"done"},{"id":"a"},{"id":"b"},{"id":"c","status":"skipped"},{"id":"d"}]}`, 80, 24)
+	rows := len(strings.Split(trimmed(planBody(a)), "\n"))
+	if got := textOf(a.frameRows().Rows[0], 80); got != sides("demo", "1/4 done   plan · agent", 80) || rows != 4 {
+		t.Fatalf("row 0 %q over %d rows", got, rows)
+	}
+	press(a, "i")
+	if got := trimmed(planBody(a)); !strings.HasPrefix(got, "  Progress      1/4 done · 1 skipped · 2 to go\n") || !strings.Contains(textOf(a.frameRows().Rows[0], 80), "1/4 done") {
+		t.Fatalf("About: %q", got)
+	}
+}
+
+// docs/ux.md §6: a plan with no list (no tasks, or none Rex could read)
+// is a page that scrolls on a short screen, with the list's counted
+// markers; the footer says ↑↓ scroll only then.
+func TestListlessPlansScroll(t *testing.T) {
+	for _, src := range []string{string(plan.Stub("demo")), `{"tasks": [`} {
+		a, _, _ := openDemo(t, src, 24, 7)
+		footer := func() string { a.frameRows(); return spanText(segsOf(a.planFooter())) }
+		body := planBody(a)
+		if !strings.Contains(body, "\n  ↓ ") || !strings.HasPrefix(footer(), "↑↓ scroll") || strings.Contains(body, "↓ more") {
+			t.Fatalf("%s: a counted ↓ and ↑↓ scroll\n%s\n%q", src, body, footer())
+		}
+		press(a, "down")
+		if body := planBody(a); !strings.HasPrefix(body, "  ↑ 1 more\n") {
+			t.Fatalf("%s: ↓ scrolls it\n%s", src, body)
+		}
+		press(a, "end")
+		if body := strings.TrimRight(planBody(a), "\n "); strings.Contains(body, "↓") || !strings.HasSuffix(body, "again.") && !strings.HasSuffix(body, "saves.") {
+			t.Fatalf("%s: end shows its last line\n%s", src, body)
+		}
+		if a.settle(80, 24); strings.Contains(footer(), "↑↓") {
+			t.Fatalf("%s: a page that fits doesn't scroll: %q", src, footer())
+		}
+		if press(a, "esc"); a.at != atLibrary {
+			t.Fatalf("%s: esc is the plan list", src)
+		}
+	}
+}
+
+// docs/ux.md §11: the cold-start scan opens a plan no write brought, so
+// its notice says it opened, never that your agent wrote it.
+func TestColdStartScanSaysOpened(t *testing.T) {
+	a := testApp(t)
+	c := &clock{t: time.Unix(1_800_000_000, 0)}
+	a.now = c.now
+	writePlan(t, a.plans.Repo, "by-hand.rex.json", demoPlan)
+	a.plans.walk = planWalk{}
+	if a.tick(); a.at != atOutline || filepath.Base(a.plans.Current) != "by-hand.rex.json" {
+		t.Fatalf("the scan opens it: at=%d %q", a.at, a.plans.Current)
+	}
+	if got := a.notice().Text; got != "Opened Send-off demo · rex/plans/by-hand.rex.json" {
+		t.Fatalf("notice %q", got)
+	}
+}
+
+// docs/ux.md §6: a deep chain of parents costs its length once per read of
+// the plan, and a key on its list never walks it again.
+func TestDeepChainKeysStayFast(t *testing.T) {
+	var tasks []string
+	for i := 0; i < 3000; i++ {
+		parent := ""
+		if i > 0 {
+			parent = fmt.Sprintf(`, "parent": "p%d"`, i-1)
+		}
+		tasks = append(tasks, fmt.Sprintf(`{"id": "p%d", "title": "Part %d"%s}, {"id": "t%d", "title": "Task %d", "parent": "p%d"}`, i, i, parent, i, i, i))
+	}
+	a, _, _ := openDemo(t, `{"title": "Deep", "tasks": [`+strings.Join(tasks, ",")+`]}`, 80, 24)
+	best := time.Hour
+	for i := 0; i < 5; i++ {
+		start := time.Now()
+		press(a, "down")
+		best = min(best, time.Since(start))
+		a.frameRows()
+	}
+	if best > 50*time.Millisecond || a.outline.sel != "t5" {
+		t.Fatalf("a ↓ on a 3,000-deep chain takes %v (sel %q)", best, a.outline.sel)
+	}
+	start := time.Now()
+	a.frameRows()
+	if took := time.Since(start); took > 250*time.Millisecond {
+		t.Fatalf("a frame takes %v", took)
+	}
+}
+
+// docs/ux.md §6: under 40 cells a group label keeps its progress, its
+// title cut first.
+func TestNarrowGroupLabelKeepsItsProgress(t *testing.T) {
+	a, _, _ := openDemo(t, `{"tasks": [{"id": "g", "title": "A very long group title"}, {"id": "a", "parent": "g", "status": "done"}, {"id": "b", "parent": "g"}]}`, 24, 24)
+	if body := planBody(a); !strings.HasPrefix(body, "  A very long gro…  1/2\n    ✔ a\n❯     b") {
+		t.Fatalf("24 cells\n%s", body)
+	}
+	a.settle(38, 24)
+	if body := planBody(a); !strings.HasPrefix(body, sides("  A very long group title", "1/2", 38)+"\n") {
+		t.Fatalf("38 cells\n%s", body)
+	}
+}
+
+// segsOf is a footer's segments as one line, unfitted.
+func segsOf(segs []FooterSeg) []Span {
+	var out []Span
+	for i, s := range segs {
+		if i > 0 {
+			out = append(out, Span{Text: footerSep})
+		}
+		out = append(out, Span{Text: s.Text})
+	}
+	return out
 }

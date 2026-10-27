@@ -20,7 +20,7 @@ func (g *Graph) Pin() *Task {
 }
 
 // BuildsOn is the done task the pin builds on (docs/ux.md §6, §7a), one
-// rule for the PINNED card, the plan list's accordion and the pin note:
+// rule for task details, the plan list's accordion and the pin note:
 // the pin's last done leaf dependency in depends_on order; else, or with
 // no pin, the plan's last done leaf. A parent's done is only a label (§7),
 // so a parent dependency names nothing.

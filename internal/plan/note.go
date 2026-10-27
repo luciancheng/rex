@@ -137,12 +137,29 @@ func list(label, sep string, values []string) noteLine {
 // than for one prompt. A plan with no tasks gets the same one line either
 // way.
 func PinNote(pin *Pinned, session bool) string {
-	path := noteText(pin.Rel, noteItem)
 	if pin.Task == nil {
-		return "Rex note: the person has " + path + " open in Rex; it has no tasks yet."
+		return "Rex note: the person has " + noteText(pin.Rel, noteItem) + " open in Rex; it has no tasks yet."
 	}
+	note, _ := pinNote(pin, session)
+	return note
+}
+
+// SentFields are the fields of pin's note for one prompt as the note sends
+// them (docs/ux.md §6, §7a): each field's Sent values, cleaned and cut as
+// the note cuts them, and More, the values of a list it leaves to the
+// file. A field the note drops to stay under 1,500 bytes has no Sent
+// values. It is the same pass PinNote words, so a page that shows it says
+// what the agent gets.
+func SentFields(pin *Pinned) []NoteField {
+	_, fields := pinNote(pin, false)
+	return fields
+}
+
+// pinNote is the note for pin's task and its fields as the note sends
+// them.
+func pinNote(pin *Pinned, session bool) (string, []NoteField) {
+	path := noteText(pin.Rel, noteItem)
 	p, t := pin.Plan, pin.Task
-	g := p.Graph()
 	head := "Rex note, as of this prompt: the task pinned in the person's plan, read just now from " + path + ". The plan file is the source of truth; earlier Rex notes in this conversation are out of date."
 	if session {
 		head = "Rex note, as of the start of this session: the task pinned in the person's plan, read from " + path + ". The pin can move during the session; the plan file has the current one."
@@ -156,62 +173,128 @@ func PinNote(pin *Pinned, session bool) string {
 	} else {
 		task += " (status active)"
 	}
-	var also []string
-	for i := range p.Tasks {
-		if e := &p.Tasks[i]; e != t && e.Status == Active && e.ID != "" && g.Leaf(e) && !g.Cyclic(e) {
-			also = append(also, e.ID)
-		}
-	}
-	var waits []string
-	for _, id := range g.Unmet(t) {
-		if !strings.HasPrefix(id, "?") {
-			waits = append(waits, id)
-		}
-	}
-	waiting := list("Waits on", ", ", waits)
-	if len(waiting.items) > 0 {
-		waiting.tail = " (not done)"
-	}
-	var builds noteLine
-	if b := g.BuildsOn(t); b != nil {
-		what := noteText(b.DoneWhat(), noteItem)
-		if id := noteText(b.ID, noteItem); id != "" {
-			what = noteText(id+" (done): "+what, noteItem)
-		} else {
-			what = noteText(what, noteItem-len(" (done)")) + " (done)"
-		}
-		builds = noteLine{label: "Builds on", items: []string{what}}
-	}
-	var branch noteLine
-	if base := g.StackBase(t); plainRef(t.Branch) && base != "" {
-		branch = noteLine{label: "Branch", items: []string{noteText(t.Branch+", stacked on "+base, noteItem)}}
-	} else if plainRef(t.Branch) {
-		branch = noteLine{label: "Branch", items: []string{t.Branch}}
-	} else if base != "" {
-		branch = noteLine{label: "Branch", items: []string{noteText("not named yet, stacked on "+base, noteItem)}}
-	}
 	single := func(label, v string, limit int) noteLine {
 		if v = noteText(v, limit); v == "" {
 			return noteLine{label: label}
 		}
 		return noteLine{label: label, items: []string{v}}
 	}
-	out := append(append([]string(nil), p.Scope.Out...), t.Scope.Out...)
-	files := list("Files", ", ", t.Files)
-	body := []noteLine{
-		list("Also active", ", ", also),
-		list("Does", "; ", t.Does),
-		single("Description", t.Description, noteDesc),
-		list("Needs", "; ", t.Needs),
-		waiting,
-		list("Verify", "; ", t.Verify),
-		files,
-		builds,
-		list("Out of scope", "; ", distinctText(out)),
-		branch,
-		single("Plan goal", p.Goal, noteGoal),
+	var body []noteLine
+	fields := NoteFields(p, t)
+	for _, f := range fields {
+		switch f.Label {
+		case "Description":
+			body = append(body, single(f.Label, f.Items[0], noteDesc))
+		case "Plan goal":
+			body = append(body, single(f.Label, f.Items[0], noteGoal))
+		case "Branch":
+			body = append(body, single(f.Label, f.Items[0], noteItem))
+		case "Builds on":
+			b := f.Tasks[0]
+			what := noteText(b.DoneWhat(), noteItem)
+			if id := noteText(b.ID, noteItem); id != "" {
+				what = noteText(id+" (done): "+what, noteItem)
+			} else {
+				what = noteText(what, noteItem-len(" (done)")) + " (done)"
+			}
+			body = append(body, noteLine{label: f.Label, items: []string{what}})
+		default:
+			l := list(f.Label, noteSeps[f.Label], f.Items)
+			if f.Label == "Waits on" && len(l.items) > 0 {
+				l.tail = " (not done)"
+			}
+			body = append(body, l)
+		}
 	}
-	return fitNote(head, task, body)
+	note := fitNote(head, task, body) // it cuts body in place
+	for i := range fields {
+		fields[i].Sent, fields[i].More = body[i].items, body[i].more
+		if len(body[i].items) == 0 {
+			fields[i].More = 0
+		}
+	}
+	return note, fields
+}
+
+// noteSeps join a list line's items in the note.
+var noteSeps = map[string]string{"Also active": ", ", "Does": "; ", "Needs": "; ", "Waits on": ", ", "Verify": "; ", "Files": ", ", "Out of scope": "; "}
+
+// NoteField is one field of the pin note as the plan has it, before the
+// note cleans and caps it (docs/ux.md §7a): a task's details show the
+// same fields, in the same order (§6). Tasks are the tasks Waits on and
+// Builds on name, one for each value. Sent and More are what SentFields
+// says the note sends.
+type NoteField struct {
+	Label string
+	Items []string
+	Tasks []*Task
+	Sent  []string
+	More  int
+}
+
+// Sep is what joins a list field's values in the note, "" for one value.
+func (f NoteField) Sep() string { return noteSeps[f.Label] }
+
+// NoteFields are the fields of the note that would pin t, in the note's
+// order: Also active, Does, Description, Needs, Waits on, Verify, Files,
+// Builds on, Out of scope, Branch and Plan goal, each only with a value.
+func NoteFields(p *Plan, t *Task) []NoteField {
+	g := p.Graph()
+	var fields []NoteField
+	add := func(label string, items []string, tasks ...*Task) {
+		if len(items) > 0 {
+			fields = append(fields, NoteField{Label: label, Items: items, Tasks: tasks})
+		}
+	}
+	text := func(s string) []string {
+		if strings.TrimSpace(s) == "" {
+			return nil
+		}
+		return []string{s}
+	}
+	var also []string
+	for i := range p.Tasks {
+		if e := &p.Tasks[i]; e != t && e.Status == Active && e.ID != "" && g.Leaf(e) && !g.Cyclic(e) {
+			also = append(also, e.ID)
+		}
+	}
+	add("Also active", also)
+	add("Does", t.Does)
+	add("Description", text(t.Description))
+	add("Needs", t.Needs)
+	var waits []string
+	var waiting []*Task
+	for _, id := range g.Unmet(t) {
+		if !strings.HasPrefix(id, "?") {
+			waits, waiting = append(waits, id), append(waiting, g.Task(id))
+		}
+	}
+	add("Waits on", waits, waiting...)
+	add("Verify", t.Verify)
+	add("Files", t.Files)
+	if b := g.BuildsOn(t); b != nil {
+		add("Builds on", []string{b.DoneWhat()}, b)
+	}
+	add("Out of scope", distinctText(append(append([]string(nil), p.Scope.Out...), t.Scope.Out...)))
+	add("Branch", text(g.branchLine(t)))
+	add("Plan goal", text(p.Goal))
+	return fields
+}
+
+// branchLine is where t's PR goes, as the note's Branch says it: its
+// branch, and in a stack the branch it stacks on (docs/plan-format.md,
+// Stacks). A name that isn't plain is never handed on; "" for none.
+func (g *Graph) branchLine(t *Task) string {
+	base := g.StackBase(t)
+	switch {
+	case plainRef(t.Branch) && base != "":
+		return t.Branch + ", stacked on " + base
+	case plainRef(t.Branch):
+		return t.Branch
+	case base != "":
+		return "not named yet, stacked on " + base
+	}
+	return ""
 }
 
 // The note's last line. It names the files only while a Files line is

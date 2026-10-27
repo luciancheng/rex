@@ -32,18 +32,40 @@ type helpKey struct {
 // takes, not only its footer's (docs/ux.md §13). o, which opens a plan
 // the notice row offers, reads the same on every page that takes it.
 var pageKeys = map[string][]helpKey{
-	"outline": {
-		{name: "enter →", what: "open the selected task; on the title row, about"},
+	"tasks": {
+		{name: "enter →", what: "the selected task's details"},
+		{name: "i", what: "about this plan: its goal, scope and progress"},
 		offerHelp,
-		{name: "↑↓", what: "move · pgup pgdn a page"},
-		{name: "home end", what: "first / last row (also ctrl+a ctrl+e)"},
+		{name: "↑↓", what: "move between tasks · pgup pgdn a page"},
+		{name: "home end", what: "first / last task (also ctrl+a ctrl+e)"},
 		{name: "esc ←", what: "back to the plan list"},
+	},
+	// A plan with no list: no task to move to or open, only its page to
+	// scroll on a short screen (docs/ux.md §6).
+	"no tasks": {
+		{name: "i", what: "about this plan: its goal, scope and progress"},
+		offerHelp,
+		{name: "↑↓", what: "scroll this page on a short screen · pgup pgdn a page"},
+		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
+		{name: "esc ←", what: "back to the plan list"},
+	},
+	"can't read": {
+		offerHelp,
+		{name: "↑↓", what: "scroll this page on a short screen · pgup pgdn a page"},
+		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
+		{name: "esc ←", what: "back to the plan list"},
+	},
+	"task": {
+		offerHelp,
+		{name: "↑↓", what: "scroll · pgup pgdn a page"},
+		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
+		{name: "esc ←", what: "back to the task list, on this task"},
 	},
 	"about": {
 		offerHelp,
 		{name: "↑↓", what: "scroll · pgup pgdn a page"},
 		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
-		{name: "esc ←", what: "back to the outline"},
+		{name: "esc ←", what: "back to the task list"},
 	},
 	"plans": {
 		{name: "enter", what: "open the selected plan or folder, or create one"},
@@ -64,7 +86,7 @@ var pageKeys = map[string][]helpKey{
 		{name: "esc ← ../", what: "up a folder; from a top folder, back to the plan list"},
 	},
 	"new plan": {
-		{name: "enter", what: "create it and open its outline"},
+		{name: "enter", what: "create it and open its task list"},
 		{name: "type", what: "its name; a/b makes plan b in folder a"},
 		{name: "esc", what: "clear the name, else cancel: nothing is written"},
 	},
@@ -132,11 +154,7 @@ func helpLines(width int, page string, tall bool) []LogLine {
 			}
 		}
 	}
-	keys := pageKeys[page]
-	if page == "task" {
-		keys = pageKeys["about"]
-	}
-	section("THIS PAGE", page, keys)
+	section("THIS PAGE", page, pageKeys[page])
 	section("EVERYWHERE", "", []helpKey{
 		{name: "tab", what: "switch plan / agent"},
 		{name: "?", what: "this help"},
@@ -144,12 +162,12 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{name: "ctrl+c ×2", what: "quit"},
 	})
 	section("MARKS", "", []helpKey{
-		{what: "pinned: the active task, or next up", key: []Span{{Text: "▸", Role: "text", Bold: true}}},
-		{what: "the task your agent set active", key: pill("PINNED", "accent")},
-		{what: "nothing active: the first ready task", key: pill("NEXT UP", "muted")},
-		{name: "○ · " + doneMark, what: "ready · waiting on another task · done"},
-		{name: "– !", what: "skipped · blocked"},
-		{name: "1/3", what: "a parent's progress; on row 0, the plan's"},
+		{name: doneMark + " – !", what: "done · skipped · blocked; no mark: still to do"},
+		{what: "the task your agent set active, which it gets with every prompt", key: []Span{{Text: "pinned", Role: "accent"}}},
+		{what: "nothing pinned: the task Rex would pin, never sent", key: []Span{{Text: "next up", Role: "muted"}}},
+		{what: "a second active task: a problem in the plan", key: []Span{{Text: "also active", Role: "error"}}},
+		{what: "a task in a loop: it waits on itself, or is its own parent", key: []Span{{Text: "cycle", Role: "error"}}},
+		{name: "1/3", what: "a group's progress; on row 0, the plan's"},
 		{what: "your cursor", key: []Span{{Text: "❯", Role: "pick"}}},
 		{name: "following", what: "Rex opens each plan your agent writes"},
 		{name: "latched", what: "you picked this plan; another the agent writes shows on the notice row, and o opens it"},

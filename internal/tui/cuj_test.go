@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -131,8 +132,11 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	agent(plan.Stub("sendoff-demo"))
 	k.spent(t, 0, "create (the agent writes the plan)")
-	if a.at != atOutline || a.plans.Current != path || !a.follow || !strings.Contains(frame(), "No tasks yet · your agent fills this file") || !strings.Contains(rows().Rows[0], "sendoff-demo ") || !strings.Contains(rows().Rows[0], " · following") {
+	if a.at != atOutline || a.plans.Current != path || !a.follow || !strings.Contains(frame(), "No tasks yet.") || !strings.Contains(rows().Rows[0], "sendoff-demo ") || !strings.Contains(rows().Rows[0], " · following") {
 		t.Fatalf("B. the agent's write opens the plan, followed\n%s", frame())
+	}
+	if got := a.notice().Text; got != "Your agent wrote cuj/sendoff-demo · opened rex/plans/cuj/sendoff-demo.rex.json" || strings.Contains(frame(), "❯") {
+		t.Fatalf("B. the notice says which file opened, and nothing is selectable yet: %q\n%s", got, frame())
 	}
 	active := cujFixture(t)
 	planned := []byte(mustReplace(t, mustReplace(t, string(active), `"status": "active",
@@ -142,8 +146,11 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
   "scope"`))
 	agent(planned)
 	k.spent(t, 0, "see the plan (Rex follows the write)")
-	if a.outline.sel != "card-highlight" || !strings.Contains(frame(), "❯ ▸ card-highlight") || !strings.Contains(frame(), "plan updated · +3 tasks") || !strings.Contains(frame(), "╭─[NEXT UP]─ card-highlight") {
-		t.Fatalf("B. the filled plan lands on its pin, next up on the card: sel=%q\n%s", a.outline.sel, frame())
+	if a.outline.sel != "card-highlight" || !strings.Contains(frame(), "❯   card-highlight ") || !strings.Contains(frame(), "plan updated · +3 tasks") {
+		t.Fatalf("B. the filled plan lands on its pin: sel=%q\n%s", a.outline.sel, frame())
+	}
+	if row := rowWith(rows(), "❯   card-highlight"); !strings.HasSuffix(row, " next up") {
+		t.Fatalf("B. the task Rex would pin is tagged next up: %q", row)
 	}
 	c.t = c.t.Add(toastFor)
 	if got := a.statusLine().Text; got != "nothing pinned · next up card-highlight · Selected plan card is one block" {
@@ -160,14 +167,36 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 		t.Fatalf("C. one plan line on the tape: %+v", last)
 	}
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; got != "pinned  card-highlight · Selected plan card is one block" || !strings.Contains(frame(), "❯ ▸ card-highlight") || !strings.Contains(frame(), "╭─[PINNED]─ card-highlight · Selected plan card is one block") {
-		t.Fatalf("C. row 1, the card and the outline follow the file: %q\n%s", got, frame())
+	if got := a.statusLine().Text; got != "pinned  card-highlight · Selected plan card is one block" || !strings.HasSuffix(rowWith(rows(), "❯   card-highlight"), " pinned") {
+		t.Fatalf("C. row 1 and the list follow the file: %q\n%s", got, frame())
+	}
+	// One task list: no card, no goal, no TASKS rule (docs/ux.md §6).
+	for _, never := range []string{"╭", "[PINNED]", "TASKS", "A teammate opens this plan"} {
+		if strings.Contains(frame(), never) {
+			t.Fatalf("C. the task list has no %q\n%s", never, frame())
+		}
+	}
+	// What the agent gets is one enter away: the pin's details, the
+	// fields of the note (docs/ux.md §6, §7a).
+	k.press("\r")
+	k.spent(t, 1, "see the pinned task's requirements (enter)")
+	if a.at != atTaskDetail || !strings.Contains(rows().Rows[0], "Send-off demo › card-highlight") || !strings.Contains(rows().Rows[1], "task 2 of 3") {
+		t.Fatalf("C. enter opens the pin's details on a page of their own\n%s", frame())
+	}
+	for _, want := range []string{"Your agent gets these fields with every prompt.", "  Does          Bar, border and fill cover all three rows of the selected", "  Needs         the pick and pickbg colors exist in mascot.UI", "  Files         internal/tui/plans.go", "  Builds on     plans-ui (done): Home cards, folder browser"} {
+		if !strings.Contains(frame(), want) {
+			t.Fatalf("C. the pin's details show %q\n%s", want, frame())
+		}
+	}
+	k.press("esc")
+	if a.at != atOutline || a.outline.sel != "card-highlight" {
+		t.Fatalf("C. esc goes back to the list, on the same task: at=%d sel=%q", a.at, a.outline.sel)
 	}
 
-	// The agent works the task; the old verbs do nothing on the outline.
+	// The agent works the task; the old verbs do nothing on the task list.
 	k.press("p", "d", "s", "b", PastePrefix+"pin load-outline")
 	if got, _ := os.ReadFile(path); string(got) != string(active) || a.draft != "" || !strings.HasPrefix(a.statusLine().Text, "pinned  card-highlight") {
-		t.Fatal("C. letters and a paste on the outline change nothing")
+		t.Fatal("C. letters and a paste on the task list change nothing")
 	}
 	k.n = 0
 	write := filepath.Join(repo, "internal/tui/plans.go")
@@ -203,29 +232,32 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
 		t.Fatalf("E. the file finished the pin: %q", got)
 	}
-	// The card moves on to what is next up and names what it builds on:
-	// what a fresh chat needs, read from the plan (docs/ux.md §6, §9).
-	if frame := frame(); a.turn != TurnIdle || !strings.Contains(frame, "╭─[NEXT UP]─ load-outline · Outline view") || !strings.Contains(frame, "│ done    ✔ card-highlight  the selection bar, border and fill") {
-		t.Fatalf("E. the reply ends the turn; the card moves on and says where we left off\n%s", frame)
+	// The list marks it done and tags what is next up; the cursor stays
+	// where it was (docs/ux.md §1, §8).
+	if a.turn != TurnIdle || !strings.HasPrefix(rowWith(rows(), "❯ ✔ card-highlight"), "❯ ✔ card-highlight") || !strings.HasSuffix(rowWith(rows(), "    load-outline "), " next up") {
+		t.Fatalf("E. the reply ends the turn; the list moves on\n%s", frame())
 	}
 	k.press("\r") // the selection stayed on the task the agent finished
 	if a.at != atTaskDetail || a.outline.sel != "card-highlight" {
-		t.Fatalf("E. enter on the task opens its detail: at=%d sel=%q", a.at, a.outline.sel)
+		t.Fatalf("E. enter on the task opens its details: at=%d sel=%q", a.at, a.outline.sel)
 	}
-	if head := rows().Rows[0]; !strings.Contains(head, "card-highlight") || !strings.Contains(head, "done") {
-		t.Fatalf("E. the detail's title names the task and its state: %q", head)
+	if head := rows().Rows[0]; !strings.Contains(head, "card-highlight") || !strings.Contains(head, "✔ done") {
+		t.Fatalf("E. the details' title names the task and its state: %q", head)
 	}
-	detail := viewText(taskDetail(a.doc, a.outline.sel, 78, true)) // it scrolls; all of it
-	for _, want := range []string{"DONE ─", "the selection bar, border and fill cover all three", "  changed  internal/tui/plans.go", "  checked  go test ./internal/tui -run PlanCardSelection (passed)", "  notes    the pick colors were already in mascot.UI", "INTENDED ─"} {
+	detail := viewText(taskPage(a.doc, a.plans.CurrentRel(), a.outline.sel, 78)) // it scrolls; all of it
+	for _, want := range []string{"  ✔ Done · what your agent wrote when it finished it", "  Did           the selection bar, border and fill cover all three", "  Changed       internal/tui/plans.go", "  Checked       go test ./internal/tui -run PlanCardSelection (passed)", "  Notes         the pick colors were already in mascot.UI", "  Planned       Bar, border and fill"} {
 		if !strings.Contains(detail, want) {
-			t.Fatalf("E. task detail shows %q\n%s", want, detail)
+			t.Fatalf("E. the details show %q\n%s", want, detail)
 		}
 	}
-	k.press("esc", "home", "\r") // About: its DONE is the send-off's, kept in the plan
-	if about := viewText(planDetail(a.doc, 78, true)); a.at != atPlanDetail || !strings.Contains(about, "DONE ─") || !strings.Contains(about, "  ✔ card-highlight  the selection bar, border and fill") || !strings.Contains(about, "  ✔ plans-ui  Home cards") {
-		t.Fatalf("E. About lists what is done\n%s", about)
+	k.press("esc", "i") // About: the goal and the progress, read once a plan
+	if about := viewText(aboutPage(a.doc, 78)); a.at != atPlanDetail || !strings.Contains(about, "  Goal          A teammate opens this plan") || !strings.Contains(about, "  Progress      2/3 done · 1 to go") {
+		t.Fatalf("E. About has the goal and the progress\n%s", about)
 	}
 	k.press("esc")
+	if a.at != atOutline || a.outline.sel != "card-highlight" {
+		t.Fatalf("E. esc from About is the list, on the same task: at=%d sel=%q", a.at, a.outline.sel)
+	}
 	k.n = 0
 
 	// F. Tab to AGENT and back.
@@ -258,7 +290,7 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	k.press("\t")
 	k.spent(t, 1, "back to the plan")
 	if a.pane != PanePlans || a.at != atOutline {
-		t.Fatal("F. Tab returns to the outline")
+		t.Fatal("F. Tab returns to the task list")
 	}
 
 	// G. The plan list: create a plan there, then open one by name and
@@ -283,12 +315,18 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || a.follow || strings.Contains(rows().Rows[0], "following") {
 		t.Fatalf("G. create writes a v1 stub, opens it and latches: %v\n%s", err, frame())
 	}
+	if got := a.notice().Text; got != "✔ Created rex/plans/scratch.rex.json" {
+		t.Fatalf("G. the notice says what was written: %q", got)
+	}
 	k.press("esc")
 	k.typ("sendoff-demo")
 	k.press("\r")
 	k.spent(t, 1+len("sendoff-demo")+1, "open by name (Esc, name, enter)")
 	if a.plans.Current != path || a.at != atOutline || a.follow || a.outline.sel != "load-outline" {
 		t.Fatalf("G. the plan opens on its pin, latched: sel=%q\n%s", a.outline.sel, frame())
+	}
+	if got := a.notice().Text; got != "Opened Send-off demo · rex/plans/cuj/sendoff-demo.rex.json" {
+		t.Fatalf("G. the notice says which file opened: %q", got)
 	}
 	// The newest other plan is the first under RECENT: Esc ↓ enter goes
 	// there and back.
@@ -301,6 +339,7 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	}
 	// Latched, the agent writes another plan: the notice offers it, enter
 	// keeps its meaning, and o opens it, following again (docs/ux.md §4).
+	c.t = c.t.Add(toastFor) // the open's notice has had its time
 	next := filepath.Join(a.plans.Root, "cuj", "next.rex.json")
 	os.WriteFile(next, plan.Stub("next"), 0o644)
 	a.ingest([]watch.Event{at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + next, Meta: map[string]any{"tool": "Write", "path": next, "ok": true, "cwd": repo}})})
@@ -343,6 +382,17 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	}
 }
 
+// rowWith is the first of f's rows that has s, as its text column (no
+// mascot, trailing blanks off); "" for none.
+func rowWith(f Frame, s string) string {
+	for _, r := range f.Rows {
+		if text := textOf(r, cellLen(stripSGR(r))); strings.Contains(text, s) {
+			return text
+		}
+	}
+	return ""
+}
+
 // matrixScreen is one screen of the frame matrix: how to reach it from a
 // fresh start, and how to tell it was reached.
 type matrixScreen struct {
@@ -355,7 +405,7 @@ type matrixScreen struct {
 // matrixScreens is every screen and overlay Rex draws (AGENTS.md, Commands
 // and tests): a new one joins the list.
 func matrixScreens(t *testing.T) []matrixScreen {
-	list := func(a *app) { press(a, "esc") } // the outline at start, Esc to the plan list
+	list := func(a *app) { press(a, "esc") } // the task list at start, Esc to the plan list
 	lib := func(sc PlanScreen) func(a *app) bool {
 		return func(a *app) bool { return a.pane == PanePlans && a.at == atLibrary && a.plans.Screen == sc }
 	}
@@ -437,41 +487,62 @@ func matrixScreens(t *testing.T) []matrixScreen {
 		{"create", false, func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
 		{"new folder", false, func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r"); typeText(a, "notes") }, lib(ScreenFolder)},
 		{"new plan, empty", false, func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r") }, lib(ScreenCreate)},
-		// The PINNED card's tiers cross the frame matrix's sizes: full at
-		// 80×24, without its done and needs rows at 80×20, without its
-		// second rows too at 80×16, compact at 80×13, the strip with the
-		// goal over it at 80×10 and 80×12 and over three tasks at 80×7, and
-		// always the strip at 24 cells (docs/ux.md §6, §12).
-		{"outline", false, func(a *app) {}, pinned("active")},
-		{"outline, next up", false, rewrite(nextUp), pinned("pending")},
-		{"outline, no pin", false, rewrite(allDone), func(a *app) bool {
+		// The task list (docs/ux.md §6): on the agent's pin, on what Rex
+		// would pin, with nothing to pin, on a done row, with groups, long
+		// enough to scroll (↑ N more on row 2), and a plan with problems.
+		{"tasks, on the pin", false, func(a *app) {}, pinned("active")},
+		{"tasks, next up", false, rewrite(nextUp), pinned("pending")},
+		{"tasks, no pin", false, rewrite(allDone), func(a *app) bool {
 			return at(atOutline)(a) && a.doc.plan != nil && a.doc.plan.Graph().Pin() == nil && len(a.doc.plan.Tasks) == 3
 		}},
-		{"outline, cursor off the pin", false, func(a *app) { press(a, "down") }, func(a *app) bool { return at(atOutline)(a) && a.outline.sel == "load-outline" }},
-		// Parents, every kind of leaf, and a long list that scrolls.
-		{"outline, parents", false, func(a *app) { rewrite(redesignPlan)(a); press(a, "down", "down") }, func(a *app) bool {
-			return pinned("active")(a) && a.outline.sel == "plan-views"
+		{"tasks, a done row", false, func(a *app) { press(a, "up") }, func(a *app) bool { return at(atOutline)(a) && a.outline.sel == "plans-ui" }},
+		{"tasks, cursor off the pin", false, func(a *app) { press(a, "down") }, func(a *app) bool { return at(atOutline)(a) && a.outline.sel == "load-outline" }},
+		{"tasks, groups", false, func(a *app) { rewrite(redesignPlan)(a); press(a, "down", "down") }, func(a *app) bool {
+			return pinned("active")(a) && a.outline.sel == "plan-list"
 		}},
-		{"outline, warnings", false, rewrite(`{"version": 2, "goal": "Two active tasks, a newer version, problems", "tasks": [{"id": "a", "title": "A", "status": "active", "does": ["x"]}, {"id": "b", "title": "B", "status": "active", "depends_on": ["zz"]}]}`), func(a *app) bool {
+		{"tasks, scrolled", false, func(a *app) { rewrite(manyTasks(80))(a); press(a, "end") }, func(a *app) bool {
+			return at(atOutline)(a) && a.outline.sel == "t79" && a.outline.view > 0
+		}},
+		{"tasks, read-only with problems", false, rewrite(`{"version": 2, "goal": "Two active tasks, a newer version, problems", "tasks": [{"id": "a", "title": "A", "status": "active", "does": ["x"]}, {"id": "b", "title": "B", "status": "active", "depends_on": ["zz"]}]}`), func(a *app) bool {
 			return pinned("active")(a) && a.doc.plan.ReadOnly != "" && len(a.doc.plan.Problems) > 0
 		}},
-		{"outline, title row", false, func(a *app) { press(a, "home") }, func(a *app) bool { return at(atOutline)(a) && a.outline.sel == "" }},
 		// An agent's first save: the pin has only a title (docs/ux.md §6).
-		{"outline, bare pin", false, rewrite(`{"version": 1, "title": "Fresh", "goal": "First save", "tasks": [{"id": "a", "title": "First thing", "status": "active"}, {"id": "b", "title": "Second thing", "depends_on": ["a"]}, {"id": "c"}]}`), func(a *app) bool {
+		{"tasks, bare pin", false, rewrite(`{"version": 1, "title": "Fresh", "goal": "First save", "tasks": [{"id": "a", "title": "First thing", "status": "active"}, {"id": "b", "title": "Second thing", "depends_on": ["a"]}, {"id": "c"}]}`), func(a *app) bool {
 			return pinned("active")(a) && len(a.doc.plan.Graph().Pin().Does) == 0
 		}},
-		// No task rows, and warnings taller than a short body.
-		{"outline, empty read-only plan with problems", false, rewrite(`{"version": 2, "title": "Newer", "goal": "a goal", "status": "weird", "tasks": []}`), func(a *app) bool {
+		// No task rows: an empty read-only plan with problems.
+		{"tasks, empty read-only plan with problems", false, rewrite(`{"version": 2, "title": "Newer", "goal": "a goal", "status": "weird", "tasks": []}`), func(a *app) bool {
 			return at(atOutline)(a) && a.doc.plan != nil && a.doc.plan.ReadOnly != "" && len(a.doc.plan.Problems) > 1 && len(a.doc.plan.Tasks) == 0
 		}},
+		// A plan your agent is writing: its write opened it (following).
+		{"tasks, being written", false, func(a *app) {
+			p := filepath.Join(a.plans.Root, "auth", "reset.rex.json")
+			os.MkdirAll(filepath.Dir(p), 0o755)
+			os.WriteFile(p, []byte(`{"version": 1, "title": "Password reset", "tasks": [{"id": "token", "title": "Reset token table"}, {"id": "email", "title": "Send the reset email", "depends_on": ["token"]}]}`), 0o644)
+			a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + p, Meta: map[string]any{"tool": "Write", "path": p, "ok": true}}})
+		}, func(a *app) bool {
+			return at(atOutline)(a) && a.follow && filepath.Base(a.plans.Current) == "reset.rex.json" && noticeKindOf(a) == noticeToast
+		}},
+		// A parent loop: its tasks are rows at the top, tagged cycle.
+		{"tasks, a parent loop", false, rewrite(`{"version": 1, "title": "Loop", "tasks": [{"id": "a", "title": "A", "parent": "b"}, {"id": "b", "title": "B", "parent": "a"}]}`), func(a *app) bool {
+			return at(atOutline)(a) && a.outline.sel == "a" && len(taskKeys(a.doc.plan)) == 2
+		}},
+		// A plan that has never parsed: nothing to show but why.
+		{"tasks, unreadable", false, func(a *app) {
+			p := filepath.Join(a.plans.Root, "ux", "broken.rex.json")
+			os.MkdirAll(filepath.Dir(p), 0o755)
+			os.WriteFile(p, []byte(`{"version": 1, "tasks": [`), 0o644)
+			a.plans.open(p)
+			a.openedPlan()
+		}, func(a *app) bool { return at(atOutline)(a) && a.doc.plan == nil }},
 		// The notice row's kinds (docs/ux.md §4): hard drift, a plan the
 		// file no longer parses (its last good copy shows), the plan list's
 		// error; your agent asking, a toast, an offer and a held plan below.
-		{"outline, hard drift", false, func(a *app) {
+		{"tasks, hard drift", false, func(a *app) {
 			p := filepath.Join(a.plans.Repo, "README.md")
 			a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + p, Meta: map[string]any{"tool": "Write", "path": p, "ok": true}}})
 		}, func(a *app) bool { k := noticeKindOf(a); return at(atOutline)(a) && k == noticeDrift }},
-		{"outline, can't read", false, func(a *app) {
+		{"tasks, can't read, last good copy", false, func(a *app) {
 			os.WriteFile(a.plans.Current, []byte("{"), 0o644)
 			a.reloadDoc()
 			a.reloadDoc()
@@ -479,7 +550,7 @@ func matrixScreens(t *testing.T) []matrixScreen {
 		{"plan list, an error", false, func(a *app) { list(a); typeText(a, "/nope"); press(a, "\r") }, func(a *app) bool {
 			return lib(ScreenHome)(a) && a.plans.Err != "" && noticeKindOf(a) == noticeError
 		}},
-		{"outline, your agent asks", false, func(a *app) {
+		{"tasks, your agent asks", false, func(a *app) {
 			a.ingest([]watch.Event{{Source: "claude", Kind: "question", Text: "Which file?"}})
 		}, func(a *app) bool { return at(atOutline)(a) && a.needs == "ask" }},
 		{"held attach", false, func(a *app) {
@@ -494,12 +565,15 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			press(a, "\r") // made in the list: latched
 			write(a)
 		}, func(a *app) bool { return at(atOutline)(a) && a.offer != "" && !a.follow }},
-		{"task detail", false, func(a *app) { press(a, "\r") }, at(atTaskDetail)},
-		{"task detail, a done task", false, func(a *app) { press(a, "up", "\r") }, func(a *app) bool { return at(atTaskDetail)(a) && a.outline.sel == "plans-ui" }},
-		{"task detail, a parent", false, func(a *app) { rewrite(redesignPlan)(a); press(a, "home", "down", "\r") }, func(a *app) bool {
-			return at(atTaskDetail)(a) && a.outline.sel == "chrome"
+		// Details on a page of their own (docs/ux.md §6): the pin's, a
+		// pending task's and a done task's; About on i.
+		{"task details, the pin", false, func(a *app) { press(a, "\r") }, func(a *app) bool { return at(atTaskDetail)(a) && a.outline.sel == "card-highlight" }},
+		{"task details, a pending task", false, func(a *app) { press(a, "down", "\r") }, func(a *app) bool { return at(atTaskDetail)(a) && a.outline.sel == "load-outline" }},
+		{"task details, a done task", false, func(a *app) { press(a, "up", "\r") }, func(a *app) bool { return at(atTaskDetail)(a) && a.outline.sel == "plans-ui" }},
+		{"task details, in a group", false, func(a *app) { rewrite(redesignPlan)(a); press(a, "home", "\r") }, func(a *app) bool {
+			return at(atTaskDetail)(a) && a.outline.sel == "tab-bar"
 		}},
-		{"plan detail", false, func(a *app) { press(a, "home", "\r") }, at(atPlanDetail)},
+		{"about", false, func(a *app) { press(a, "i") }, at(atPlanDetail)},
 		{"agent", false, func(a *app) {
 			press(a, "\t")
 			a.ingest([]watch.Event{{Source: "claude", Kind: "text", Text: "a reply with 中文 and ⚠️ in it \x1b[2J"}})
@@ -549,7 +623,7 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			}
 			return false
 		}},
-		{"empty outline", false, func(a *app) { list(a); typeText(a, "scratch"); press(a, "\r") }, func(a *app) bool {
+		{"tasks, empty", false, func(a *app) { list(a); typeText(a, "scratch"); press(a, "\r") }, func(a *app) bool {
 			return at(atOutline)(a) && len(a.doc.plan.Tasks) == 0
 		}},
 		{"help", false, func(a *app) { press(a, "\t", "?") }, over(overlayHelp)},
@@ -571,7 +645,7 @@ func noticeKindOf(a *app) noticeKind {
 var matrixSizes = [][2]int{{24, 7}, {24, 12}, {24, 24}, {30, 10}, {38, 7}, {38, 24}, {44, 16}, {80, 7}, {80, 10}, {80, 12}, {80, 13}, {80, 16}, {80, 20}, {80, 24}, {109, 15}, {109, 24}, {110, 15}, {110, 16}, {120, 7}, {120, 12}, {120, 24}, {120, 32}, {200, 60}}
 
 // footerWords are the keys a footer segment starts with (docs/ux.md §4).
-var footerWords = map[string]bool{"↑↓": true, "enter": true, "esc": true, "tab": true, "?": true, "home": true, "end": true, "type": true, "ctrl+c": true}
+var footerWords = map[string]bool{"↑↓": true, "enter": true, "esc": true, "tab": true, "?": true, "home": true, "end": true, "type": true, "ctrl+c": true, "i": true}
 
 // seedKinds adds a plan of every kind to the CUJ repo (docs/ux.md §11):
 // more root plans than RECENT holds, written first, so FOLDERS lists
@@ -630,10 +704,10 @@ func matrixApp(t *testing.T, s matrixScreen, cols, lines int) *app {
 
 // Every screen fits every size: no row wider than the terminal, no control
 // bytes from content, row 0 a title row (its crumbs from column 0, the
-// places' label at its end from 30 cells), row 2 blank and a notice row
-// from 12 rows, and a footer of " · "-joined key words that says where to
-// go (docs/ux.md §4). No PINNED card is an empty box, and the outline
-// never shows the plan list (§6).
+// places' label at its end from 30 cells), row 2 blank (but for ↑ N more
+// at its right end) and a notice row from 12 rows, and a footer of " · "-
+// joined key words that says where to go (docs/ux.md §4). No box is empty,
+// and the task list never shows the plan list (§6).
 func TestFrameMatrix(t *testing.T) {
 	for _, size := range matrixSizes {
 		for _, s := range matrixScreens(t) {
@@ -683,31 +757,24 @@ func TestFrameMatrix(t *testing.T) {
 			if size[1] >= blankFrom {
 				top, bottom = 3, last-1
 			}
-			// The outline never shows the plan list's rows, even with an
+			// The task list never shows the plan list's rows, even with an
 			// empty body.
 			if a.pane == PanePlans && a.overlay[a.pane] == overlayNone && a.at == atOutline && bottom > top {
 				var body []string
 				for _, r := range f.Rows[top:bottom] {
 					body = append(body, textOf(r, size[0]))
 				}
-				for _, never := range []string{"cuj/sendoff-demo", "+ New plan", "no tasks yet · the", "OPEN ─", "RECENT ─", "FOLDERS ─"} {
+				for _, never := range []string{"+ New plan", "no tasks yet · the", "OPEN ─", "RECENT ─", "FOLDERS ─"} {
 					if b := strings.Join(body, "\n"); strings.Contains(b, never) {
 						t.Errorf("%s: the plan list's %q under an open plan's title\n%s", name, never, b)
 					}
 				}
 			}
-			// Row 0 is a title row: its crumbs from column 0 (on the
-			// outline's title row, after a 2-cell gutter that holds ❯ when
-			// the row is selected), no tab bar, and from 30 cells the
-			// places' label at its end, whole or the place on screen.
+			// Row 0 is a title row: its crumbs from column 0, no tab bar,
+			// and from 30 cells the places' label at its end, whole or the
+			// place on screen.
 			head := textOf(f.Rows[0], size[0])
 			here := placeWords[a.pane]
-			if a.composeOptions().Page.Selectable {
-				if gutter := cutCells(head, 2); gutter != "  " && gutter != "❯ " {
-					t.Errorf("%s: the title row's gutter: %q", name, head)
-				}
-				head = tailCells(head, max(0, cellLen(head)-2))
-			}
 			switch {
 			case head == "" || strings.HasPrefix(head, " ") || strings.HasPrefix(head, "REX"):
 				t.Errorf("%s: row 0 isn't a title: %q", name, head)
@@ -716,8 +783,8 @@ func TestFrameMatrix(t *testing.T) {
 			case a.overlay[a.pane] != overlayNone && !strings.Contains(head, "Help"):
 				t.Errorf("%s: Help's title %q", name, head)
 			}
-			if size[1] >= blankFrom && textOf(f.Rows[2], size[0]) != "" {
-				t.Errorf("%s: row 2 isn't blank: %q", name, textOf(f.Rows[2], size[0]))
+			if row2 := textOf(f.Rows[2], size[0]); size[1] >= blankFrom && row2 != "" && !moreUp.MatchString(row2) {
+				t.Errorf("%s: row 2 isn't blank: %q", name, row2)
 			}
 			footer := textOf(f.Rows[last], size[0])
 			for _, s := range strings.Split(footer, footerSep) {
@@ -731,6 +798,10 @@ func TestFrameMatrix(t *testing.T) {
 		}
 	}
 }
+
+// moreUp is row 2 while the open plan's list or page is scrolled: blank
+// but for ↑ N more at its right end, a cell short of the edge.
+var moreUp = regexp.MustCompile(`^ +↑ [0-9]+ more$`)
 
 // docs/ux.md §5, rule 4: color never changes the characters. Every
 // screen's text column in color, stripped of its SGR, is its NO_COLOR
@@ -761,11 +832,11 @@ func TestColorFrameSameText(t *testing.T) {
 // docs/ux.md §5: quiet roles on every screen of the matrix. The text
 // column never paints a background (the mascot's half-block pixels are
 // its own); every ✔ is done's green; yellow is only on the pin's marks
-// (its ▸ id, [PINNED], its tag, its card's box, its id on row 1 and on
-// AGENT, its state on a detail's row 0) and hard drift's "off pin";
-// purple is only the selection, one block from its ❯ (the outline's title
-// row is row 0); and a list screen has exactly one ❯, the rest none. Row 0
-// and the footer: the current crumb bold, the footer muted.
+// (its pinned tag, its id on row 1 and on AGENT, its state on a details
+// page's row 0) and hard drift's "off pin"; purple is only the selection,
+// one block from its ❯; and a list screen with a row to select has
+// exactly one ❯, the rest none. Row 0 and the footer: the current crumb
+// bold, the footer muted.
 func TestFrameMatrixQuietRoles(t *testing.T) {
 	green, purple, yellow := mascot.FG(mascot.UI["action"]), mascot.FG(mascot.UI["pick"]), mascot.FG(mascot.UI["accent"])
 	pinMark := func(row string) bool {
@@ -820,7 +891,7 @@ func TestFrameMatrixQuietRoles(t *testing.T) {
 					block = false
 				}
 			}
-			list := !help && a.pane == PanePlans && (a.at == atOutline || a.at == atLibrary && len(a.plans.Rows) > 0 && !a.plans.Prompting())
+			list := !help && a.pane == PanePlans && (a.at == atOutline && a.outline.sel != "" || a.at == atLibrary && len(a.plans.Rows) > 0 && !a.plans.Prompting())
 			switch {
 			case help:
 			case list && marks != 1:

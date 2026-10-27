@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/watch"
 )
 
@@ -32,16 +31,19 @@ func edit(a *app, c *clock, d time.Duration, rel string) watch.Event {
 	return at(c, d, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + p, Meta: map[string]any{"tool": "Write", "path": p, "ok": true}})
 }
 
+// docs/ux.md §4, §9a: hard drift is a notice on PLAN, "off pin" in the
+// pin's yellow; every drift is in AGENT's block. None of it is ever
+// written anywhere.
 func TestDriftIsShownNeverSent(t *testing.T) {
 	a, c, path := openDemo(t, driftDemo, 120, 32)
 	feed := watch.DefaultEventPath() // under the test's HOME
 	planBefore, _ := os.ReadFile(path)
 	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
-	if got := a.statusLine().Text; got != "drift · hard: README.md · outside card-highlight files" {
-		t.Fatalf("row 1 %q", got)
+	if got := a.statusLine().Text; got != "off pin · README.md · outside card-highlight files" {
+		t.Fatalf("notice %q", got)
 	}
-	if k := a.statusLine().Kind; k != "accent" {
-		t.Fatalf("hard drift is off the pin, so the pin's yellow, never an error's red: %q", k)
+	if s := a.statusLine(); s.Kind == "error" || s.Spans(s.Text)[0].Text != "off pin" || s.Spans(s.Text)[0].Role != "accent" {
+		t.Fatalf("hard drift is off the pin, so the pin's yellow, never an error's red: %q %+v", s.Kind, s.Spans(s.Text))
 	}
 	a.ingest([]watch.Event{edit(a, c, 2*time.Second, "internal/tui/live_view.go"), edit(a, c, 3*time.Second, "README.md")})
 	view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true}))
@@ -50,19 +52,23 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 		t.Fatalf("one block per pin, each path once:\n%s", view)
 	}
 	a.ingest([]watch.Event{at(c, 3500*time.Millisecond, watch.Event{Source: "claude", Kind: "user", Text: "ok continue"})})
-	if a.drift.soft == nil || !strings.HasPrefix(a.statusLine().Text, "drift · hard: README.md") {
-		t.Fatal("a short prompt on the pin clears nothing, the soft notice included")
+	if a.drift.soft == nil || !strings.HasPrefix(a.statusLine().Text, "off pin · README.md") {
+		t.Fatal("a short prompt on the pin clears nothing, the soft drift included")
 	}
 	a.ingest([]watch.Event{edit(a, c, 4*time.Second, "internal/tui/plans.go")})
-	if !strings.HasPrefix(a.statusLine().Text, "drift · hard: README.md") {
-		t.Fatal("an on-pin edit clears a soft notice, not a hard one")
+	if a.drift.soft != nil || !strings.HasPrefix(a.statusLine().Text, "off pin · README.md") {
+		t.Fatal("an on-pin edit clears soft drift, not hard")
 	}
-	a.ingest([]watch.Event{edit(a, c, 5*time.Second, "internal/tui/live_extra.go"), edit(a, c, 6*time.Second, "internal/tui/live.go")})
-	if got := a.statusLine().Text; got != "drift · hard: README.md · outside card-highlight files" {
-		t.Fatalf("back on the pin clears the soft notice; the unresolved hard one shows again: %q", got)
+	a.ingest([]watch.Event{edit(a, c, 5*time.Second, "internal/tui/live_extra.go")})
+	if a.drift.soft == nil || a.statusLine().Text != "off pin · README.md · outside card-highlight files" {
+		t.Fatalf("soft drift is AGENT's only: the hard notice stays: %q", a.statusLine().Text)
+	}
+	a.ingest([]watch.Event{edit(a, c, 6*time.Second, "internal/tui/live.go")})
+	if got := a.statusLine().Text; a.drift.soft != nil || got != "off pin · README.md · outside card-highlight files" {
+		t.Fatalf("back on the pin clears the soft drift; the unresolved hard notice stays: %q", got)
 	}
 	a.ingest([]watch.Event{at(c, 7*time.Second, watch.Event{Source: "claude", Kind: "user", Text: "now add three extra palettes for dark mode"})})
-	if got := a.statusLine().Text; got != "drift · hard: now add three extra palettes for dark mode · asks for extra palettes, which is out of scope" {
+	if got := a.statusLine().Text; got != "off pin · now add three extra palettes for dark mode · asks for extra palettes, which is out of scope" {
 		t.Fatalf("%q", got)
 	}
 	a.ingest([]watch.Event{edit(a, c, 8*time.Second, "rex/plans/cuj/demo.rex.json")})
@@ -75,12 +81,12 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 	if _, err := os.Stat(feed); !os.IsNotExist(err) {
 		t.Fatal("drift never writes the feed")
 	}
-	// The agent pins another task: row 1 clears and a new block starts.
+	// The agent pins another task: the notice clears and a new block starts.
 	moved := strings.Replace(strings.Replace(driftDemo, `"status": "active"`, `"status": "done"`, 1), `"title": "Outline",`, `"title": "Outline", "status": "active",`, 1)
 	os.WriteFile(path, []byte(moved), 0o644)
 	later(a, c)
-	if strings.HasPrefix(a.statusLine().Text, "drift") {
-		t.Fatal(a.statusLine().Text)
+	if s, ok := a.driftStatus(); ok {
+		t.Fatal(s.Text)
 	}
 	a.ingest([]watch.Event{edit(a, c, 9*time.Second, "README.md")})
 	if v := viewText(BuildLogView(a.log, 78, viewOpt{tall: true})); !strings.Contains(v, "rex › drift · load-outline") || strings.Count(v, "rex › drift ·") != 2 {
@@ -113,7 +119,7 @@ func TestDriftBelongsToItsPlanAndStint(t *testing.T) {
 	os.WriteFile(other, []byte(driftDemo), 0o644)
 	a.plans.Current = other
 	a.openedPlan()
-	if strings.HasPrefix(a.statusLine().Text, "drift") {
+	if strings.HasPrefix(a.statusLine().Text, offPin) {
 		t.Fatalf("another plan doesn't inherit drift: %q", a.statusLine().Text)
 	}
 	if !a.ingest([]watch.Event{edit(a, c, 2*time.Second, "go.mod")}) {
@@ -126,7 +132,8 @@ func TestDriftBelongsToItsPlanAndStint(t *testing.T) {
 
 // docs/ux.md §9a, §11: while a latched plan offers the one the agent
 // wrote, the agent is working on that plan. Its edits and prompts are not
-// drift from the latched pin, so they never hide the offer.
+// drift from the latched pin, so they never take the notice row from the
+// offer (§4).
 func TestTheOfferedPlansWorkIsNotDrift(t *testing.T) {
 	a, c, path := openDemo(t, driftDemo, 120, 32)
 	repo := a.plans.Repo
@@ -140,8 +147,8 @@ func TestTheOfferedPlansWorkIsNotDrift(t *testing.T) {
 		edit(a, c, 2*time.Second, "src/a.go"),
 		at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "user", Text: "now add three extra palettes for dark mode"}),
 	})
-	if got := a.statusLine().Text; !strings.HasPrefix(got, "new plan a · ") {
-		t.Fatalf("row 1 keeps the offer: %q", got)
+	if got := a.statusLine().Text; got != "Your agent wrote a · o opens it" {
+		t.Fatalf("the notice keeps the offer: %q", got)
 	}
 	if len(a.drift.items) != 0 {
 		t.Fatalf("the offered plan's work is not drift: %v", a.drift.items)
@@ -151,11 +158,11 @@ func TestTheOfferedPlansWorkIsNotDrift(t *testing.T) {
 			t.Fatalf("no drift block on the tape: %q", ev.Text)
 		}
 	}
-	if press(a, "\r"); a.plans.Current != other || !a.follow || a.offer != "" {
-		t.Fatalf("enter switches: current=%q (was %q) follow=%v", a.plans.Current, path, a.follow)
+	if press(a, "o"); a.plans.Current != other || !a.follow || a.offer != "" {
+		t.Fatalf("o switches: current=%q (was %q) follow=%v", a.plans.Current, path, a.follow)
 	}
 	a.ingest([]watch.Event{edit(a, c, 4*time.Second, "README.md")})
-	if got := a.statusLine().Text; got != "drift · hard: README.md · outside render files" {
+	if got := a.statusLine().Text; got != "off pin · README.md · outside render files" {
 		t.Fatalf("following again, edits are judged against the new pin: %q", got)
 	}
 }
@@ -165,10 +172,8 @@ func TestDriftClearsWhenThePlanIsWidened(t *testing.T) {
 	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
 	os.WriteFile(path, []byte(strings.Replace(driftDemo, `"files": ["internal/tui/plans.go"`, `"files": ["README.md", "internal/tui/plans.go"`, 1)), 0o644)
 	later(a, c)
-	for _, level := range []plan.DriftLevel{plan.Soft, plan.Hard} {
-		if s, ok := a.driftStatus(level); ok {
-			t.Fatalf("README.md is listed now: %q", s.Text)
-		}
+	if s, ok := a.driftStatus(); ok || a.drift.hard != nil || a.drift.soft != nil {
+		t.Fatalf("README.md is listed now: %q", s.Text)
 	}
 }
 
@@ -256,7 +261,7 @@ func TestOnePatchManyFiles(t *testing.T) {
 	// the on-pin file last, so it mustn't clear what the others raised
 	paths := []any{filepath.Join(repo, "README.md"), filepath.Join(repo, "internal/tui/live_view.go"), filepath.Join(repo, "internal/tui/plans.go")}
 	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "codex", Kind: "result", Text: "wrote " + paths[0].(string), Meta: map[string]any{"tool": "apply_patch", "path": paths[0], "paths": paths, "ok": true}})})
-	if got := a.statusLine().Text; !strings.HasPrefix(got, "drift · hard: README.md") || a.drift.soft == nil {
+	if got := a.statusLine().Text; !strings.HasPrefix(got, "off pin · README.md") || a.drift.soft == nil {
 		t.Fatalf("one patch's files are judged worst last, wherever they sit in it: %q", got)
 	}
 	if view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true})); !strings.Contains(view, "hard README.md") || !strings.Contains(view, "soft internal/tui/live_view.go") {
@@ -289,7 +294,7 @@ func TestABatchThatMovesThePinIsJudgedAgainstTheNewPin(t *testing.T) {
 	}
 	later(a, c)
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") || got != "▸ load-outline  Outline view" {
+	if got := a.statusLine().Text; got != "pinned  load-outline · Outline view" {
 		t.Fatalf("row 1: %q", got)
 	}
 	if view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true})); strings.Contains(view, "rex › drift") {
@@ -323,7 +328,7 @@ func TestTheFinishedTasksLastEditIsNotDrift(t *testing.T) {
 		}
 		later(a, c)
 		c.t = c.t.Add(toastFor)
-		if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
+		if got := a.statusLine().Text; strings.HasPrefix(got, offPin) {
 			t.Fatalf("patch=%v: row 1: %q", patch, got)
 		}
 		if view := viewText(BuildLogView(a.log, 78, viewOpt{tall: true})); strings.Contains(view, "rex › drift") {
@@ -362,14 +367,14 @@ func setStatus(src, id, status string) string {
 func TestAskingTheAgentToSwitchTasksIsNotDrift(t *testing.T) {
 	a, c, path := openDemo(t, switchDemo, 120, 32)
 	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "start recovery"})})
-	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
+	if got := a.statusLine().Text; strings.HasPrefix(got, offPin) || len(a.drift.items) != 0 {
 		t.Fatalf("held while the turn runs: %q", got)
 	}
 	switchTo(t, a, c, path, "passkey-ui", "recovery", 2*time.Second)
 	a.ingest([]watch.Event{at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Started recovery."})})
 	later(a, c)
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; got != "▸ recovery  Recovery codes" {
+	if got := a.statusLine().Text; got != "pinned  recovery · Recovery codes" {
 		t.Fatalf("row 1 %q", got)
 	}
 	if tape := viewText(BuildLogView(a.log, 100, viewOpt{tall: true})); strings.Contains(tape, "rex › drift") {
@@ -378,16 +383,14 @@ func TestAskingTheAgentToSwitchTasksIsNotDrift(t *testing.T) {
 }
 
 // A prompt that names another task is still drift when its turn ends with
-// the pin where it was, or moved somewhere else.
+// the pin where it was, or moved somewhere else. It is soft, so AGENT's
+// block shows it and no row does (docs/ux.md §4, §9a).
 func TestNamingAnotherTaskDriftsWhenThePinStays(t *testing.T) {
 	a, c, path := openDemo(t, switchDemo, 120, 32)
 	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "start recovery"})})
 	a.ingest([]watch.Event{at(c, 2*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Let's finish the passkey button first."})})
-	if got := a.statusLine().Text; got != "drift · soft: start recovery · names recovery, not the pin" {
-		t.Fatalf("the turn ended on the old pin: %q", got)
-	}
-	if k := a.statusLine().Kind; k != "muted" {
-		t.Fatalf("soft drift is muted, never yellow: %q", k)
+	if s := a.drift.soft; s == nil || s.prompt != "start recovery" || a.notice().Text != "" {
+		t.Fatalf("the turn ended on the old pin: soft drift, on no row: %+v %q", s, a.notice().Text)
 	}
 	if tape := viewText(BuildLogView(a.log, 100, viewOpt{tall: true})); !strings.Contains(tape, "rex › drift · passkey-ui") || !strings.Contains(tape, "soft start recovery · names recovery, not the pin") {
 		t.Fatalf("recorded as before\n%s", tape)
@@ -397,7 +400,7 @@ func TestNamingAnotherTaskDriftsWhenThePinStays(t *testing.T) {
 	// turn's end.
 	a.ingest([]watch.Event{at(c, 3*time.Second, watch.Event{Source: "claude", Kind: "user", Text: "now do recovery"})})
 	switchTo(t, a, c, path, "passkey-ui", "audit-log", 4*time.Second)
-	if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
+	if got := a.statusLine().Text; strings.HasPrefix(got, offPin) || len(a.drift.held) == 0 {
 		t.Fatalf("still held under the new pin: %q", got)
 	}
 	a.ingest([]watch.Event{at(c, 5*time.Second, watch.Event{Source: "claude", Kind: "idle"})})
@@ -419,7 +422,7 @@ func TestAnEditBeforeTheSwitchIsNotDrift(t *testing.T) {
 		switch how {
 		case "apart":
 			a.ingest([]watch.Event{code})
-			if got := a.statusLine().Text; strings.HasPrefix(got, "drift") {
+			if got := a.statusLine().Text; strings.HasPrefix(got, offPin) || len(a.drift.items) != 0 {
 				t.Fatalf("%s: the edit waits with the prompt: %q", how, got)
 			}
 			switchTo(t, a, c, path, "passkey-ui", "recovery", 3*time.Second)
@@ -440,7 +443,7 @@ func TestAnEditBeforeTheSwitchIsNotDrift(t *testing.T) {
 			}
 			continue
 		}
-		if got := a.statusLine().Text; got != "▸ recovery  Recovery codes" {
+		if got := a.statusLine().Text; got != "pinned  recovery · Recovery codes" {
 			t.Fatalf("%s: row 1 %q", how, got)
 		}
 		if strings.Contains(tape, "rex › drift") {
@@ -449,11 +452,12 @@ func TestAnEditBeforeTheSwitchIsNotDrift(t *testing.T) {
 	}
 
 	// An edit of another task's file that no prompt asked for is drift at
-	// once, as before.
+	// once, as before: soft, so on AGENT only.
 	a, c, _ := openDemo(t, demo, 120, 32)
 	a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "start audit-log"})})
 	a.ingest([]watch.Event{edit(a, c, 2*time.Second, "internal/recovery/codes.go")})
-	if got := a.statusLine().Text; got != "drift · soft: internal/recovery/codes.go · listed for recovery" {
-		t.Fatalf("row 1 %q", got)
+	tape := viewText(BuildLogView(a.log, 100, viewOpt{tall: true}))
+	if s := a.drift.soft; s == nil || s.rel != "internal/recovery/codes.go" || a.notice().Text != "" || !strings.Contains(tape, "soft internal/recovery/codes.go · listed for recovery") {
+		t.Fatalf("soft drift at once, on AGENT only: notice %q\n%s", a.notice().Text, tape)
 	}
 }

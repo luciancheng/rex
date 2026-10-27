@@ -138,14 +138,14 @@ func TestHelpOverlay(t *testing.T) {
 	a := testApp(t)
 	press(a, "\t", "?")
 	frame := a.frame()
-	for _, want := range []string{"AGENT › HELP", "THIS PAGE", "agent", "EVERYWHERE", "switch plan / agent", "esc close"} {
+	for _, want := range []string{"Agent › Help", "THIS PAGE", "agent", "EVERYWHERE", "switch plan / agent", "esc close"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("help overlay lacks %q\n%s", want, frame)
 		}
 	}
 	// Help lists keys, not verbs: Rex has no pin, done, send-off, brief or
-	// note (docs/ux.md §13). No row's key is a lone letter, and no key is
-	// an icon.
+	// note (docs/ux.md §13). No row's key is a lone letter but o, which
+	// opens the plan the notice row offers (§3), and no key is an icon.
 	for _, width := range []int{30, 38, 80} {
 		body := viewText(a.helpBody(width))
 		for _, never := range []string{"p⏎", "d⏎", "s⏎", "b⏎", "o⏎", "⏎", "↔", "tape", "sendoff", "send-off", "brief", "note", "clipboard", "what you typed", "pin the", "mark the"} {
@@ -153,7 +153,7 @@ func TestHelpOverlay(t *testing.T) {
 				t.Fatalf("help at %d offers %q\n%s", width, never, body)
 			}
 		}
-		if m := regexp.MustCompile(`(?m)^  [a-z]( |$)`).FindString(body); m != "" {
+		if m := regexp.MustCompile(`(?m)^  [a-np-z]( |$)`).FindString(body); m != "" {
 			t.Fatalf("help at %d has a one-letter key %q\n%s", width, m, body)
 		}
 		for _, want := range []string{"THIS PAGE", "MARKS", "[PINNED]", "[NEXT UP]", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
@@ -187,15 +187,15 @@ func TestHelpOverlay(t *testing.T) {
 		}
 	}
 	press(a, "\t")
-	if strings.Contains(a.frame(), "› HELP") {
+	if strings.Contains(a.frame(), "› Help") {
 		t.Fatal("overlay belongs to AGENT")
 	}
 	press(a, "\t")
-	if !strings.Contains(a.frame(), "› HELP") {
+	if !strings.Contains(a.frame(), "› Help") {
 		t.Fatal("Tab keeps the overlay open in its place")
 	}
 	press(a, "esc")
-	if strings.Contains(a.frame(), "› HELP") {
+	if strings.Contains(a.frame(), "› Help") {
 		t.Fatal("Esc closes it")
 	}
 	// THIS PAGE follows the page under Help.
@@ -204,15 +204,15 @@ func TestHelpOverlay(t *testing.T) {
 		keys        []string
 		page, crumb string
 	}{
-		{nil, "outline", "PLANS › Send-off demo › HELP"},
-		{[]string{"esc", "\r"}, "task", "PLANS › Send-off demo › card-highlight › HELP"},
-		{[]string{"esc", "esc", "home", "\r"}, "about", "PLANS › Send-off demo › about › HELP"},
-		{[]string{"esc", "esc", "esc"}, "plans", "PLANS › HELP"},
+		{nil, "outline", "Send-off demo › Help"},
+		{[]string{"esc", "\r"}, "task", "Send-off demo › card-highlight › Help"},
+		{[]string{"esc", "esc", "home", "\r"}, "about", "Send-off demo › About › Help"},
+		{[]string{"esc", "esc", "esc"}, "plans", "Plans › Help"},
 	} {
 		press(b, step.keys...)
 		press(b, "?")
 		body := viewText(b.helpBody(78))
-		if !strings.Contains(strings.SplitN(body, "\n", 3)[1], "THIS PAGE") || !strings.Contains(body, step.page+"\n") || !strings.Contains(b.frame(), step.crumb) {
+		if !strings.Contains(strings.SplitN(body, "\n", 3)[0], "THIS PAGE") || !strings.Contains(body, step.page+"\n") || !strings.Contains(b.frame(), step.crumb) {
 			t.Fatalf("%s: help\n%s", step.page, b.frame())
 		}
 	}
@@ -222,7 +222,7 @@ func TestLibraryTextIsLiteralUnlessSlashed(t *testing.T) {
 	a := testApp(t)
 	press(a, "esc") // the plan list
 	typeText(a, "help")
-	if a.overlay[a.pane] != overlayNone || a.preview() != "" || !strings.Contains(a.frame(), "enter create  esc clear  tab agent") {
+	if a.overlay[a.pane] != overlayNone || a.preview() != "" || !strings.Contains(a.frame(), "enter create · esc clear · tab agent") {
 		t.Fatal("plain 'help' on Home is a find, not a verb")
 	}
 	press(a, "\x15")

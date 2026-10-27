@@ -14,8 +14,9 @@ import (
 // Attach (docs/ux.md §1, §11): Rex opens the plan your agent writes. An
 // unlatched session follows each plan file its agent writes in this
 // repo's rex/plans; once you pick a plan in the list it is latched, and
-// another plan's write is only offered on row 1. Text in the plan list's
-// composer, or a Name prompt, holds an attach until it clears.
+// another plan's write is only offered on the notice row, where o opens
+// it. Text in the plan list's composer, or a Name prompt, holds an attach
+// until it clears.
 
 // completedEdit reports whether ev is a file edit that happened: a result,
 // not a denied or failed write, never a read (docs/ux.md §9a, §11).
@@ -98,11 +99,10 @@ func (a *app) planWritten() bool {
 	}
 	a.plans.walk = planWalk{} // the list may have a new plan in it
 	if a.at == atLibrary {
-		a.plans.Rebuild() // so the plan row 1 names is in it; the selection stays by key
+		a.plans.Rebuild() // so the plan the notice names is in it; the selection stays by key
 	}
 	if !a.follow {
-		a.offer = w
-		a.light(PanePlans, "•")
+		a.offer, a.offerName = w, a.wroteName(w)
 		return true
 	}
 	a.attach(w)
@@ -113,15 +113,16 @@ func (a *app) planWritten() bool {
 // are doing would be lost. It reports whether anything changed.
 func (a *app) attach(path string) bool {
 	if a.attachBlocked() {
-		a.light(PanePlans, "•") // held, PLAN has news (docs/ux.md §4)
 		changed := a.pending != path
+		if changed {
+			a.pendingName = a.wroteName(path)
+		}
 		a.pending = path
 		return changed
 	}
 	a.plans.walk = planWalk{}
 	a.plans.open(path)
 	a.openedPlan()
-	a.markOpened()
 	name := a.planLabel(path)
 	a.flash("following "+name, "text")
 	// An event moved PLAN, so the AGENT tab keeps a record of it (Rex's
@@ -156,19 +157,19 @@ func (a *app) applyPending() bool {
 func (a *app) latch() { a.follow = false }
 
 // offerHeld makes a write held while you picked or created a plan in the
-// list the row-1 offer, neither opened nor lost, unless it is the plan you
+// list the offer, neither opened nor lost, unless it is the plan you
 // picked (docs/ux.md §11). openedPlan clears pending, so callers save it
 // first.
 func (a *app) offerHeld(held string) {
 	if held != "" && !a.isOpen(held) {
-		a.offer = held
+		a.offer, a.offerName = held, a.wroteName(held)
 	}
 }
 
-// takeOffer is enter on an empty draft while row 1 offers a plan: open it
-// and follow again. It does nothing where offerTakes says no.
+// takeOffer is o while the notice row offers a plan: open it and follow
+// again. It does nothing where offerOpens says no.
 func (a *app) takeOffer() bool {
-	if !a.offerTakes() {
+	if !a.offerOpens() {
 		return false
 	}
 	p := a.offer
@@ -181,84 +182,108 @@ func (a *app) takeOffer() bool {
 	if !a.isOpen(f) {
 		a.plans.open(f)
 		a.openedPlan()
-		a.markOpened()
 	}
 	a.follow = true
 	return true
 }
 
-// markOpened lights PLAN's cue for a plan opened while AGENT is on screen
-// (docs/ux.md §4): `!` when it can't be read, since its first open shows
-// the error at once and no poll will say so; else `•`, which also puts
-// out the `!` of the plan it replaced.
-func (a *app) markOpened() {
-	if _, bad := docStatus(a.doc); bad {
-		a.light(PanePlans, "!")
-	} else if a.pane != PanePlans {
-		a.unseen[PanePlans] = "•"
-	}
+// offerKey reports that key is o taking the offer now.
+func (a *app) offerKey(key string) bool {
+	return key == "o" && a.offerOpens()
 }
 
-// offerTakes: enter takes the offer here, which is only while row 1 shows it
-// (docs/ux.md §4): not under the plan file's error, a toast or hard
-// drift. Not in the plan list either, where enter opens the selected row,
-// nor in Help, nor while an attach would be held, since opening the plan
-// would drop the plan list's draft or a Name prompt.
-func (a *app) offerTakes() bool {
-	if _, over := a.overOffer(); over {
+// offerOpens: o opens the offer here, which is only while the notice row
+// shows it and names o (docs/ux.md §4): not under an error, your agent's
+// question or a toast.
+func (a *app) offerOpens() bool {
+	if !a.offerCan() {
 		return false
 	}
-	return a.offerCan()
+	_, kind := a.noticeOf()
+	return kind == noticeOffer
 }
 
-// offerCan is offerTakes without asking what row 1 shows.
+// offerCan is offerOpens without asking what the notice row shows: on the
+// open plan's screens, on AGENT, and on the plan list's Home while its
+// draft is empty, where o would otherwise start a find. Not in Help, nor
+// while an attach would be held, since opening the plan would drop the
+// plan list's draft or a Name prompt.
 func (a *app) offerCan() bool {
 	if a.offer == "" || a.overlay[a.pane] != overlayNone || a.attachBlocked() {
 		return false
 	}
-	return a.pane == PaneChat || a.at != atLibrary
+	return a.pane == PaneChat || a.at != atLibrary || a.plans.Screen == ScreenHome
 }
 
-// offerStatus is row 1's new-plan line (docs/ux.md §4): a latched
-// session's agent wrote another plan, or a followed write waits for what
-// you are typing in the plan list. It stays until taken or until you open
-// a plan.
+// offerStatus is the notice row's new-plan line (docs/ux.md §4): a
+// latched session's agent wrote another plan, or a followed write waits
+// for what you are typing in the plan list. It stays until taken or until
+// you open a plan.
 func (a *app) offerStatus() (StatusLine, bool) {
-	p, tail, short := a.offer, "", ""
+	name, tail, short := a.offerName, "", ""
 	switch {
 	case a.pending != "" && a.at == atLibrary && a.plans.Prompting():
 		// Even an empty Name prompt holds it: only closing the prompt lets go.
-		p, tail, short = a.pending, " · opens when the prompt closes", " · waiting"
+		name, tail, short = a.pendingName, " · opens when the prompt closes", " · waiting"
 	case a.pending != "":
-		p, tail, short = a.pending, " · opens when the line is clear", " · waiting"
+		name, tail, short = a.pendingName, " · opens when the line is clear", " · waiting"
 	case a.offer == "":
 		return StatusLine{}, false
 	case a.offerCan():
-		tail = " · enter switch" // narrow, the footer still says it
+		tail, short = " · o opens it", " · o opens it"
 	}
-	name := a.planLabel(p)
-	return StatusLine{Text: "new plan " + name + tail, Kind: "text", Fit: func(w int) string { return fitNewPlan(name, tail, short, w) }, Spans: keySpans}, true
+	return StatusLine{Text: wrotePrefix + name.full() + tail, Kind: "text", Fit: func(w int) string { return fitWrote(name, tail, short, w) }}, true
 }
 
-// fitNewPlan fits "new plan <name><tail>" into width cells: the name is
-// clipped from the left ("…demo") down to headPathMin cells, then short
-// takes tail's place, then the name stands alone, and only then does it
-// go.
-func fitNewPlan(name, tail, short string, width int) string {
-	const head = "new plan "
-	for _, t := range []string{tail, short, ""} {
-		room := width - cellLen(head) - cellLen(t)
-		if cellLen(name) <= room {
-			return head + name + t
-		}
-		if room >= headPathMin {
-			return head + "…" + tailCells(name, room-1) + t
+// wrotePrefix leads the notice of a plan your agent wrote.
+const wrotePrefix = "Your agent wrote "
+
+// wroteAs is a plan the agent wrote as the notice row names it: its
+// title, if it has one, and its path under rex/plans without .rex.json.
+type wroteAs struct{ title, path string }
+
+func (n wroteAs) full() string {
+	if n.title == "" || n.title == n.path {
+		return n.path
+	}
+	return n.title + " (" + n.path + ")"
+}
+
+// wroteName reads the plan the agent wrote once, for its notice.
+func (a *app) wroteName(p string) wroteAs {
+	n := wroteAs{path: a.planLabel(p)}
+	if got, err := plan.Load(p); err == nil {
+		n.title = strings.TrimSpace(flat(got.Title))
+	}
+	return n
+}
+
+// headPathMin is the fewest cells of a plan's path a notice keeps: "…demo".
+const headPathMin = 5
+
+// fitWrote fits "Your agent wrote <title> (<path>)<tail>" into width
+// cells: the title goes first, then the path is clipped from the left
+// ("…demo") down to headPathMin cells, then short takes tail's place,
+// then "new plan" stands in for the lead.
+func fitWrote(n wroteAs, tail, short string, width int) string {
+	for _, head := range []string{wrotePrefix, "new plan "} {
+		for _, t := range []string{tail, short} {
+			if s := head + n.full() + t; cellLen(s) <= width {
+				return s
+			}
+			room := width - cellLen(head) - cellLen(t)
+			if cellLen(n.path) <= room {
+				return head + n.path + t
+			}
+			if room >= headPathMin {
+				return head + "…" + tailCells(n.path, room-1) + t
+			}
 		}
 	}
 	return "new plan" + short
 }
 
-// planLabel is a plan as row 1 names it: its path under rex/plans,
+// planLabel is a plan as the notice row names it: its path under rex/plans,
 // without .rex.json.
 func (a *app) planLabel(p string) string {
 	return strings.ReplaceAll(watch.CleanText(planStem(a.plans.relName(p))), "\n", " ")
@@ -308,7 +333,6 @@ func (a *app) land() {
 	case c == skill.Stale || c == skill.StaleProject:
 		a.flash(skillHint(c), "text")
 		a.toast.Short = "rex-plan skill out of date · ? help"
-		a.toast.Spans = keySpans
 	case n != "":
 		// The plan list's notice (outside git, an old rex-plans/) is news
 		// at start, which no longer shows the plan list.
@@ -333,9 +357,10 @@ func (a *app) scanPlans() bool {
 }
 
 // waitBody is PLAN before any plan is open (docs/ux.md §11): Rex waits
-// for the agent to write one. The headline never goes; under it the plan
-// list's notice, how a plan gets here, the keys, and how to teach the
-// agent the format while the rex-plan skill is missing or an older Rex's.
+// for the agent to write one. The headline never goes; under it how a
+// plan gets here, the keys, and how to teach the agent the format while
+// the rex-plan skill is missing or an older Rex's. The plan list's notice
+// is row 1 (§4).
 // On a short screen the blank rows go first, then the key rows, then HOW
 // IT GOES, then the long skill hint gives way to a short one, which never
 // goes: what still doesn't fit scrolls. With plans off it says only that
@@ -347,21 +372,13 @@ func (a *app) waitBody(width, h int) []LogLine {
 	inner := max(1, width-2)
 	n := a.plans.Notice
 	if n == rexFileNotice {
-		lines := append(appendWrapped(nil, "text", n, inner), LogLine{Kind: "gap"})
-		lines = appendWrapped(lines, "idle", "A file named rex sits where the rex/plans/ folder goes. Move it to turn plans on; Rex never deletes it.", inner)
-		if len(lines) < h {
-			lines = append([]LogLine{{Kind: "gap"}}, lines...)
-		}
-		return lines
+		return appendWrapped(nil, "idle", "A file named rex sits where the rex/plans/ folder goes. Move it to turn plans on; Rex never deletes it.", inner)
 	}
 	var head []LogLine
 	for _, row := range wrap(noPlanText, max(1, inner-2)) {
 		head = append(head, spanLine("text", Span{Text: "  "}, Span{Text: row, Bold: true}))
 	}
-	if n != "" {
-		head = append(head, LogLine{Kind: "idle", Text: "  " + clip(fitNotice(n, inner), inner)})
-	}
-	// Outside git the notice above names the folder, so the step keeps the
+	// Outside git row 1's notice names the folder, so the step keeps the
 	// short path.
 	how := []LogLine{h2Line("HOW IT GOES", "", width)}
 	for i, step := range []string{"you ask your agent to plan the work", "it writes rex/plans/<name>.rex.json", "Rex opens it here and follows it"} {
@@ -393,7 +410,7 @@ func (a *app) waitBody(width, h int) []LogLine {
 		return out
 	}
 	for _, v := range [][]LogLine{
-		join(gap, head, gap, how, gap, keys, gap, long),
+		join(head, gap, how, gap, keys, gap, long),
 		join(head, how, keys, long),
 		join(head, how, long),
 		join(head, long),
@@ -504,16 +521,6 @@ func (s *skillSeen) look(repo string, now time.Time) skill.Copy {
 	home, _ := os.UserHomeDir()
 	s.at, s.got = now, skill.Look(home, repo)
 	return s.got
-}
-
-// waitFooter is the wait screen's footer (docs/ux.md §4); more says the
-// copy runs past the screen.
-func waitFooter(more bool) []FooterSeg {
-	out := []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, helpSeg}
-	if more {
-		out = append(out, FooterSeg{Text: "↑↓ scroll"})
-	}
-	return out
 }
 
 // waitKey handles keys on the wait screen, which has no composer: ↑↓ and

@@ -29,18 +29,18 @@ type helpKey struct {
 }
 
 // pageKeys is THIS PAGE in Help: every key the page it was opened over
-// takes, not only its footer's (docs/ux.md §13). enter's switch to row 1's
-// offer reads the same on every page that takes it.
+// takes, not only its footer's (docs/ux.md §13). o, which opens a plan
+// the notice row offers, reads the same on every page that takes it.
 var pageKeys = map[string][]helpKey{
 	"outline": {
 		{name: "enter →", what: "open the selected task; on the title row, about"},
-		{name: "enter", what: "switch PLAN to a new plan row 1 offers"},
+		offerHelp,
 		{name: "↑↓", what: "move · pgup pgdn a page"},
 		{name: "home end", what: "first / last row (also ctrl+a ctrl+e)"},
-		{name: "esc ←", what: "back to PLANS"},
+		{name: "esc ←", what: "back to the plan list"},
 	},
 	"about": {
-		{name: "enter", what: "switch PLAN to a new plan row 1 offers"},
+		offerHelp,
 		{name: "↑↓", what: "scroll · pgup pgdn a page"},
 		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
 		{name: "esc ←", what: "back to the outline"},
@@ -51,6 +51,7 @@ var pageKeys = map[string][]helpKey{
 		{name: "↑↓", what: "move · pgup pgdn a page"},
 		{name: "home end", what: "first / last (also ctrl+a ctrl+e)"},
 		{name: "type", what: "find a plan across rex/plans"},
+		offerHelp,
 		{name: "esc ←", what: "with no plan open, back to waiting"},
 		{what: "the selected plan opens in place: its goal, pin, what's next and what's done"},
 	},
@@ -60,7 +61,7 @@ var pageKeys = map[string][]helpKey{
 		{name: "↑↓", what: "move · pgup pgdn a page"},
 		{name: "home end", what: "first / last (also ctrl+a ctrl+e)"},
 		{name: "type", what: "filter this folder"},
-		{name: "esc ← ../", what: "up a folder; from a top folder, back to PLANS"},
+		{name: "esc ← ../", what: "up a folder; from a top folder, back to the plan list"},
 	},
 	"new plan": {
 		{name: "enter", what: "create it and open its outline"},
@@ -81,21 +82,24 @@ var pageKeys = map[string][]helpKey{
 		{name: "↑↓", what: "scroll · pgup pgdn a page"},
 		{name: "home", what: "oldest (also ctrl+a)"},
 		{name: "end", what: "live (also ctrl+e)"},
-		{name: "enter", what: "switch PLAN to a new plan row 1 offers"},
+		offerHelp,
 		// No key unfolds a run (docs/ux.md §10), so this is a note, not a key.
 		{what: "folding is display only: the feed keeps every thought"},
 	},
 }
 
+// offerHelp is o in THIS PAGE, on every page where it opens an offer.
+var offerHelp = helpKey{name: "o", what: "open the plan your agent wrote, while the notice row offers it"}
+
 // helpLines is Help (docs/ux.md §13): THIS PAGE, for the page it opened over,
 // then what holds everywhere, the marks, how AGENT names its blocks, the
 // plan list's typing and what Rex never does; the feed's health follows.
-// tall puts a blank row above each section. From 34 cells the key sits in
+// tall puts a blank row above each section but the first. From 34 cells the key sits in
 // an 11-cell column left of what it does; narrower it sits above it.
 func helpLines(width int, page string, tall bool) []LogLine {
 	var lines []LogLine
 	section := func(label, meta string, keys []helpKey) {
-		if tall {
+		if tall && len(lines) > 0 { // the first section's is row 2, under the title
 			lines = append(lines, LogLine{Kind: "gap"})
 		}
 		lines = append(lines, h2Line(label, meta, width))
@@ -145,11 +149,10 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{what: "nothing active: the first ready task", key: pill("NEXT UP", "muted")},
 		{name: "○ · " + doneMark, what: "ready · waiting on another task · done"},
 		{name: "– !", what: "skipped · blocked"},
-		{name: "1/3", what: "a parent's progress; on row 1, the plan's"},
+		{name: "1/3", what: "a parent's progress; on row 0, the plan's"},
 		{what: "your cursor", key: []Span{{Text: "❯", Role: "pick"}}},
-		{what: "news on the other tab (! an ask or an error)", key: []Span{{Text: "• !", Role: "text", Bold: true}}},
 		{name: "following", what: "Rex opens each plan your agent writes"},
-		{name: "latched", what: "you picked this plan; another the agent writes shows on row 1, and enter switches"},
+		{name: "latched", what: "you picked this plan; another the agent writes shows on the notice row, and o opens it"},
 	})
 	section("AGENT TAB", "", []helpKey{
 		{name: "thinking", what: "a run of N thoughts (×N); the latest shows"},

@@ -84,14 +84,25 @@ func TestStartCreatesNothing(t *testing.T) {
 	}
 }
 
+// docs/ux.md §4: outside git the plan list's notice is its row 1, on the
+// Wait screen and on the list, and never a line of the list's body.
 func TestOutsideGitShowsWherePlansGo(t *testing.T) {
 	dir := t.TempDir()
 	b := NewPlanBrowser(dir)
 	if !strings.Contains(b.Notice, "not in a git repo") || !strings.Contains(b.Notice, "rex/plans") {
 		t.Fatalf("notice %q", b.Notice)
 	}
-	if !strings.Contains(viewText(BuildPlanView(b, 80)), "not in a git repo") {
-		t.Fatal("notice not rendered")
+	if strings.Contains(viewText(BuildPlanView(b, 80)), "not in a git repo") {
+		t.Fatal("the notice is row 1's, not the body's")
+	}
+	a := newApp("yellow", false, "idle", b, 120, 32)
+	for _, step := range []string{"wait", "list"} {
+		if step == "list" {
+			press(a, "esc")
+		}
+		if row := textOf(a.frameRows().Rows[1], 120); !strings.HasPrefix(row, "not in a git repo · plans go to ") {
+			t.Fatalf("%s: row 1 %q", step, row)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "rex")); !os.IsNotExist(err) {
 		t.Fatalf("start outside git created rex/: %v", err)
@@ -142,8 +153,13 @@ func TestNewFolderCreatesPlansDirAndRespectsARexFile(t *testing.T) {
 	if c.CommitFolder("grp") != PlanStay || !strings.Contains(c.Err, "move the rex file") {
 		t.Fatalf("err %q", c.Err)
 	}
-	if strings.Count(viewText(BuildPlanView(c, 80)), "rex/ is a file here") != 1 {
-		t.Fatal("the notice and the error must not say the same thing twice")
+	// On the list the notice is row 1 and the error the notice row
+	// (docs/ux.md §4): they don't say the same thing twice.
+	a := newApp("yellow", false, "idle", NewPlanBrowser(other), 120, 32)
+	press(a, "esc")
+	a.plans.CommitFolder("grp")
+	if f := a.frame(); strings.Count(f, "rex/ is a file here") != 1 || !strings.Contains(f, "✗ move the rex file to create plans") {
+		t.Fatalf("the notice and the error must not say the same thing twice\n%s", f)
 	}
 }
 
@@ -174,14 +190,16 @@ func TestDanglingRexSymlinkTurnsPlansOff(t *testing.T) {
 	}
 }
 
+// docs/ux.md §4: row 1's outside-git notice keeps where plans go however
+// narrow the row.
 func TestOutsideGitNoticeKeepsWherePlansGo(t *testing.T) {
 	deep := filepath.Join(t.TempDir(), "a", "very", "deep", "folder", "that", "does", "not", "fit")
 	os.MkdirAll(deep, 0o755)
 	b := NewPlanBrowser(deep)
 	for _, width := range []int{40, 60, 80} {
-		view := viewText(BuildPlanView(b, width))
-		if !strings.Contains(view, "git") || !strings.Contains(view, "/rex/plans") {
-			t.Fatalf("width %d\n%s", width, view)
+		row := strings.TrimRight(statusRow(noticeLine(b.Notice), width, false), " ")
+		if !strings.Contains(row, "git") || !strings.HasSuffix(row, "/rex/plans") || cellLen(row) > width-1 {
+			t.Fatalf("width %d: %q", width, row)
 		}
 	}
 }
@@ -406,7 +424,9 @@ func TestComposeFramePlansPane(t *testing.T) {
 		Enabled: false, Columns: 80, Lines: 24,
 		Pane: PanePlans, Plans: b, Composer: true, Page: &page,
 	})
-	if !strings.Contains(frame, "  PLANS                       0 plans") || !strings.Contains(frame, "❯ + New plan") {
+	// Row 0 at 38 cells: the title, the meta's short form, the label
+	// (docs/ux.md §4).
+	if !strings.Contains(frame, "Plans     no plans yet   plan · agent") || !strings.Contains(frame, "❯ + New plan") {
 		t.Fatalf("%s", frame)
 	}
 }

@@ -22,16 +22,16 @@
 
 <p align="center">macOS · Linux · Windows 10+</p>
 
-Rex is a terminal sidecar for developers who work with an AI coding agent: Cursor, Claude Code, Codex or OpenCode. You keep talking to your agent as usual. Rex sits in a second terminal with a pixel-art dino and shows two tabs, always both on its top row (`[PLAN] AGENT`: the one on screen is highlighted, or in brackets without color):
+Rex is a terminal sidecar for developers who work with an AI coding agent: Cursor, Claude Code, Codex or OpenCode. You keep talking to your agent as usual. Rex sits in a second terminal with a pixel-art dino and shows two places, named at the end of its top row (`plan · agent`, the one on screen brighter), and Tab switches between them:
 - **PLAN**: a JSON file in your repo that breaks the work into PR-sized tasks;
 - **AGENT**: what the agent is doing right now, as it happens: your prompts, its thoughts (a run of them folds to one line with the latest), the commands it runs, failed steps, questions and replies.
 
 Rex is **watch-only**, with one thing it hands over: before each prompt, the task pinned in your plan reaches the agent as a short note (Claude Code, Codex, Cursor and OpenCode). It never runs tools, approves them or steers the agent, and it never edits your plan. The agent drives the plan: you ask it to plan, to work a task or to continue, and it writes the plan file (which task is active, what is done and how it was checked). Rex shows each change as it lands. There is nothing to copy from Rex into the chat.
 
 ```
-REX [PLAN] AGENT idle            following rex/plans/cuj/sendoff-demo.rex.json
-▸ card-highlight  Selected plan card is one block                     1/3 done
-  PLANS › Send-off demo                                                active
+  Send-off demo                           1/3 done · following   plan · agent
+pinned  card-highlight · Selected plan card is one block
+
   A teammate opens this plan in Rex and sees what the work is and which task …
 
 ╭─[PINNED]─ card-highlight · Selected plan card is one block ────────────────╮
@@ -48,10 +48,10 @@ TASKS ────────────────────────�
 ❯ ▸ card-highlight  Selected plan card is one block · Bar, border and…  pinned
   · load-outline    Outline view · Opening a plan shows…  after card-highlight
 
-esc plans  tab agent  enter open  ? help  ↑↓ move
+↑↓ select · enter details · esc plans · tab agent · ? help
 ```
 
-The top row is the tabs (a `•` between them means the other tab has news, `!` that it needs you), the turn and the open plan; the second, the task the agent is on and the plan's progress; the third, where you are (Esc goes back along it). Under the plan's goal, the **PINNED** card is what a fresh chat needs to work that task, read from the plan file: what it does and needs, how to check it, its files, and the done task it builds on (`NEXT UP` when no task is active yet). Then every task, the pinned one in yellow, each done one with a green `✔` and what it accomplished, and a purple `❯` on the one your cursor is on. Yellow is only ever the pin (and an edit that went off it). The bottom row lists the keys that work here.
+The top row says where you are (Esc goes back along it), the plan's progress, that Rex follows the plans your agent writes, and which place you are in; the second, the task that is pinned. Under the plan's goal, the **PINNED** card is what a fresh chat needs to work that task, read from the plan file: what it does and needs, how to check it, its files, and the done task it builds on (`NEXT UP` when no task is active yet). Then every task, the pinned one in yellow, each done one with a green `✔` and what it accomplished, and a purple `❯` on the one your cursor is on. Yellow is only ever the pin (and an edit that went off it). The row above the bottom one says what just happened, one thing at a time: the plan changed, a task got done, your agent is asking you something, or it wrote another plan (`o` opens it). The bottom row lists the keys that work here.
 
 ## Requirements
 
@@ -87,14 +87,14 @@ This puts `rex` in `$(go env GOPATH)/bin`. Then wire your agent (see [Agents](#a
 
 1. Wire your agent (see [Agents](#agents)) and teach it the plan format with `rex ingest --install-skill`. Open a new terminal, `cd` into your repo and run `rex start`. It opens the plan you had open last time, else the newest plan in `rex/plans/`, else waits for one.
 2. Ask your agent to plan the work in `rex/plans/<name>.rex.json`. Rex opens the outline as soon as the agent writes the file, and updates it as the agent fills it in.
-3. Ask your agent to work the plan ("work the plan", "continue rex/plans/<name>.rex.json"). It sets the task it starts to `active`, and Rex shows it as the pin on the status line and on the outline's PINNED card. When it finishes, it marks the task `done` with what it did, what it changed and how it checked, and Rex shows `✔ <task> done · next up <next>`; the card moves on to the next task. Enter on a task shows all of it; enter on the plan's title row shows its goal, scope and everything done so far. Each task is one PR; ask it for the next one when you're ready.
+3. Ask your agent to work the plan ("work the plan", "continue rex/plans/<name>.rex.json"). It sets the task it starts to `active`, and Rex shows it as the pin on the second row and on the outline's PINNED card. When it finishes, it marks the task `done` with what it did, what it changed and how it checked, and Rex shows `✔ <task> done · next up <next>`; the card moves on to the next task. Enter on a task shows all of it; enter on the plan's title row shows its goal, scope and everything done so far. Each task is one PR; ask it for the next one when you're ready.
 4. Press Tab to watch the agent while it works, and Tab again to go back to the plan. `?` shows every key.
-5. The top row says `following` while Rex opens each plan your agent writes. Pick another plan yourself (Esc, then pick it from the list, or type a name and enter) and it says `latched`: a plan the agent writes then waits on the status line until you press enter.
+5. The top row says `following` while Rex opens each plan your agent writes. Pick another plan yourself (Esc, then pick it from the list, or type a name and enter) and Rex stays on it: a plan the agent writes then waits on the row above the keys, `Your agent wrote … · o opens it`, until you press `o`.
 6. Ctrl+C twice quits.
 
 **How does the agent know the pinned task?** In Claude Code, Codex and Cursor the prompt hook, and in OpenCode Rex's plugin, adds it to every prompt you send: a short, factual note that starts with `Rex note`, read from the plan file just then (what the task does and needs, how to verify it, its files, what it builds on, what is out of scope). It is sent only while a task is `active` in the plan Rex last opened in this repo (a task that is only next up is never sent, and a plan you never opened in Rex sends nothing, whatever it pins), it is capped at 1,500 bytes, and it is left out if it isn't ready within 750 ms of the hook starting (OpenCode's plugin waits for it at most 1.5 s, then sends the prompt without it). While nothing is pinned and the plan Rex last opened in this repo has no tasks yet, the note just names that plan, so "plan this" works. With nothing pinned and no such empty plan, nothing is sent: that is the off switch. Cursor reads the note on every prompt in recent builds (seen working in Cursor 3.20 and its CLI 2026.10; the field Rex uses there is undocumented, and an older build, such as 3.2, ignores it); it also gets it at least once per chat, from a `sessionStart` hook, as of the moment the chat starts. To stop the note, set the task back to `pending` (ask your agent, or edit its `status`); `rex ingest --uninstall claude` (or `codex`, `cursor` or `opencode`) takes Rex's hooks out altogether. The `rex-plan` skill also tells the agent to re-read the plan at the start of every turn and work its `active` task, so a fresh chat picks up where the last one stopped when you say "continue the plan".
 
-If the agent edits files outside the pinned task, or you ask for something the plan's `scope.out` rules out, Rex shows **drift** on the status line and the AGENT tab. It never corrects the agent.
+If the agent edits files outside the pinned task, or you ask for something the plan's `scope.out` rules out, Rex shows **drift** on the row above the keys (`off pin · …`) and on the AGENT tab. It never corrects the agent.
 
 ## Agents
 
@@ -118,8 +118,9 @@ Keys act at once, and every screen's bottom row lists the ones that work there. 
 | Key | Does |
 | --- | --- |
 | Tab | switch between PLAN and AGENT |
-| Enter | open the selection; switch to a plan the agent wrote when the status line offers it |
-| Esc | go up one level, back along the page title (in the plan list, clear what you typed first) |
+| Enter | open the selection |
+| `o` | open a plan the agent wrote, when the row above the keys offers it (it names `o`) |
+| Esc | go up one level, back along the title on the top row (in the plan list, clear what you typed first) |
 | ↑ ↓ · PgUp PgDn | move, or scroll |
 | ← → | up a level · into a folder or a task's detail |
 | Home End | first and last; on AGENT, oldest and live (also Ctrl+A, Ctrl+E) |

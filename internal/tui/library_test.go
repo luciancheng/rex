@@ -65,10 +65,12 @@ func listRepo(t *testing.T) *app {
 	return a
 }
 
-// body is the text column's rows from the page title down, trimmed.
+// body is the text column's rows from the body down, trimmed: under the
+// title row and row 1, and under row 2's blank from blankFrom rows
+// (docs/ux.md §4).
 func body(a *app) string {
 	var out []string
-	for _, r := range a.frameRows().Rows[2:] {
+	for _, r := range a.frameRows().Rows[2+a.layout().blank:] {
 		out = append(out, strings.TrimRight(textOf(r, a.columns), " "))
 	}
 	return strings.Join(out, "\n")
@@ -152,9 +154,10 @@ func TestPlanListGroups(t *testing.T) {
 	}
 }
 
-// The plan list as docs/ux.md §11 draws it: groups with a blank row above
-// each H2 at 24 rows, the accordion on the selected plan, no blank rows
-// at 12 rows and the accordion's title and pin, nothing but rows at 7.
+// The plan list as docs/ux.md §11 draws it under its title and row 1
+// (§4): groups with a blank row above each H2 but the first (row 2 is its
+// blank) at 24 rows, the accordion on the selected plan, no blank rows at
+// 12 rows and the accordion's pin alone, nothing but rows at 7.
 func TestPlanListMockups(t *testing.T) {
 	cases := []struct {
 		cols, lines int
@@ -162,8 +165,6 @@ func TestPlanListMockups(t *testing.T) {
 		want        string
 	}{
 		{80, 24, nil, `
-  PLANS                       4 plans
-
 OPEN ─────────────────────── following
 ❯ cuj/sendoff-demo                 1/3
     Send-off demo · active
@@ -180,38 +181,32 @@ RECENT ────────────────────────�
 FOLDERS ─────────────────── rex/plans/
   cuj/                          1 plan
   ↓ more`},
-		// At 16 rows the accordion keeps 4 lines, over the blank rows. One
+		// At 16 rows the accordion keeps 3 lines, over the blank rows. One
 		// ↓ scrolls the open plan away: ↑ more stands on its row, not on
 		// a heading.
 		{80, 16, []string{"down"}, `
-  PLANS                       4 plans
   ↑ more
 RECENT ───────────────────────────────
 ❯ ux/redesign                      1/6
     Rex visual redesign · active
     next up ▸ b
-    then    ○ c  ○ d
     done    ✔ a
   auth-flow                        0/4
   ↓ more`},
 		{80, 12, nil, `
-  PLANS                       4 plans
 OPEN ─────────────────────── following
 ❯ cuj/sendoff-demo                 1/3
-    Send-off demo · active
     pinned  ▸ card-highlight  Selecte…
 RECENT ───────────────────────────────
   ux/redesign                      1/6
   ↓ more`},
 		{80, 7, nil, `
-  PLANS                       4 plans
 ❯ cuj/sendoff-demo          open · 1/3
-  ux/redesign                      1/6`},
+  ux/redesign                      1/6
+  ↓ more`},
 		{24, 12, nil, `
-  PLANS         4 plans
 OPEN ───────── following
 ❯ cuj/sendoff-demo   1/3
-    Send-off demo
     ▸ card-highlight
 RECENT ─────────────────
   ux/redesign        1/6
@@ -223,9 +218,18 @@ RECENT ─────────────────
 		a.settle(tc.cols, tc.lines)
 		press(a, tc.keys...)
 		l := a.layout()
-		got := strings.Join(strings.Split(body(a), "\n")[:1+l.bodyH], "\n")
+		got := strings.Join(strings.Split(body(a), "\n")[:l.bodyH], "\n")
 		if want := strings.TrimPrefix(tc.want, "\n"); got != want {
 			t.Errorf("%d×%d %v:\n%s\nwant\n%s", tc.cols, tc.lines, tc.keys, got, want)
+		}
+		// Over it, row 0 names the page and counts the plans, and row 1
+		// says what it is for (docs/ux.md §4).
+		rows := a.frameRows().Rows
+		if head := textOf(rows[0], tc.cols); !strings.HasPrefix(head, "Plans ") || !strings.Contains(head, "4 plans") {
+			t.Errorf("%d×%d: row 0 %q", tc.cols, tc.lines, head)
+		}
+		if ctx := textOf(rows[1], tc.cols); !strings.HasPrefix(ctx, "Pick up where you left") {
+			t.Errorf("%d×%d: row 1 %q", tc.cols, tc.lines, ctx)
 		}
 	}
 
@@ -269,7 +273,8 @@ func TestPlanListCursor(t *testing.T) {
 		t.Fatalf("↓ is the newest other plan: %+v", row)
 	}
 	press(a, "\r")
-	if a.follow || filepath.Base(a.plans.Current) != "redesign.rex.json" || !strings.Contains(a.frame(), "latched") {
+	// Latched shows no word: row 0's meta drops "following" (docs/ux.md §4).
+	if a.follow || filepath.Base(a.plans.Current) != "redesign.rex.json" || strings.Contains(a.frameRows().Rows[0], "following") {
 		t.Fatalf("enter on another plan latches\n%s", a.frame())
 	}
 
@@ -297,7 +302,7 @@ func TestPlanListRoles(t *testing.T) {
 	a := listRepo(t)
 	press(a, "esc")
 	var row *LogLine
-	lines := planList(a.plans, a.layout().textW, listFit{body: a.layout().bodyH, tall: a.lines >= 16})
+	lines := planList(a.plans, a.layout().textW, listFit{body: a.layout().bodyH, tall: a.lines >= 16, short: a.lines < blankFrom})
 	for i := range lines {
 		if lines[i].Selected {
 			row = &lines[i]
@@ -339,7 +344,7 @@ func TestAccordion(t *testing.T) {
 	press(a, "esc")
 	block := func() []LogLine {
 		var out []LogLine
-		for _, line := range planList(a.plans, a.layout().textW, listFit{body: a.layout().bodyH, tall: a.lines >= 16}) {
+		for _, line := range planList(a.plans, a.layout().textW, listFit{body: a.layout().bodyH, tall: a.lines >= 16, short: a.lines < blankFrom}) {
 			if line.Selected {
 				out = append(out, line)
 			}
@@ -359,11 +364,12 @@ func TestAccordion(t *testing.T) {
 	}{
 		{80, 24, "Send-off,goal,pinned,then,done"},
 		{80, 20, "Send-off,goal,pinned,then,done"},
-		{80, 16, "Send-off,goal,pinned,done"},
-		{80, 15, "Send-off,goal,pinned,done"},
-		{80, 12, "Send-off,pinned"},
-		{120, 16, "active ·,goal,pinned,done"},
-		{120, 12, "pinned,done"},
+		{80, 16, "Send-off,pinned,done"},
+		{80, 15, "Send-off,pinned,done"},
+		{80, 12, "pinned"},
+		{80, 11, "pinned"}, // sized as 12 rows, where row 2 and the notice row take two (docs/ux.md §4)
+		{120, 16, "active ·,pinned,done"},
+		{120, 12, "pinned"},
 		{120, 24, "active ·,goal,pinned,then,done"},
 		{24, 24, "Send-off,▸ card-h"},
 	} {
@@ -494,8 +500,8 @@ func TestAccordionUntitledAndFinished(t *testing.T) {
 
 // docs/ux.md §11: OPEN's row and accordion are the plan the outline shows
 // (§6). A save caught half-written by a rebuild keeps the last good copy
-// there, as it does on the outline, and only an error row 1 shows reaches
-// the list.
+// there, as it does on the outline, and only an error the notice row
+// shows (§4) reaches the list.
 func TestOpenRowFollowsTheOutline(t *testing.T) {
 	a, c, path := cujApp(t)
 	press(a, "esc")
@@ -529,9 +535,10 @@ func TestOpenRowFollowsTheOutline(t *testing.T) {
 	}
 }
 
-// docs/ux.md §4, §11: a plan Rex can't open says why on row 1 and in the
-// accordion, the open plan's and another's alike: the cause, never the
-// absolute path an open error leads with, which pushed the cause off.
+// docs/ux.md §4, §11: a plan Rex can't open says why on the notice row
+// and in the accordion, the open plan's and another's alike: the cause,
+// never the absolute path an open error leads with, which pushed the cause
+// off.
 func TestUnreadablePlansSayWhy(t *testing.T) {
 	a, c, path := cujApp(t)
 	other := writePlan(t, a.plans.Repo, "other.rex.json", demoPlan)
@@ -546,8 +553,8 @@ func TestUnreadablePlansSayWhy(t *testing.T) {
 	}
 	c.t = c.t.Add(docPollEvery)
 	a.tick()
-	if got, want := a.statusLine().Text, "plan error: permission denied · showing last good"; got != want {
-		t.Fatalf("row 1: %q, want %q", got, want)
+	if got, want := a.notice().Text, "✗ plan error: permission denied · showing last good"; got != want {
+		t.Fatalf("the notice row: %q, want %q", got, want)
 	}
 	a.plans.walk = planWalk{}
 	press(a, "esc")
@@ -563,8 +570,8 @@ func TestUnreadablePlansSayWhy(t *testing.T) {
 	}
 }
 
-// docs/ux.md §11: a name the filesystem refuses says why in the Name
-// prompt, not the absolute path the error leads with.
+// docs/ux.md §4, §11: a name the filesystem refuses says why on the Name
+// prompt's notice row, not the absolute path the error leads with.
 func TestNamePromptSaysWhyCreateFails(t *testing.T) {
 	long := strings.Repeat("x", draftCap) // over any filesystem's 255
 	for kind, made := range map[PlanRowKind]func(string) error{
@@ -581,7 +588,7 @@ func TestNamePromptSaysWhyCreateFails(t *testing.T) {
 		press(a, "\r")
 		typeText(a, long)
 		press(a, "\r")
-		if !a.plans.Prompting() || a.plans.Err != pe.Err.Error() || !strings.Contains(a.frame(), "  "+pe.Err.Error()) {
+		if !a.plans.Prompting() || a.plans.Err != pe.Err.Error() || a.notice().Text != "✗ "+pe.Err.Error() || !strings.Contains(a.frame(), "✗ "+pe.Err.Error()) {
 			t.Errorf("row %d: %q, want %q\n%s", kind, a.plans.Err, pe.Err, a.frame())
 		}
 	}
@@ -629,9 +636,10 @@ func TestRecentLeadsWithPlansOpenedThisRun(t *testing.T) {
 }
 
 // docs/ux.md §12: the accordion takes the rows the screen leaves, so a
-// taller terminal never shows fewer of its lines: not at 16 rows, where
-// the composer becomes its box, and not for the blank rows, which go in
-// only where the accordion keeps its lines. The block always fits.
+// taller terminal never shows fewer of its lines: not at 12 rows, where
+// row 2 and the notice row come in (§4), not at 16 rows, where the
+// composer becomes its box, and not for the blank rows, which go in only
+// where the accordion keeps its lines. The block always fits.
 func TestAccordionNeverShrinksAsRowsGrow(t *testing.T) {
 	for _, screen := range []string{"list", "find", "browse"} {
 		for _, cols := range []int{80, 120} {
@@ -661,7 +669,7 @@ func TestAccordionNeverShrinksAsRowsGrow(t *testing.T) {
 				if n < was {
 					t.Errorf("%s at %d cells: %d lines at %d rows, %d at %d\n%s", screen, PaneTextWidth(cols), n, rows, was, rows-1, body(a))
 				}
-				if fold := len(accordion(a.plans.sums[a.plans.Rows[a.plans.Cursor].Path], PaneTextWidth(cols), 5, a.now())); rows >= 17 && n != fold {
+				if fold := len(accordion(a.plans.sums[a.plans.Rows[a.plans.Cursor].Path], PaneTextWidth(cols), 5, a.now())); rows >= 18 && n != fold {
 					t.Errorf("%s at %d×%d: %d of the accordion's %d lines", screen, cols, rows, n, fold)
 				}
 				was = n
@@ -670,9 +678,10 @@ func TestAccordionNeverShrinksAsRowsGrow(t *testing.T) {
 	}
 }
 
-// Outside git a notice heads Browse. The accordion is sized after it (and
-// its blank row, which goes in only where the accordion keeps its lines),
-// so no row is left empty under a cut accordion (docs/ux.md §12).
+// Outside git Browse has no head over its rows: the notice is row 1 on
+// every plan list screen (docs/ux.md §4), not a line of the list. The accordion takes the rows
+// the rest leaves, so no row is left empty under a cut accordion
+// (docs/ux.md §12).
 func TestBrowseAccordionFillsItsRows(t *testing.T) {
 	repo := t.TempDir() // no .git: the notice
 	writePlan(t, repo, "cuj/a.rex.json", demoPlan)
@@ -680,8 +689,7 @@ func TestBrowseAccordionFillsItsRows(t *testing.T) {
 	press(a, "esc")
 	browseTo(t, a, "cuj")
 	pickRow(a, PlanRowPlan, "a.rex.json")
-	// Under the page title and the notice: all 9 rows used at 16 rows,
-	// and from 20 the blank row and the whole accordion.
+	// All 8 body rows used at 16 rows, and from 20 the whole accordion.
 	for _, tc := range []struct {
 		rows int
 		want string
@@ -694,8 +702,7 @@ func TestBrowseAccordionFillsItsRows(t *testing.T) {
   ──────────────────────────────────
   + New plan
   + New folder`},
-		{20, `
-  ../
+		{20, `  ../
 ❯ a                         open · 1/3
     Send-off demo · active
     goal    Show a plan, pin a task, …
@@ -705,11 +712,12 @@ func TestBrowseAccordionFillsItsRows(t *testing.T) {
   ──────────────────────────────────
   + New plan
   + New folder
+
 `},
 	} {
 		a.settle(80, tc.rows)
 		lines := strings.Split(body(a), "\n")
-		if got := strings.Join(lines[2:1+a.layout().bodyH], "\n"); got != tc.want || !strings.HasPrefix(lines[1], "  no git") {
+		if got, row1 := strings.Join(lines[:a.layout().bodyH], "\n"), textOf(a.frameRows().Rows[1], 80); got != tc.want || !strings.HasPrefix(row1, "not in git · plans go to") || !strings.HasSuffix(row1, "/rex/plans") {
 			t.Errorf("80×%d:\n%s\nwant\n%s", tc.rows, strings.Join(lines, "\n"), tc.want)
 		}
 	}
@@ -736,7 +744,7 @@ func TestListWindowEdges(t *testing.T) {
 				where := fmt.Sprintf("%d×%d %s %d", cols, rows, key, step)
 				frame := a.frameRows().Rows
 				l := a.layout()
-				all := planList(a.plans, l.textW, listFit{body: l.bodyH, tall: rows >= 16, follow: a.followWord()})
+				all := planList(a.plans, l.textW, listFit{body: l.bodyH, tall: rows >= 16, short: rows < blankFrom, follow: a.followWord()})
 				list, start := all[headOf(all):], a.plans.View
 				if start > 0 && !slices.ContainsFunc(list[:start], notGap) {
 					t.Errorf("%s: scrolled only to hide blank rows\n%s", where, body(a))
@@ -771,7 +779,7 @@ func TestOnePlanSetForEveryCount(t *testing.T) {
 	hidden := writePlan(t, a.plans.Repo, ".archive/old.rex.json", demoPlan)
 	a.plans.walk = planWalk{}
 	press(a, "esc")
-	if meta := libraryPage(a.plans).Meta; meta != "4 plans" || strings.Contains(body(a), ".archive") {
+	if meta := spanText(libraryPage(a.plans).Short); meta != "4 plans" || strings.Contains(body(a), ".archive") {
 		t.Fatalf("a hidden folder's plans are left out: %q\n%s", meta, body(a))
 	}
 	// Left off the list, not out of reach: a find matches it, and start
@@ -798,8 +806,8 @@ func TestOnePlanSetForEveryCount(t *testing.T) {
 	}
 	a.ingest([]watch.Event{wrote(a.plans.Repo, hidden)})
 	press(a, "esc")
-	if row := a.plans.Rows[a.plans.Cursor]; row.Group != groupOpen || row.Name != ".archive/old.rex.json" || libraryPage(a.plans).Meta != "5 plans" {
-		t.Fatalf("the open plan is under OPEN wherever it lives: %+v %q", row, libraryPage(a.plans).Meta)
+	if row := a.plans.Rows[a.plans.Cursor]; row.Group != groupOpen || row.Name != ".archive/old.rex.json" || spanText(libraryPage(a.plans).Short) != "5 plans" {
+		t.Fatalf("the open plan is under OPEN wherever it lives: %+v %q", row, spanText(libraryPage(a.plans).Short))
 	}
 
 	b := listRepo(t)
@@ -813,11 +821,11 @@ func TestOnePlanSetForEveryCount(t *testing.T) {
 			t.Fatalf("cuj/ counts the plan and its link once: %d", row.Plans)
 		}
 	}
-	if meta := libraryPage(b.plans).Meta; meta != "4 plans" {
+	if meta := spanText(libraryPage(b.plans).Short); meta != "4 plans" {
 		t.Fatalf("page %q", meta)
 	}
 	browseTo(t, b, "cuj")
-	if meta := libraryPage(b.plans).Meta; meta != "1 plan" {
+	if meta := spanText(libraryPage(b.plans).Meta); meta != "1 plan" {
 		t.Fatalf("Browse cuj/ %q", meta)
 	}
 }
@@ -852,7 +860,8 @@ func TestOpenMarkGoesByFile(t *testing.T) {
 	marked("find")
 }
 
-// docs/ux.md §11: a find is one flat list under PLANS › find, the open
+// docs/ux.md §4, §11: a find is one flat list under Plans › Find on row
+// 0, which counts its matches, and row 1 says what it finds; the open
 // plan's meta says it is open, the selected match keeps its accordion,
 // and + Create 'x' comes last.
 func TestFindFlat(t *testing.T) {
@@ -860,14 +869,16 @@ func TestFindFlat(t *testing.T) {
 	press(a, "esc")
 	a.settle(80, 12)
 	typeText(a, "demo")
+	frame := a.frameRows().Rows
+	if head, ctx := textOf(frame[0], 80), textOf(frame[1], 80); !strings.HasPrefix(head, "Plans › Find ") || !strings.Contains(head, " 1 match ") || ctx != `Plans whose name or title has "demo".` {
+		t.Fatalf("row 0 %q, row 1 %q", head, ctx)
+	}
 	got := body(a)
 	// A find has no H2s: the accordion takes every row the rest leaves.
-	want := `  PLANS › find                1 match
-❯ cuj/sendoff-demo          open · 1/3
+	want := `❯ cuj/sendoff-demo          open · 1/3
     Send-off demo · active
     goal    A teammate opens this pla…
     pinned  ▸ card-highlight  Selecte…
-    then    · load-outline
     done    ✔ plans-ui  Home cards, f…
   + Create 'demo'`
 	if !strings.HasPrefix(got, want) {
@@ -913,15 +924,18 @@ func TestBrowseUpFromTopFolder(t *testing.T) {
 		if a.at != atLibrary || a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Name != "cuj" {
 			t.Fatalf("%s twice: screen=%d on %+v", key, a.plans.Screen, a.plans.Rows[a.plans.Cursor])
 		}
-		if title := textOf(a.frameRows().Rows[2], a.columns); !strings.HasPrefix(title, "  PLANS ") {
+		if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans ") {
 			t.Fatalf("%s: %q", key, title)
 		}
 	}
 	a := listRepo(t)
 	press(a, "esc")
 	browseTo(t, a, "cuj")
+	if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans › cuj/ ") {
+		t.Errorf("Browse's row 0: %q", title)
+	}
 	got := body(a)
-	for _, want := range []string{"  PLANS › cuj/", "\n  ../\n❯ sendoff-demo ", "open · 1/3", "\n  ────", "\n  + New plan\n  + New folder"} {
+	for _, want := range []string{"  ../\n❯ sendoff-demo ", "open · 1/3", "\n  ────", "\n  + New plan\n  + New folder"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Browse lacks %q\n%s", want, got)
 		}
@@ -955,15 +969,21 @@ func TestNoBracketedActions(t *testing.T) {
 	}
 }
 
-// docs/ux.md §11: with no plans, one sentence and the two actions, + New
-// plan selected; Esc goes back to Wait.
+// docs/ux.md §4, §11: with no plans, row 0 says there are none yet, and
+// under it one sentence and the two actions, + New plan selected; Esc
+// goes back to Wait.
 func TestNoPlansYet(t *testing.T) {
 	a := testApp(t)
 	press(a, "esc")
 	a.settle(80, 12)
+	if head := textOf(a.frameRows().Rows[0], 80); !strings.HasPrefix(head, "Plans ") || !strings.Contains(head, "no plans yet") {
+		t.Fatalf("row 0 %q", head)
+	}
+	if ctx := textOf(a.frameRows().Rows[1], 80); ctx != "No plans here yet." {
+		t.Fatalf("row 1 %q", ctx)
+	}
 	got := body(a)
-	want := `  PLANS                       0 plans
-  No plans in rex/plans/ yet. Type a
+	want := `  No plans in rex/plans/ yet. Type a
   name below, or ask your agent to
   write one.
 
@@ -981,8 +1001,10 @@ func TestNoPlansYet(t *testing.T) {
 	}
 }
 
-// docs/ux.md §11: the Name prompt says what to type, where it will go as
-// it is typed, and that it never overwrites.
+// docs/ux.md §4, §11: the Name prompt, Plans › New plan on row 0 with
+// the folder it creates in, says what to type, where it will go as it is
+// typed, and that it never overwrites; a taken name is the notice row's
+// error.
 func TestNamePrompt(t *testing.T) {
 	a := listRepo(t)
 	press(a, "esc")
@@ -990,8 +1012,12 @@ func TestNamePrompt(t *testing.T) {
 	pickRow(a, PlanRowNew, "")
 	press(a, "\r")
 	typeText(a, "auth-flow2")
-	want := `  PLANS › new plan
-  Name the plan, then enter.
+	// At 38 cells the breadcrumb clips to its current crumb before the
+	// meta goes (docs/ux.md §4).
+	if head := textOf(a.frameRows().Rows[0], 80); !strings.HasPrefix(head, "New plan ") || !strings.Contains(head, " rex/plans/ ") {
+		t.Fatalf("row 0 %q", head)
+	}
+	want := `  Name the plan, then enter.
   a/b makes plan b in folder a.
 
   → rex/plans/auth-flow2.rex.json
@@ -1018,7 +1044,7 @@ func TestNamePrompt(t *testing.T) {
 	press(a, "\x15")
 	typeText(a, "auth-flow")
 	press(a, "\r")
-	if a.at != atLibrary || !strings.Contains(a.frame(), "auth-flow.rex.json already exists") {
+	if a.at != atLibrary || !strings.Contains(a.frame(), "✗ auth-flow.rex.json already exists") {
 		t.Fatalf("a taken name is refused\n%s", a.frame())
 	}
 }
@@ -1295,8 +1321,8 @@ func TestFindSaysWhenMatchesAreLeftOut(t *testing.T) {
 	}
 }
 
-// The page title is chrome: it stays while a long folder scrolls, and an
-// error far down the list is drawn above it.
+// The title row is chrome (docs/ux.md §4): it stays while a long folder
+// scrolls, and an error far down the list is on the notice row.
 func TestPageTitleNeverScrollsAway(t *testing.T) {
 	var names []string
 	for i := 0; i < 30; i++ {
@@ -1308,8 +1334,8 @@ func TestPageTitleNeverScrollsAway(t *testing.T) {
 	browseTo(t, a, "many")
 	for i := 0; i < 40; i++ {
 		press(a, "down")
-		if title := textOf(a.frameRows().Rows[2], a.columns); !strings.HasPrefix(title, "  PLANS › many/") {
-			t.Fatalf("the page title scrolled: %q", title)
+		if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans › many/ ") {
+			t.Fatalf("the title scrolled: %q", title)
 		}
 	}
 	for a.plans.Rows[a.plans.Cursor].Kind != PlanRowFile {
@@ -1317,8 +1343,8 @@ func TestPageTitleNeverScrollsAway(t *testing.T) {
 		a.frame()
 	}
 	press(a, "\r")
-	if frame := a.frame(); !strings.Contains(frame, "not a .rex.json") {
-		t.Fatalf("the error is drawn above the scrolled list\n%s", frame)
+	if rows := a.frameRows().Rows; !strings.HasPrefix(textOf(rows[len(rows)-2], a.columns), "✗ zz-notes.txt is not a .rex.json") {
+		t.Fatalf("the error is on the notice row under the scrolled list\n%s", a.frame())
 	}
 }
 
@@ -1334,14 +1360,15 @@ func TestOutsideGitNoticeShowsOnASmallScreen(t *testing.T) {
 		t.Fatalf("and on the plan list\n%s", frame)
 	}
 
-	// Start opens a plan rather than the list: the notice is row 1 on the
-	// first frames, fitted, and so is an old rex-plans/ folder's.
+	// Start opens a plan rather than the list: the notice is a toast on the
+	// notice row on the first frames (docs/ux.md §4), fitted, and so is an
+	// old rex-plans/ folder's.
 	seeded := t.TempDir()
 	seedPlans(t, seeded, "one.rex.json")
 	b := newApp("yellow", false, "idle", NewPlanBrowser(seeded), 60, 20)
 	b.settle(60, 20)
-	if row := b.frameRows().Rows[1]; b.at != atOutline || !strings.HasPrefix(row, "not in a git repo · plans go to …") || !strings.HasSuffix(row, "/rex/plans") {
-		t.Fatalf("at=%d row 1 %q\n%s", b.at, row, b.frame())
+	if row := textOf(b.frameRows().Rows[18], 60); b.at != atOutline || !strings.HasPrefix(row, "not in a git repo · plans go to …") || !strings.HasSuffix(row, "/rex/plans") {
+		t.Fatalf("at=%d notice row %q\n%s", b.at, row, b.frame())
 	}
 	legacy := t.TempDir()
 	os.Mkdir(filepath.Join(legacy, ".git"), 0o755)
@@ -1349,8 +1376,8 @@ func TestOutsideGitNoticeShowsOnASmallScreen(t *testing.T) {
 	os.MkdirAll(filepath.Join(legacy, "rex-plans"), 0o755)
 	os.WriteFile(filepath.Join(legacy, "rex-plans", "old.rex.json"), []byte("{}"), 0o644)
 	c := newApp("yellow", false, "idle", NewPlanBrowser(legacy), 60, 20)
-	if row := c.frameRows().Rows[1]; c.at != atOutline || !strings.Contains(row, "rex-plans/") {
-		t.Fatalf("at=%d row 1 %q", c.at, row)
+	if row := c.frameRows().Rows[18]; c.at != atOutline || !strings.Contains(row, "rex-plans/") {
+		t.Fatalf("at=%d notice row %q", c.at, row)
 	}
 }
 
@@ -1518,28 +1545,29 @@ func TestFindAndBrowseRowsCarryProgress(t *testing.T) {
 	check("find", "team/")
 }
 
-// At 7 rows the plan list has two body rows: no group heads and no
-// accordion, and the selected row is never the part cut (docs/ux.md §12).
-// With no OPEN H2 the open plan's meta says it is open.
+// At 7 rows the plan list has three body rows, under rows 0 and 1 (docs/ux.md
+// §4): no group heads and no accordion, and the selected row is never the
+// part cut (§12). With no OPEN H2 the open plan's meta says it is open.
 func TestSevenRowsListOnlyRows(t *testing.T) {
 	for _, cols := range []int{24, 80} {
 		a, _, _ := cujApp(t)
 		press(a, "esc")
 		a.settle(cols, 7)
-		if body := strings.Join(a.frameRows().Rows[3:5], "\n"); !strings.Contains(body, "❯ cuj/sendo") || !strings.Contains(body, "open · 1/3") || strings.Contains(body, "─") {
+		if body := strings.Join(a.frameRows().Rows[2:5], "\n"); !strings.Contains(body, "❯ cuj/sendo") || !strings.Contains(body, "open · 1/3") || strings.Contains(body, "─") {
 			t.Fatalf("%d×7: the open plan's row, marked open, and no heads\n%s", cols, a.frame())
 		}
 		empty := testApp(t)
 		press(empty, "esc")
 		empty.settle(cols, 7)
-		if body := strings.Join(empty.frameRows().Rows[3:5], "\n"); !strings.Contains(body, "❯ + New plan") || strings.Contains(body, "No plans") {
+		if body := strings.Join(empty.frameRows().Rows[2:5], "\n"); !strings.Contains(body, "❯ + New plan") || strings.Contains(body, "No plans") {
 			t.Fatalf("%d×7, no plans: + New plan, without the sentence\n%s", cols, empty.frame())
 		}
 	}
 }
 
-// On a short screen the plan list's error outlasts its notice: enter on a
-// row says what went wrong, whatever else gives way (docs/ux.md §11).
+// On a short screen the plan list's error takes row 1, as any notice does
+// under 12 rows (docs/ux.md §4): enter on a row says what went wrong, and
+// the selection stays in view (§11).
 func TestShortListKeepsTheError(t *testing.T) {
 	repo := t.TempDir() // outside git: the list has a notice
 	seedPlans(t, repo, "team/a.rex.json", "team/b.rex.json", "team/c.rex.json")
@@ -1550,7 +1578,7 @@ func TestShortListKeepsTheError(t *testing.T) {
 	pickRow(a, PlanRowFile, "")
 	press(a, "\r")
 	got := body(a)
-	if !strings.Contains(got, "notes.txt is not a .rex.json plan") || strings.Contains(got, "not in a git repo") || !strings.Contains(got, "❯ notes.txt") {
-		t.Fatalf("the error and the selection stay, the notice goes\n%s", got)
+	if row := textOf(a.frameRows().Rows[1], 80); row != "✗ notes.txt is not a .rex.json plan" || strings.Contains(got, "not in a git repo") || !strings.Contains(got, "❯ notes.txt") {
+		t.Fatalf("the error on row 1 (%q), and the selection stays\n%s", row, got)
 	}
 }

@@ -21,7 +21,7 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 		},
 		read: time.Now(), // fresh: the test's statuses stand
 	}
-	text := viewText(h.lines(78, 4, skill.Missing, now, true))
+	text := viewText(h.lines(78, 4, skill.Missing, now))
 	for _, want := range []string{"FEED ──", "last event 3h ago (cursor)", "cursor   wired", "claude   not wired · rex ingest --install claude", "skill    missing · rex ingest --install-skill", "4 events from other folders hidden"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q\n%s", want, text)
@@ -30,23 +30,22 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 	a := testApp(t)
 	a.health = h
 	press(a, "\t")
-	if f := a.frame(); !strings.Contains(f, "AGENT") || !strings.Contains(f, "waiting for events") || !strings.Contains(f, "FEED ──") || strings.Contains(f, "Ready. Watching") {
-		t.Fatalf("the empty AGENT tab shows feed health, and says it waits in its page title\n%s", f)
+	rows := a.frameRows().Rows
+	if f := a.frame(); !strings.HasPrefix(textOf(rows[0], a.columns), "Agent ") || !strings.Contains(textOf(rows[0], a.columns), "no events yet") || !strings.Contains(f, "FEED ──") || strings.Contains(f, "Ready. Watching") {
+		t.Fatalf("the empty AGENT tab shows feed health, and says it waits in its title (docs/ux.md §4)\n%s", f)
 	}
-	// A lead sentence heads it (docs/ux.md §10), with a blank row above FEED
-	// from 16 rows.
-	lead := viewText(a.emptyAgent(38))
-	if !strings.HasPrefix(lead, "  Rex shows your agent's work here as\n  its hooks report it.\n\nFEED ─") {
-		t.Fatalf("the lead\n%s", lead)
+	// Its lead sentence is row 1 (docs/ux.md §4, §10); the body is the
+	// feed's health, from FEED.
+	if got := textOf(rows[1], a.columns); got != feedLead {
+		t.Fatalf("row 1 is the lead: %q", got)
 	}
-	if a.settle(120, 12); !strings.HasPrefix(viewText(a.emptyAgent(78)), "  Rex shows your agent's work here as its hooks report it.\nFEED ─") {
-		t.Fatalf("no blank row under 16 rows\n%s", viewText(a.emptyAgent(78)))
+	for _, w := range []int{38, 78} {
+		if body := viewText(a.emptyAgent(w)); !strings.HasPrefix(body, "FEED ─") || strings.Contains(body, "your agent's work here") {
+			t.Fatalf("%d cells: the body starts at FEED, with no lead\n%s", w, body)
+		}
 	}
-	if strings.Contains(viewText(a.emptyAgent(38)), "your agent's work here") {
-		t.Fatalf("no lead where it and the block don't both fit\n%s", viewText(a.emptyAgent(38)))
-	}
-	if a.settle(120, 11); !strings.Contains(a.frame(), "FEED ─") || !strings.Contains(a.frame(), "waiting for agent events") || strings.Contains(a.frame(), "your agent's work here") {
-		t.Fatalf("with no page title, the FEED header says it, and there is no lead\n%s", a.frame())
+	if a.settle(120, 11); !strings.Contains(a.frame(), "FEED ─") || strings.Contains(a.frame(), "waiting for agent events") || textOf(a.frameRows().Rows[1], a.columns) != feedLead || !strings.Contains(textOf(a.frameRows().Rows[0], a.columns), "no events yet") {
+		t.Fatalf("under 12 rows the title still says it waits, and row 1 is the lead\n%s", a.frame())
 	}
 	if strings.Contains(viewText(a.helpBody(78)), "your agent's work here") {
 		t.Fatal("Help's feed block has no lead")
@@ -59,11 +58,10 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 	}
 }
 
-// The empty AGENT tab is a page (docs/ux.md §10): it starts at its top and
-// scrolls from there, and its lead comes whole, with the whole block
-// under it, or not at all; the blank row under the lead goes first. With
-// every harness found but not wired and the skill missing, the first body
-// row is the lead's first line or FEED, never the end of a sentence.
+// The empty AGENT tab is a page (docs/ux.md §10): it starts at its top,
+// FEED, and its lead is row 1 (§4), so the page never starts mid-sentence.
+// With every harness found but not wired and the skill missing, the first
+// body row is FEED at every size, and the lead is never in the body.
 func TestEmptyAgentNeverStartsMidSentence(t *testing.T) {
 	for _, size := range [][2]int{{80, 12}, {80, 16}, {80, 20}, {50, 12}, {80, 24}, {30, 8}, {24, 7}} {
 		a := testApp(t)
@@ -72,49 +70,12 @@ func TestEmptyAgentNeverStartsMidSentence(t *testing.T) {
 		press(a, "\t")
 		a.settle(size[0], size[1])
 		body := agentBody(a)
-		full := len(body)
-		for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
-			body = body[:len(body)-1] // filler under a short page
-		}
-		lead := wrap(feedLead, max(8, PaneTextWidth(a.columns)-2))
 		name := fmt.Sprintf("%d×%d", size[0], size[1])
-		switch {
-		case strings.HasPrefix(body[0], "FEED ─"):
-			if strings.Contains(strings.Join(body, "\n"), "your agent's work") {
-				t.Errorf("%s: a lead under FEED\n%s", name, strings.Join(body, "\n"))
-			}
-		case body[0] == "  "+lead[0]:
-			for i, w := range lead {
-				if body[i] != "  "+w {
-					t.Errorf("%s: the lead is cut at row %d\n%s", name, i, strings.Join(body, "\n"))
-				}
-			}
-			at := len(lead)
-			if body[at] == "" {
-				at++
-			}
-			if !strings.HasPrefix(body[at], "FEED ─") || !strings.Contains(body[len(body)-1], "4 events from other folders hidden") {
-				t.Errorf("%s: the lead without the whole block under it\n%s", name, strings.Join(body, "\n"))
-			}
-			if blank := body[len(lead)] == ""; blank && size[1] < 16 || !blank && size[1] >= 16 && len(body) < full {
-				t.Errorf("%s: the blank row under the lead is from 16 rows, where it fits\n%s", name, strings.Join(body, "\n"))
-			}
-		default:
-			t.Errorf("%s: the page starts mid-block: %q\n%s", name, body[0], strings.Join(body, "\n"))
+		if !strings.HasPrefix(body[0], "FEED ─") || strings.Contains(strings.Join(body, "\n"), "your agent's work") {
+			t.Errorf("%s: the page starts mid-block, or the lead is in it: %q\n%s", name, body[0], strings.Join(body, "\n"))
 		}
-	}
-	// At 38 cells: the whole page at 80×24; at 80×20 the blank row goes
-	// first and the lead stays.
-	a := testApp(t)
-	a.health = notWired()
-	press(a, "\t")
-	for rows, want := range map[int]string{
-		24: "  Rex shows your agent's work here as\n  its hooks report it.\n\nFEED ─",
-		20: "  Rex shows your agent's work here as\n  its hooks report it.\nFEED ─",
-	} {
-		a.settle(80, rows)
-		if body := strings.Join(agentBody(a), "\n"); !strings.HasPrefix(body, want) {
-			t.Fatalf("80×%d\n%s", rows, body)
+		if row, want := textOf(a.frameRows().Rows[1], a.columns), feedLead; row != want && (cellLen(feedLead) < PaneTextWidth(a.columns) || row != feedShort && !strings.HasSuffix(row, "…")) {
+			t.Errorf("%s: row 1 is the lead, or its short form where it doesn't fit: %q", name, row)
 		}
 	}
 }
@@ -138,7 +99,7 @@ func TestEmptyAgentScrollsLikeWait(t *testing.T) {
 		t.Fatalf("the block fits %d rows: %d", l.bodyH, len(all))
 	}
 	body := agentBody(a)
-	if body[len(body)-1] != "  ↓ more" || !strings.HasPrefix(body[0], "FEED ─") || footer() != "tab plan  ? help  ↑↓ scroll" {
+	if body[len(body)-1] != "  ↓ more" || !strings.HasPrefix(body[0], "FEED ─") || footer() != "↑↓ scroll · tab plan · ? help" {
 		t.Fatalf("the top, with ↓ more\n%s\n%s", strings.Join(body, "\n"), footer())
 	}
 	seen := map[string]bool{}
@@ -172,7 +133,7 @@ func TestEmptyAgentScrollsLikeWait(t *testing.T) {
 	a.settle(80, 32)
 	before := a.frame()
 	press(a, "down", "pagedown", "end")
-	if f := a.frame(); f != before || strings.Contains(f, "more") || footer() != "tab plan  ? help  ctrl+c ×2 quit" {
+	if f := a.frame(); f != before || strings.Contains(f, "more") || footer() != "tab plan · ? help" {
 		t.Fatalf("nothing to scroll at 32 rows\n%s", f)
 	}
 	// The first event ends the page: AGENT is live, at the bottom.
@@ -210,7 +171,7 @@ func TestFeedHealthWrapsAndSaysWhatIsWiredHere(t *testing.T) {
 		},
 		read: now,
 	}
-	text := viewText(h.lines(38, 0, skill.Current, now, false))
+	text := viewText(h.lines(38, 0, skill.Current, now))
 	if !strings.Contains(text, "wired (this repo)") {
 		t.Fatalf("a --project install is wired here\n%s", text)
 	}
@@ -269,7 +230,7 @@ func TestFeedHealthSaysHowTheSkillStands(t *testing.T) {
 		skill.Stale:        "skill    out of date · rex ingest --install-skill",
 		skill.StaleProject: "skill    out of date · rex ingest --install-skill --project",
 	} {
-		if text := strings.Join(strings.Fields(viewText(h.lines(78, 0, c, time.Now(), false))), " "); !strings.Contains(text, strings.Join(strings.Fields(want), " ")) {
+		if text := strings.Join(strings.Fields(viewText(h.lines(78, 0, c, time.Now()))), " "); !strings.Contains(text, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("%v: want %q\n%s", c, want, text)
 		}
 	}
@@ -282,7 +243,7 @@ func TestFeedHealthNeverSplitsAWord(t *testing.T) {
 	h := feedHealth{path: "/x/session.jsonl", statuses: []watch.HarnessStatus{{Name: "codex", Present: true}}, read: time.Now()}
 	for _, width := range []int{24, 25, 38} {
 		for _, c := range []skill.Copy{skill.Missing, skill.StaleProject} {
-			lines := strings.Split(viewText(h.lines(width, 0, c, time.Now(), false)), "\n")
+			lines := strings.Split(viewText(h.lines(width, 0, c, time.Now())), "\n")
 			words := map[string]bool{}
 			for _, line := range lines {
 				if cellLen(line) > width {
@@ -302,7 +263,7 @@ func TestFeedHealthNeverSplitsAWord(t *testing.T) {
 			}
 		}
 	}
-	text := viewText(h.lines(24, 0, skill.Missing, time.Now(), false))
+	text := viewText(h.lines(24, 0, skill.Missing, time.Now()))
 	if want := "  skill    missing · rex\n           ingest\n    --install-skill"; !strings.Contains(text, want) {
 		t.Fatalf("want\n%s\n%s", want, text)
 	}

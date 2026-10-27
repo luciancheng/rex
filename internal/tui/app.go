@@ -36,15 +36,15 @@ type app struct {
 	// PAGE (docs/ux.md §13): a plan that opens under Help doesn't swap it
 	// mid-read. Help's crumbs are the page under it now, the Esc ladder.
 	helpOver [2]string
-	// unseen is each place's cue on the tab bar while the other is on
-	// screen: "•" news, "!" needs you (docs/ux.md §4). Memory only.
-	unseen [2]string
+	// needs is your agent asking ("ask") or its turn's error ("error"),
+	// seen on PLAN's notice row until you look at AGENT (docs/ux.md §4).
+	// Memory only.
+	needs string
 
 	log         []watch.Event
 	logRev      int
 	view        logViewCache
 	scroll      int
-	unseenLines int // AGENT lines that arrived below a scrolled view
 	emptyScroll int // rows of the empty AGENT tab above the screen: a page, read from its top like Wait
 	turn        Turn
 	lastKind    string
@@ -63,6 +63,7 @@ type app struct {
 	outline    outlineView
 	toast      StatusLine
 	toastUntil time.Time
+	toastWait  bool // raised while AGENT was on screen: its time starts on PLAN
 	now        func() time.Time
 	statePath  string
 	drift      driftState    // drift from the current pin, shown only
@@ -72,13 +73,15 @@ type app struct {
 
 	// Attach (docs/ux.md §11): follow opens the plan the agent writes;
 	// picking one in the list latches (follow false), and another plan's
-	// write is then only offered on row 1.
-	follow    bool
-	pending   string    // a write to open once the plan list's draft or Name prompt clears
-	offer     string    // latched: the plan the agent wrote, enter switches to it
-	wrote     string    // the last other plan file written in the batch being ingested
-	wroteOpen bool      // the batch wrote the open plan too
-	scanned   time.Time // the last cold-start look for a plan file
+	// write is then only offered on the notice row.
+	follow      bool
+	pending     string    // a write to open once the plan list's draft or Name prompt clears
+	offer       string    // latched: the plan the agent wrote, o opens it
+	pendingName wroteAs   // how the notice row names pending, read once when it is set
+	offerName   wroteAs   // and offer
+	wrote       string    // the last other plan file written in the batch being ingested
+	wroteOpen   bool      // the batch wrote the open plan too
+	scanned     time.Time // the last cold-start look for a plan file
 }
 
 // logViewCache keeps the laid-out AGENT stream for one log revision, width
@@ -141,12 +144,11 @@ func (a *app) composeOptions() ComposeOptions {
 		Log:         a.log,
 		QuitPending: a.quitPending,
 		Status:      statusForTurn(a.turn, a.lastKind),
-		Cue:         a.unseen[a.other()],
 		Scroll:      a.scroll,
 		Pane:        a.pane,
-		PlanRel:     a.plans.CurrentRel(),
 		Follow:      a.followWord(),
-		Line:        a.statusLine(),
+		Context:     a.context(),
+		Notice:      a.notice(),
 	}
 	if a.composing() {
 		opt.Composer = true
@@ -166,91 +168,56 @@ func (a *app) composeOptions() ComposeOptions {
 		// top, as Wait does.
 		a.emptyScroll = max(0, min(a.emptyScroll, len(opt.LogView)-l.bodyH))
 		opt.Scroll = a.emptyScroll
-		opt.Footer = emptyFooter(len(opt.LogView) > l.bodyH, a.offerTakes())
+		opt.Footer = pageFooter(len(opt.LogView) > l.bodyH, "", "tab plan", true)
 	case a.pane == PaneChat:
+		opt.Footer = agentFooter()
 	case a.at == atWait:
 		body := a.waitBody(l.textW, l.bodyH)
 		a.outline.scroll = max(0, min(a.outline.scroll, len(body)-l.bodyH))
 		opt.PlanView, opt.PlanScroll = body, a.outline.scroll
-		opt.Footer = waitFooter(len(body) > l.bodyH)
+		opt.Footer = pageFooter(len(body) > l.bodyH, "esc plans", "tab agent", true)
 	case a.at != atLibrary && a.doc != nil:
-		opt.PlanView, opt.PlanScroll = a.planView(l.textW, l.bodyH)
+		opt.PlanRows = a.planRows()
+		opt.PlanView, opt.PlanScroll = a.planView(l.textW, opt.PlanRows)
 		opt.Footer = a.planFooter()
 	default:
 		opt.Plans = a.plans // the screen decides what PLAN draws, never an empty view
 	}
-	// After the plan's layout: the outline's page title says where the
+	// After the plan's layout: the outline's title says where the
 	// selection is once TASKS is gone (docs/ux.md §4).
-	page := a.page()
-	if a.pane == PaneChat && len(a.log) > 0 {
-		opt.Footer = agentFooter(a.scroll, page != nil, a.offerTakes())
-	}
-	opt.Page = page
+	opt.Page = a.page()
 	if a.overlay[a.pane] == overlayHelp {
 		body := a.helpBody(textW)
-		other := FooterSeg{Text: "tab " + strings.ToLower(tabWords[a.other()])}
-		footer := []FooterSeg{{Text: "esc close"}, other}
-		if len(body) > l.bodyH {
-			footer = []FooterSeg{{Text: "esc close"}, {Text: "↑↓ scroll"}, other}
-		}
+		footer := pageFooter(len(body) > l.bodyH, "esc close", "tab "+otherPlace(a.pane), false)
 		opt.Overlay = &Overlay{Lines: body, Footer: footer, Scroll: a.overlayScroll[a.pane]}
-		crumbs := []string{tabWords[PaneChat]} // AGENT has no page title of its own under 12 rows
-		if page != nil {
-			crumbs = page.Crumbs
-		}
-		opt.Page = &Page{Crumbs: append(append([]string(nil), crumbs...), "HELP")}
+		opt.Page = &Page{Crumbs: append(append([]string(nil), opt.Page.Crumbs...), "Help")}
+		opt.Context = StatusLine{Text: "Keys for " + helpPages[a.helpOver[a.pane]] + ", then everywhere.", Kind: "muted"}
 	}
 	return opt
 }
 
-// other is the place not on screen, whose cue the tab bar shows.
-func (a *app) other() PaneKind {
-	if a.pane == PanePlans {
-		return PaneChat
-	}
-	return PanePlans
+// helpPages names the page Help was opened over, on Help's row 1.
+var helpPages = map[string]string{
+	"agent": "Agent", "waiting": "the wait screen", "about": "About", "task": "this task", "outline": "the outline",
+	"folder": "this folder", "new plan": "a new plan", "new folder": "a new folder", "plans": "the plan list",
 }
 
-// light puts a cue on place p's tab while the other place is on screen:
-// "!" outranks "•". Showing a place clears its cue, so nothing builds up
-// for the place you are looking at, and a cue never moves you (docs/ux.md
-// §4).
-func (a *app) light(p PaneKind, mark string) {
-	if a.pane == p {
-		return
-	}
-	if mark == "!" || a.unseen[p] == "" {
-		a.unseen[p] = mark
-	}
-}
-
-// titled reports that the screen has a page title: PLAN screens and Help
-// always, AGENT from agentTitleRows rows (docs/ux.md §4).
-func (a *app) titled() bool {
-	return a.pane == PanePlans || a.overlay[a.pane] != overlayNone || a.lines >= agentTitleRows
-}
-
-// page is the page title of the screen under any overlay (docs/ux.md
-// §4), or nil on AGENT without one. Its crumbs are the Esc ladder: Esc
-// goes to the crumb on the left.
+// page is row 0's title for the screen under any overlay (docs/ux.md §4).
+// Its crumbs are the Esc ladder: Esc goes to the crumb on the left.
 func (a *app) page() *Page {
 	var p Page
 	switch {
 	case a.pane == PaneChat:
-		if a.lines < agentTitleRows {
-			return nil
-		}
-		p = Page{Crumbs: []string{tabWords[PaneChat]}, Meta: "live"}
+		p = Page{Crumbs: []string{"Agent"}, Meta: metaSpans("live")}
 		switch {
 		case len(a.log) == 0:
-			p.Meta = "waiting for events"
-		case a.scroll > 0 && a.unseenLines > 0:
-			p.Meta = fmt.Sprintf("%d↑ · %d new", a.scroll, a.unseenLines)
+			p.Meta = metaSpans("no events yet")
 		case a.scroll > 0:
-			p.Meta = fmt.Sprintf("%d↑", a.scroll)
+			p.Meta = metaSpans(fmt.Sprintf("↓ %d newer", a.scroll))
 		}
 	case a.at == atWait:
-		p = Page{Crumbs: []string{"PLANS", "waiting for a plan"}}
+		p = Page{Crumbs: []string{"Plans", "Waiting for a plan"}}
+		p.Meta, p.Short = a.plans.where()
 	case a.at != atLibrary && a.doc != nil:
 		p = a.docPage()
 	default:
@@ -259,53 +226,86 @@ func (a *app) page() *Page {
 	return &p
 }
 
-// docPage is the open plan's page title: PLANS › its title, then "about"
-// or the task's id on a detail screen. On the outline it is the title
-// row, selected while the cursor is on it, with the plan's status as meta,
-// and where the selection is while the list scrolls with TASKS gone.
+// docPage is the open plan's title: its title, then "About" or the task's
+// id on a detail screen. On the outline it is the title row, selected
+// while the cursor is on it, with the plan's progress and how it got here
+// (following, read-only, can't read) as meta; while the list scrolls
+// with TASKS gone, where the selection is leads it.
 func (a *app) docPage() Page {
 	d := a.doc
-	crumbs := []string{"PLANS", planTitle(d.plan, d.path)}
+	title := planTitle(d.plan, d.path)
 	switch {
-	case a.at == atPlanDetail:
-		return Page{Crumbs: append(crumbs, "about")}
-	case a.at == atTaskDetail:
-		return Page{Crumbs: append(crumbs, a.outline.sel)}
 	case d.plan == nil:
-		return Page{Crumbs: crumbs, Meta: "can't read", MetaRole: "error"}
+		return Page{Crumbs: []string{title}, Meta: []Span{{Text: "can't read", Role: "error"}}}
+	case a.at == atPlanDetail:
+		done, total := d.plan.Graph().Progress()
+		meta := fmt.Sprintf("%d/%d done", done, total)
+		if total == 0 {
+			meta = "no tasks"
+		}
+		if d.plan.Status != "" {
+			meta = string(d.plan.Status) + " · " + meta
+		}
+		return Page{Crumbs: []string{title, "About"}, Meta: metaSpans(meta)}
+	case a.at == atTaskDetail:
+		p := Page{Crumbs: []string{title, a.outline.sel}}
+		if t := findTask(d.plan, a.outline.sel); t != nil {
+			g := d.plan.Graph()
+			word, role := taskWord(t, g, g.Pin())
+			p.Meta = []Span{{Text: word, Role: role}}
+		}
+		return p
 	}
-	p := Page{Crumbs: crumbs, Meta: string(d.plan.Status), Selected: a.outline.sel == ""}
+	short := progress(d.plan)
+	full := short + " done"
+	if short == "" {
+		short, full = "no tasks", "no tasks"
+	}
+	meta := []Span{{Text: full, Role: "muted"}}
+	if a.follow {
+		meta = append(meta, Span{Text: " · following", Role: "muted"})
+	}
+	if d.plan.ReadOnly != "" {
+		meta = append(meta, Span{Text: " · read-only", Role: "muted"})
+	}
+	if _, bad := docStatus(d); bad {
+		meta = append(meta, Span{Text: " · ", Role: "muted"}, Span{Text: "can't read", Role: "error"})
+	}
+	p := Page{Crumbs: []string{title}, Meta: meta, Short: metaSpans(short), Selectable: true, Selected: a.outline.sel == ""}
 	if pos := a.outline.pos; pos != "" {
-		// TASKS is gone and the list scrolls: the position joins the
-		// status, and outranks it where both don't fit.
-		p.Meta, p.MetaShort = strings.TrimPrefix(p.Meta+" · "+pos, " · "), pos
+		// TASKS is gone and the list scrolls: the position leads the meta,
+		// and stands alone where both don't fit.
+		p.Meta = append([]Span{{Text: pos + " · ", Role: "muted"}}, meta...)
+		p.Short = metaSpans(pos)
 	}
 	return p
 }
 
-// libraryPage is the plan list's page title: PLANS, then find, the folder
-// being browsed (each folder from rex/plans down), or the Name prompt,
-// with how many plans the list holds as meta.
+// libraryPage is the plan list's title: Plans, then Find, the folder being
+// browsed (each folder from rex/plans down), or the Name prompt, with what
+// the list holds as meta, or where a new plan goes.
 func libraryPage(b *PlanBrowser) Page {
-	crumbs := []string{"PLANS"}
+	crumbs := []string{"Plans"}
 	if b.Browsing() || (b.Prompting() && b.From == ScreenBrowse) {
 		crumbs = append(crumbs, folderCrumbs(b)...)
 	}
 	switch {
 	case b.Screen == ScreenCreate:
-		return Page{Crumbs: append(crumbs, "new plan")}
+		return Page{Crumbs: append(crumbs, "New plan"), Meta: metaSpans(b.promptRel())}
 	case b.Screen == ScreenFolder:
-		return Page{Crumbs: append(crumbs, "new folder")}
+		return Page{Crumbs: append(crumbs, "New folder"), Meta: metaSpans(b.promptRel())}
 	case b.Browsing():
-		return Page{Crumbs: crumbs, Meta: plural(b.total, "%d plan", "%d plans")}
+		return Page{Crumbs: crumbs, Meta: metaSpans(plural(b.total, "%d plan", "%d plans"))}
 	case b.Find != "":
-		return Page{Crumbs: append(crumbs, "find"), Meta: plural(b.total, "%d match", "%d matches")}
+		return Page{Crumbs: append(crumbs, "Find"), Meta: metaSpans(plural(b.total, "%d match", "%d matches"))}
 	}
-	return Page{Crumbs: crumbs, Meta: plural(b.total, "%d plan", "%d plans")}
+	p := Page{Crumbs: crumbs}
+	p.Meta, p.Short = b.where()
+	return p
 }
 
 // folderCrumbs is the folder being browsed as crumbs, one per folder
-// under rex/plans: PLANS is its root (docs/ux.md §4).
+// under rex/plans: Plans is its root (docs/ux.md §4).
 func folderCrumbs(b *PlanBrowser) []string {
 	var crumbs []string
 	if rel, err := filepath.Rel(b.Root, b.Dir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
@@ -330,10 +330,22 @@ func (a *app) layout() layout {
 	if !a.composing() {
 		l = l.bare()
 	}
-	if !a.titled() {
-		l = l.untitled()
-	}
 	return l
+}
+
+// spacedPlan is the open plan's body at blankFrom rows, where row 2 and the
+// notice row take two of the rows an 11-row terminal gives it.
+var spacedPlan = layoutFor(TextOnlyBelow, blankFrom).bare().bodyH
+
+// planRows is the body rows the open plan's screens are laid out in
+// (docs/ux.md §12): 11 rows lay them out as 12 do, so a taller terminal
+// never shows less of the outline or a detail; the row left over is blank.
+func (a *app) planRows() int {
+	rows := a.layout().bodyH
+	if a.lines < blankFrom {
+		rows = min(rows, spacedPlan)
+	}
+	return rows
 }
 
 // planView lays out the open plan's screen and picks its first visible
@@ -348,7 +360,7 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 	tall := viewH >= outlineTall
 	switch a.at {
 	case atPlanDetail:
-		body = planDetail(a.doc, a.plans.CurrentRel(), width, tall)
+		body = planDetail(a.doc, width, tall)
 	case atTaskDetail:
 		body = taskDetail(a.doc, v.sel, width, tall)
 	default:
@@ -359,28 +371,26 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 }
 
 // planFooter is the footer for the open plan's screens (docs/ux.md §4):
-// where Esc goes, Tab, what enter does, then ? help. Row 1's offer, while
-// enter takes it, leads.
+// ↑↓, what enter does on the selected row (by its widest form, so the
+// cursor never changes the footer), where esc goes, tab, ? help. An offer
+// is taken with o, which its notice names.
 func (a *app) planFooter() []FooterSeg {
-	offer := a.offerTakes()
+	tab := FooterSeg{Text: "tab agent"}
 	if a.at == atPlanDetail || a.at == atTaskDetail {
-		if offer {
-			return []FooterSeg{{Text: "enter switch"}, {Text: "esc outline"}, {Text: "tab agent"}, helpSeg}
-		}
-		return []FooterSeg{{Text: "esc outline"}, {Text: "tab agent"}, {Text: "↑↓ scroll"}, helpSeg}
+		return []FooterSeg{{Text: "↑↓ scroll"}, {Text: "esc outline"}, tab, helpSeg}
 	}
 	p := a.doc.plan
 	switch {
-	case offer:
-		return []FooterSeg{{Text: "enter switch"}, {Text: "esc plans"}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}}
 	case p == nil:
-		return []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, helpSeg}
-	case a.outline.sel == "" && len(p.Tasks) == 0:
-		return []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, {Text: "enter about"}, helpSeg}
-	case a.outline.sel == "":
-		return []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, {Text: "enter about"}, helpSeg, {Text: "↑↓ move"}}
+		return []FooterSeg{{Text: "esc plans"}, tab, helpSeg}
+	case len(p.Tasks) == 0:
+		return []FooterSeg{{Text: "enter about"}, {Text: "esc plans"}, tab, helpSeg}
 	}
-	return []FooterSeg{{Text: "esc plans"}, {Text: "tab agent"}, {Text: "enter open"}, helpSeg, {Text: "↑↓ move"}}
+	enter := seg("enter details", "enter about")
+	if a.outline.sel == "" {
+		enter.Text = "enter about"
+	}
+	return []FooterSeg{{Text: "↑↓ select"}, enter, {Text: "esc plans"}, tab, helpSeg}
 }
 
 // placeholder is the dim hint in the plan list's empty composer: what you
@@ -410,56 +420,191 @@ func (a *app) preview() string {
 	return "enter not a verb"
 }
 
-// statusLine picks row 1, the first of these that applies (docs/ux.md
-// §4): the plan file can't be read, a toast, hard drift, a new plan
-// (offered or held), soft drift, the pin.
-func (a *app) statusLine() StatusLine {
-	s := a.statusText()
-	if a.doc != nil && s.Text != "" {
-		s.Right = progress(a.doc.plan) // while a plan is open, whatever row 1 says
+// context is row 1 (docs/ux.md §4): on the outline the pin line, on
+// AGENT the turn and the pin, elsewhere what the page is for.
+func (a *app) context() StatusLine {
+	muted := func(text string) StatusLine { return StatusLine{Text: text, Kind: "muted"} }
+	b := a.plans
+	switch {
+	case a.pane == PaneChat:
+		return a.turnLine()
+	case a.at == atWait && b.Notice != "":
+		return noticeLine(b.Notice)
+	case a.at == atWait:
+		return muted("Rex opens the plan your agent writes.")
+	case a.at != atLibrary && a.doc != nil:
+		d := a.doc
+		switch {
+		case d.plan == nil:
+			return muted(b.CurrentRel())
+		case a.at == atPlanDetail:
+			return muted(b.CurrentRel())
+		case a.at == atTaskDetail:
+			return muted(taskPlace(d.plan, a.outline.sel))
+		}
+		return pinStatus(d.plan)
+	case b.Notice != "":
+		// Where plans go, or that they are off, outranks what the page is for
+		// on every plan list screen.
+		return noticeLine(b.Notice)
+	case b.Screen == ScreenCreate:
+		return muted("Name it. a/b puts plan b in folder a.")
+	case b.Screen == ScreenFolder:
+		return muted("Name it. a/b puts folder b in folder a.")
+	case b.Browsing():
+		return muted("Folders, then plans. Type to filter.")
+	case b.Find != "":
+		return muted(`Plans whose name or title has "` + flat(b.Find) + `".`)
+	case b.total == 0:
+		return muted("No plans here yet.")
+	}
+	return muted("Pick up where you left off, or start a new plan.")
+}
+
+// noticeLine is the plan list's notice (outside git, an old rex-plans/,
+// plans off) as row 1 draws it, fitted to the row.
+func noticeLine(n string) StatusLine {
+	if n == "" {
+		return StatusLine{}
+	}
+	return StatusLine{Text: n, Kind: "muted", Fit: func(w int) string { return fitNotice(n, w) }}
+}
+
+// turnLine is AGENT's row 1 (docs/ux.md §4): what the turn is doing, and
+// on the right the pin the agent gets, or that nothing is pinned.
+func (a *app) turnLine() StatusLine {
+	if len(a.log) == 0 {
+		return StatusLine{Text: feedLead, Short: feedShort, Kind: "muted"}
+	}
+	s := StatusLine{Text: statusForTurn(a.turn, a.lastKind), Kind: "muted"}
+	switch s.Text {
+	case "ask":
+		s.Text, s.Kind = "waiting on you", "text"
+	case "error":
+		s.Text, s.Kind = "turn error", "error"
+	}
+	if a.doc != nil && a.doc.plan != nil {
+		s.Right = []Span{{Text: "nothing pinned", Role: "muted"}}
+		if pin := a.doc.plan.Graph().Pin(); pin != nil && pin.Status == plan.Active {
+			s.Right = []Span{{Text: "pinned ", Role: "muted"}, {Text: flat(pin.ID), Role: "accent"}}
+		}
 	}
 	return s
 }
 
-func (a *app) statusText() StatusLine {
-	if s, ok := a.overOffer(); ok {
-		return s
+// noticeKind is what the notice row shows, highest first (docs/ux.md §4).
+type noticeKind int
+
+const (
+	noticeNone noticeKind = iota
+	noticeError
+	noticeNeeds
+	noticeToast
+	noticeOffer
+	noticeDrift
+	noticeReadOnly
+)
+
+// notice is the notice row (docs/ux.md §4), or row 1 under blankFrom rows.
+func (a *app) notice() StatusLine {
+	s, _ := a.noticeOf()
+	return s
+}
+
+// noticeOf picks the one message the notice row shows, the first of these
+// that applies: an error (the plan file can't be read, the plan list's
+// error, a failed open); your agent asking or its turn's error, on PLAN
+// until you look at AGENT; a toast, on PLAN (one raised while AGENT is on
+// screen waits for PLAN); a new plan, offered or held; hard drift, on
+// PLAN; a read-only plan, on its own screens.
+func (a *app) noticeOf() (StatusLine, noticeKind) {
+	plans := a.pane == PanePlans
+	toast := a.toastLive()
+	if s, ok := docStatus(a.doc); ok {
+		return errorNotice(s), noticeError
+	}
+	if plans && a.plans.Err != "" && a.at == atLibrary {
+		return errorNotice(StatusLine{Text: a.plans.Err, Kind: "error"}), noticeError
+	}
+	if toast && a.toast.Kind == "error" {
+		return errorNotice(a.toast), noticeError
+	}
+	if plans && a.needs != "" {
+		if a.needs == "error" {
+			return errorNotice(StatusLine{Text: "Your agent's turn ended with an error · tab agent", Short: "turn error · tab agent", Kind: "error"}), noticeNeeds
+		}
+		return StatusLine{Text: "Your agent is asking you something · tab agent to read it", Short: "Your agent asks · tab agent", Kind: "text"}, noticeNeeds
+	}
+	if plans && toast {
+		return a.toast, noticeToast
 	}
 	if s, ok := a.offerStatus(); ok {
-		return s
+		return s, noticeOffer
 	}
-	if s, ok := a.driftStatus(plan.Soft); ok {
-		return s
+	if !plans {
+		return StatusLine{}, noticeNone
 	}
-	if a.doc == nil {
-		return StatusLine{}
+	if s, ok := a.driftStatus(); ok {
+		return s, noticeDrift
 	}
-	return pinStatus(a.doc.plan)
+	if d := a.doc; d != nil && d.plan != nil && d.plan.ReadOnly != "" && a.at != atLibrary && a.at != atWait {
+		return StatusLine{Text: "read-only: " + d.plan.ReadOnly, Kind: "muted"}, noticeReadOnly
+	}
+	return StatusLine{}, noticeNone
 }
 
-// overOffer is what row 1 shows over a new plan: the plan file can't be
-// read, a toast (it expires, and the offer is back), hard drift.
-func (a *app) overOffer() (StatusLine, bool) {
-	if s, ok := docStatus(a.doc); ok {
-		return s, true
+// errorNotice is an error on the notice row: "✗ " and the error, red.
+func errorNotice(s StatusLine) StatusLine {
+	const mark = "✗ "
+	out := StatusLine{Text: mark + s.Text, Kind: "error"}
+	if s.Short != "" {
+		out.Short = mark + s.Short
 	}
-	if a.toast.Text != "" && a.now().Before(a.toastUntil) {
-		return a.toast, true
+	if s.Fit != nil {
+		out.Fit = func(w int) string { return mark + s.Fit(w-cellLen(mark)) }
 	}
-	return a.driftStatus(plan.Hard)
+	return out
 }
 
-// flash shows a toast on row 1 for a few seconds.
+// toastLive reports a toast that still shows: its time isn't up, or it
+// waits for PLAN.
+func (a *app) toastLive() bool {
+	return a.toast.Text != "" && (a.toastWait || a.now().Before(a.toastUntil))
+}
+
+// flash shows a toast on the notice row for a few seconds; one raised
+// while AGENT is on screen waits for PLAN, an error's shows at once.
 func (a *app) flash(text, kind string) {
-	a.toast = StatusLine{Text: text, Kind: kind}
+	a.show(StatusLine{Text: text, Kind: kind})
+}
+
+// show puts s up as the toast.
+func (a *app) show(s StatusLine) {
+	a.toast = s
 	a.toastUntil = a.now().Add(toastFor)
+	a.toastWait = a.pane != PanePlans && s.Kind != "error"
+}
+
+// sawPlan runs when PLAN comes on screen: a waiting toast starts its time.
+func (a *app) sawPlan() {
+	if a.toastWait {
+		a.toastWait = false
+		a.toastUntil = a.now().Add(toastFor)
+	}
+}
+
+// sawAgent runs when AGENT comes on screen: your agent's question or its
+// turn's error is seen, and so is hard drift, which AGENT lists.
+func (a *app) sawAgent() {
+	a.needs = ""
+	a.drift.hard = nil
 }
 
 // noPlanText heads the wait screen: the agent writes the plan and Rex
 // opens it (docs/ux.md §11).
 const noPlanText = "no plan yet · tell your agent to make one"
 
-const toastFor = 3 * time.Second
+const toastFor = 4 * time.Second
 
 // exitLine is printed once the screen is restored, so the terminal keeps a
 // trace of where you were.
@@ -489,12 +634,12 @@ func (a *app) logView(width int) []LogLine {
 
 // viewOpt is how AGENT lays out now (docs/ux.md §10): a thought run that
 // is the newest block is live while the turn is in flight, and blocks get
-// blank rows from agentTitleRows rows. Live never looks at the scroll or
+// blank rows from blankFrom rows. Live never looks at the scroll or
 // at what the turn last did: scrolling and a hidden tool call (a file
 // look) leave the layout alone, so one ↑ is one row and nothing bounces.
 // A drawn block or the turn's end settles the run.
 func (a *app) viewOpt() viewOpt {
-	return viewOpt{live: a.turn == TurnThinking || a.turn == TurnRunning, tall: a.lines >= agentTitleRows}
+	return viewOpt{live: a.turn == TurnThinking || a.turn == TurnRunning, tall: a.lines >= blankFrom}
 }
 
 func (a *app) logLines() int {
@@ -530,6 +675,15 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 	// live run, so both the rows and a trim are measured on it.
 	opt, before := a.viewOpt(), a.logLines()
 	prevTurn := a.turn
+	n := len(a.log)
+	var old []watch.Event // the log as it was, while scrolled: a trim is measured on it
+	if a.scroll > 0 {
+		old = append(old, a.log...) // a growing reply changes its last event in place
+	}
+	// One event at a time, in order, so what PLAN's notice says your agent
+	// needs follows the turn as it went, even within one batch.
+	var added []watch.Event
+	dropped := 0
 	for _, ev := range fresh {
 		a.turn = ApplyTurn(a.turn, ev)
 		switch {
@@ -538,13 +692,10 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 		case ev.Kind == "result" && a.lastKind == "question":
 			a.lastKind = "command" // the question was answered: back to work
 		}
+		got, d := extendLog(&a.log, []watch.Event{ev})
+		added, dropped = append(added, got...), dropped+d
+		a.heard(ev, len(got) > 0)
 	}
-	n := len(a.log)
-	var old []watch.Event // the log as it was, while scrolled: a trim is measured on it
-	if a.scroll > 0 {
-		old = append(old, a.log...) // a growing reply changes its last event in place
-	}
-	added, dropped := extendLog(&a.log, fresh)
 	if len(added) > 0 || len(a.log) != n {
 		a.logRev++ // a trim to MaxLog changes AGENT too
 	}
@@ -556,22 +707,38 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 	if len(added) > 0 || a.turn != prevTurn {
 		a.below(before) // a turn's end draws nothing but can settle a run
 	}
-	for _, ev := range added {
-		// Only what AGENT draws: never a file look, a result or a
-		// thought, another repo's event, or Rex's own line (docs/ux.md §4).
-		switch {
-		case ev.Kind == "text":
-			a.light(PaneChat, "•")
-		case ev.Kind == "question", ev.Kind == "error" && watch.MetaTool(ev) == "":
-			a.light(PaneChat, "!")
-		}
-	}
 	drifted := a.applyDrift() // after the batch, so its block sits below what it judges
 	if len(added) > 0 || a.turn != prevTurn {
 		a.syncTurn()
 		return true
 	}
 	return drifted
+}
+
+// heard keeps what PLAN's notice says your agent needs (docs/ux.md §4)
+// up to date with one event of this repo's agent, drawn on AGENT or not.
+// Only your agent asking, or its turn's error, reaches PLAN: never a
+// reply, a failed tool call, another repo's event or Rex's own line. An
+// ask holds until the turn goes on past it, as row 1's turn word does (a
+// command, a result, a reply, the turn's end, the next prompt); a turn's
+// error until the next prompt. Looking at AGENT clears both (sawAgent),
+// and nothing is raised while it is on screen.
+func (a *app) heard(ev watch.Event, drawn bool) {
+	switch {
+	case ev.Kind == "user":
+		a.needs = ""
+	case a.needs == "ask" && a.lastKind != "question":
+		a.needs = ""
+	}
+	if !drawn || a.pane == PaneChat {
+		return
+	}
+	switch {
+	case ev.Kind == "question":
+		a.needs = "ask"
+	case ev.Kind == "error" && watch.MetaTool(ev) == "":
+		a.needs = "error"
+	}
 }
 
 // keys applies one read's keys in order, settling after each one, so a
@@ -702,8 +869,9 @@ func (a *app) helpKey(key string) bool {
 func (a *app) applyKey(key string) bool {
 	if l := layoutFor(a.columns, a.lines); !l.typing && key != CtrlC && key != "\x0c" {
 		_, paste := IsPaste(key)
-		// ? opening Help types nothing, so it still works on a short screen.
-		edits := paste || (isPrintableKey(key) && !a.helpKey(key)) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
+		// ? opening Help, and o opening an offer, type nothing, so they still
+		// work on a short screen.
+		edits := paste || (isPrintableKey(key) && !a.helpKey(key) && !a.offerKey(key)) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
 		submits := (key == "\r" || key == "\n") && a.draft != "" && a.composing()
 		if l.locked || edits || submits {
 			// The UI isn't visible (locked), or the composer isn't: nothing
@@ -736,11 +904,12 @@ func (a *app) applyKey(key string) bool {
 		a.quitPending = false
 		if a.pane == PanePlans {
 			a.pane = PaneChat
+			a.sawAgent()
 		} else {
 			a.pane = PanePlans
 			a.plans.Rebuild()
+			a.sawPlan()
 		}
-		a.unseen[a.pane] = "" // shown: its news is seen
 		return true
 	}
 	if a.quitPending {
@@ -760,6 +929,9 @@ func (a *app) handleKeyArmed(key string) bool {
 	if a.helpKey(key) {
 		a.openHelp()
 		return true
+	}
+	if a.offerKey(key) {
+		return a.takeOffer()
 	}
 	text, paste := IsPaste(key)
 	if !a.composing() {
@@ -827,7 +999,6 @@ func (a *app) submit(text string) bool {
 }
 
 func (a *app) tapeKey(key string) bool {
-	defer a.live()
 	if len(a.log) == 0 && pageKey(&a.emptyScroll, key, a.layout().bodyH) {
 		return true // the empty tab scrolls like Wait (docs/ux.md §10)
 	}
@@ -853,17 +1024,8 @@ func (a *app) tapeKey(key string) bool {
 	case "end":
 		a.scroll = 0
 		return true
-	case "\r", "\n":
-		return a.takeOffer() // PLAN switches; you stay on AGENT
 	}
 	return false
-}
-
-// live keeps the count of lines that came in below a scrolled view to the
-// lines still below it, so "N↑ · M new" never has M over N, and clears it
-// once the view is back at the bottom.
-func (a *app) live() {
-	a.unseenLines = min(a.unseenLines, a.scroll)
 }
 
 func (a *app) planKey(key string) bool {
@@ -1027,7 +1189,7 @@ func (a *app) openedPlan() {
 func (a *app) docKey(key string) bool {
 	v := &a.outline
 	p := a.doc.plan
-	step := max(1, a.layout().bodyH-2)
+	step := max(1, a.planRows()-2)
 	if a.at == atOutline {
 		switch key {
 		case "up", "down":
@@ -1041,7 +1203,7 @@ func (a *app) docKey(key string) bool {
 				return false
 			}
 			l := a.layout()
-			v.sel = outlinePage(p, *v, l.textW, l.bodyH, key == "pagedown")
+			v.sel = outlinePage(p, *v, l.textW, a.planRows(), key == "pagedown")
 			return true
 		case "home", "end":
 			if p == nil {
@@ -1083,9 +1245,6 @@ func (a *app) docKey(key string) bool {
 		a.outline.keepSel(a.doc.plan) // the task read in detail may be gone
 		return true
 	case "\r", "\n":
-		if a.takeOffer() {
-			return true
-		}
 		if a.at == atOutline {
 			return a.openDetail()
 		}
@@ -1139,11 +1298,6 @@ func (a *app) pollDoc() bool {
 	if a.at == atLibrary {
 		a.plans.Rebuild() // the open plan's row and accordion follow what the outline shows
 	}
-	if _, bad := docStatus(a.doc); bad {
-		a.light(PanePlans, "!") // the file is gone or doesn't parse
-	} else if a.unseen[PanePlans] == "!" {
-		a.unseen[PanePlans] = "•" // fixed: nothing needs you, but the plan did change
-	}
 	if a.at != atTaskDetail {
 		a.outline.keepSel(a.doc.plan)
 	}
@@ -1156,12 +1310,11 @@ func (a *app) pollDoc() bool {
 		return true
 	}
 	a.tapeLine("plan", news.text)
-	a.light(PanePlans, "•")
 	if done := doneToast(was, a.doc.plan); done.Text != "" {
-		a.toast, a.toastUntil = done, a.now().Add(toastFor)
+		a.show(done)
 		return true
 	}
-	if !news.tasks && strings.HasPrefix(a.toast.Text, doneMark+" ") && a.now().Before(a.toastUntil) {
+	if !news.tasks && strings.HasPrefix(a.toast.Text, doneMark+" ") && a.toastLive() {
 		// The agent finishes a task in several saves (its retrospective,
 		// the plan's own status): the done news stays (docs/ux.md §8).
 		return true
@@ -1179,7 +1332,7 @@ func (a *app) reloadDoc() bool {
 	return a.pollDoc()
 }
 
-// doneToast is row 1's news when the file marks the old pin done: what is
+// doneToast is the notice row's news when the file marks the old pin done: what is
 // next up (or now, when the same save started it), or that the plan is
 // done; zero when the pin wasn't finished.
 // The plan is done when every leaf is, as the pin line judges it: an
@@ -1251,7 +1404,7 @@ func (a *app) helpBody(width int) []LogLine {
 		help = append(help, LogLine{Kind: "gap"})
 	}
 	a.health.refresh(time.Now())
-	return append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), false)...)
+	return append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now())...)
 }
 
 // pageKind names the page Help opens over, for its THIS PAGE section.
@@ -1290,14 +1443,11 @@ func (a *app) tapeLine(kind, text string) {
 }
 
 // below keeps a scrolled-up view on the lines it showed while the stream
-// went from before lines, and counts the new ones for AGENT's page title.
-// The change is signed (a block can take fewer rows than it did), and a
-// scrolled view stays scrolled (docs/ux.md §10).
+// went from before lines. The change is signed (a block can take fewer
+// rows than it did), and a scrolled view stays scrolled (docs/ux.md §10).
 func (a *app) below(before int) {
 	if a.scroll > 0 {
-		grew := a.logLines() - before
-		a.scroll = max(1, a.scroll+grew)
-		a.unseenLines = max(0, a.unseenLines+grew)
+		a.scroll = max(1, a.scroll+a.logLines()-before)
 	}
 }
 
@@ -1351,7 +1501,7 @@ func (a *app) tick() bool {
 	if a.scanPlans() {
 		changed = true
 	}
-	if a.toast.Text != "" && !a.now().Before(a.toastUntil) {
+	if a.toast.Text != "" && !a.toastLive() {
 		a.toast = StatusLine{}
 		changed = true
 	}
@@ -1398,7 +1548,6 @@ func (a *app) settle(columns, lines int) bool {
 		a.scroll = clamped
 		changed = true
 	}
-	a.live()
 	return changed
 }
 

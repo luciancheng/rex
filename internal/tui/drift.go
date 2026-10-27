@@ -28,7 +28,7 @@ type driftState struct {
 	held []driftNote
 }
 
-// driftNote is one judgement row 1 may show, with what it judged, so it
+// driftNote is one judgement the notice row may show, with what it judged, so it
 // can be judged again when the plan changes.
 type driftNote struct {
 	d      plan.Drift
@@ -46,7 +46,7 @@ func pinKey(planPath, task string) string { return planPath + "#" + task }
 func (a *app) checkDrift(ev watch.Event) { a.driftQueue = append(a.driftQueue, ev) }
 
 // applyDrift judges the queued events: completed edits and user prompts
-// only. It reports whether row 1 or AGENT changed.
+// only. It reports whether the notice row or AGENT changed.
 func (a *app) applyDrift() bool {
 	queue := a.driftQueue
 	a.driftQueue = nil
@@ -63,7 +63,7 @@ func (a *app) applyDrift() bool {
 			changed = true
 			notes = lesser(notes, a.judge(ev))
 		}
-		// One event's paths go in order of level, so row 1 ends on its worst
+		// One event's paths go in order of level, so the notice ends on its worst
 		// (a patch's on-pin file can't hide its off-pin one).
 		sort.SliceStable(notes, func(i, j int) bool { return notes[i].d.Level < notes[j].d.Level })
 		for _, n := range notes {
@@ -165,7 +165,7 @@ func (a *app) judge(ev watch.Event) []driftNote {
 }
 
 // syncDrift starts over when the effective pin (of this plan) is not the
-// one the state is about: row 1 clears, and the next drift starts a new
+// one the state is about: the notice clears, and the next drift starts a new
 // block. A held prompt that named the new pin asked for this move and
 // goes, with the edits held for it; one that names another task still
 // waits for its turn to end, and so do the edits of that task's files.
@@ -206,7 +206,7 @@ func (a *app) syncDrift() {
 	}
 }
 
-// rejudgeDrift checks row 1's notices against the plan as it is now: one
+// rejudgeDrift checks the drift notices against the plan as it is now: one
 // that is on the pin after an edit to the plan (it was widened) goes.
 func (a *app) rejudgeDrift() {
 	a.syncDrift()
@@ -253,10 +253,11 @@ func (a *app) noteDrift(n driftNote) bool {
 		}
 		return changed
 	}
-	if d.Level == plan.Hard {
-		s.hard = &n
-	} else {
+	switch {
+	case d.Level != plan.Hard:
 		s.soft = &n
+	case a.pane != PaneChat:
+		s.hard = &n // AGENT lists it, so seen there it is no notice (docs/ux.md §4)
 	}
 	if s.seen[d.Subject] {
 		return true
@@ -296,10 +297,10 @@ func (a *app) noteDrift(n driftNote) bool {
 	return true
 }
 
-// driftStatus is row 1's drift line of this level for the current pin,
-// if any: the last unresolved hard notice, or, with none, the last soft
-// one. They rank apart on row 1 (docs/ux.md §4).
-func (a *app) driftStatus(level plan.DriftLevel) (StatusLine, bool) {
+// driftStatus is the notice row's drift line for the current pin, if any
+// (docs/ux.md §4, §9a): the last unresolved hard drift, "off pin" in the
+// pin's yellow. Soft drift is AGENT's only.
+func (a *app) driftStatus() (StatusLine, bool) {
 	if a.doc == nil || a.doc.plan == nil {
 		return StatusLine{}, false
 	}
@@ -308,22 +309,22 @@ func (a *app) driftStatus(level plan.DriftLevel) (StatusLine, bool) {
 		return StatusLine{}, false
 	}
 	n := a.drift.hard
-	if n == nil {
-		n = a.drift.soft
-	}
-	if n == nil || n.d.Level != level {
+	if n == nil || n.d.Level != plan.Hard {
 		return StatusLine{}, false
 	}
 	d := n.d
-	kind := "muted"
-	if d.Level == plan.Hard {
-		kind = "accent" // off the pin: the pin's yellow, never an error's red
-	}
-	// Short: a prompt's reason (its words are on AGENT below), or an
-	// edit's file name (the end of the path matters most).
+	// Short: a prompt's reason (its words are on AGENT), or an edit's file
+	// name (the end of the path matters most).
 	short := path.Base(d.Subject)
 	if n.prompt != "" {
 		short = d.Reason
 	}
-	return StatusLine{Text: "drift · " + d.Level.String() + ": " + d.Subject + " · " + d.Reason, Short: "drift · " + d.Level.String() + ": " + short, Kind: kind}, true
+	return StatusLine{Text: offPin + " · " + d.Subject + " · " + d.Reason, Short: offPin + " · " + short, Kind: "text", Spans: func(text string) []Span {
+		rest, _ := strings.CutPrefix(text, offPin)
+		return []Span{{Text: offPin, Role: "accent"}, {Text: rest}}
+	}}, true
 }
+
+// offPin leads the hard drift notice, in the pin's yellow: off the pin,
+// never an error's red.
+const offPin = "off pin"

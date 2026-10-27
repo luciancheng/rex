@@ -211,39 +211,6 @@ func picked(spans []Span) []Span {
 	return out
 }
 
-// keySpans draws the keys in a row-1 line as keys, bold in text: a key
-// word (footerKeys) that opens the line or follows " · ", as in
-// "new plan cuj/next · enter switch" (docs/ux.md §4). A plan's name is
-// never one: it never follows " · ".
-func keySpans(text string) []Span {
-	var spans []Span
-	start := 0
-	at := func(i int) {
-		word, _, _ := strings.Cut(text[i:], " ")
-		if !footerKeys[word] {
-			return
-		}
-		if start < i {
-			spans = append(spans, Span{Text: text[start:i]})
-		}
-		spans = append(spans, Span{Text: word, Role: "text", Bold: true})
-		start = i + len(word)
-	}
-	at(0)
-	for i := 0; ; {
-		j := strings.Index(text[i:], " · ")
-		if j < 0 {
-			break
-		}
-		i += j + len(" · ")
-		at(i)
-	}
-	if start < len(text) {
-		spans = append(spans, Span{Text: text[start:]})
-	}
-	return spans
-}
-
 // h2Line is a section header (docs/ux.md §5): the label in bold capitals
 // at column 0, a slate rule to the edge, then optional muted meta.
 func h2Line(label, meta string, width int) LogLine {
@@ -410,15 +377,24 @@ func cutRow(text string, width int) (row, rest string) {
 	return strings.TrimRight(text[:at], " "), strings.TrimLeft(text[at:], " ")
 }
 
-// Page is a screen's page title, row 2 (docs/ux.md §4): a breadcrumb that
-// is also the Esc ladder (Esc goes to the crumb on the left), and meta on
-// the right. MetaShort stands in for a Meta that doesn't fit, as the list's
-// position does for "active · 16 of 30". Selected is the outline's title
-// row under the cursor.
+// Page is a screen's title, row 0 (docs/ux.md §4): a breadcrumb that is
+// also the Esc ladder (Esc goes to the crumb on the left), and meta on
+// the right, muted unless a span says otherwise. Short stands in for a
+// Meta that doesn't fit, as the list's position does for "16 of 30 · 1/3
+// done". Selectable is the outline's title row, which the cursor reaches;
+// Selected, that it is there.
 type Page struct {
-	Crumbs                    []string
-	Meta, MetaShort, MetaRole string
-	Selected                  bool
+	Crumbs               []string
+	Meta, Short          []Span
+	Selectable, Selected bool
+}
+
+// metaSpans is meta text in its muted role.
+func metaSpans(text string) []Span {
+	if text == "" {
+		return nil
+	}
+	return []Span{{Text: text, Role: "muted"}}
 }
 
 // crumbMin is the fewest cells a middle crumb clips to: "Send-…".
@@ -437,85 +413,172 @@ func ellipsis(s string, width int) string {
 	return strings.TrimRight(cutCells(cut, width-1), " ") + "…"
 }
 
-// fitCrumbs fits a page title into width cells (docs/ux.md §4): the meta
-// drops first (the first of metas that fits whole stays), then middle
-// crumbs clip to crumbMin cells each, then the root becomes "…", then
-// middle crumbs fold into it while the current one would get fewer than
-// crumbMin cells; what still doesn't fit is clipped at the end, so only
-// the current crumb is ever cut short. A crumb is never re-cased.
-func fitCrumbs(crumbs []string, width int, metas ...string) ([]string, string) {
+const crumbSep = " › "
+
+// crumbsLen is the cells crumbs take, joined.
+func crumbsLen(c []string) int {
+	n := 0
+	for i, s := range c {
+		if i > 0 {
+			n += cellLen(crumbSep)
+		}
+		n += cellLen(s)
+	}
+	return n
+}
+
+// fitCrumbs fits a breadcrumb into room cells (docs/ux.md §4): middle
+// crumbs clip to crumbMin cells each, then the root becomes "…", then the
+// middle crumbs fold into it, then only the current crumb is left. It
+// reports false when even that doesn't fit whole. A crumb is never
+// re-cased.
+func fitCrumbs(crumbs []string, room int) ([]string, bool) {
 	c := make([]string, len(crumbs))
 	for i, s := range crumbs {
 		c[i] = flat(s)
 	}
-	room := width - 2
-	joined := func() int {
-		n := 0
-		for i, s := range c {
-			if i > 0 {
-				n += cellLen(crumbSep)
-			}
-			n += cellLen(s)
-		}
-		return n
-	}
-	for _, meta := range metas {
-		if meta = flat(meta); meta != "" && joined()+2+cellLen(meta)+1 <= room {
-			return c, meta
-		}
+	if crumbsLen(c) <= room {
+		return c, true
 	}
 	for i := 1; i < len(c)-1; i++ {
-		if over := joined() - room; over > 0 {
+		if over := crumbsLen(c) - room; over > 0 {
 			c[i] = ellipsis(c[i], max(crumbMin, cellLen(c[i])-over))
 		}
 	}
-	if len(c) > 1 && joined() > room {
+	if crumbsLen(c) <= room {
+		return c, true
+	}
+	if len(c) > 1 {
 		c[0] = "…"
 	}
-	// Help over a task has four crumbs: the middle ones fold into the "…"
-	// before the current one is left fewer than crumbMin cells.
-	for len(c) > 2 && room-(joined()-cellLen(c[len(c)-1])) < min(crumbMin, cellLen(c[len(c)-1])) {
+	for len(c) > 2 && crumbsLen(c) > room {
 		c = append(c[:1], c[2:]...)
 	}
-	return c, ""
+	if crumbsLen(c) <= room {
+		return c, true
+	}
+	last := c[len(c)-1:]
+	return last, cellLen(last[0]) <= room
 }
 
-const crumbSep = " › "
-
-// pageLine draws a page title: crumbs from column 2, the current one a
-// bright bold title and the ones before it muted, and the meta, muted,
-// ending one cell from the edge. Selected (the outline's title row under
-// the cursor) it is ❯ in the gutter and the selection's purple.
-func pageLine(p Page, width int) LogLine {
-	crumbs, meta := fitCrumbs(p.Crumbs, width, p.Meta, p.MetaShort)
-	spans := []Span{{Text: "  "}}
+// titleLine draws row 0 (docs/ux.md §4): the breadcrumb from column 0,
+// the current crumb a bright bold title and the ones before it muted; the
+// meta; and, three cells after it, the places' label, all ending one cell
+// from the edge. Short of room, the breadcrumb clips first, down to its
+// current crumb; then the meta goes (its short form first); then the label
+// shortens to the place on screen; under labelFrom cells there is no
+// label; and only then is the current crumb cut, to the room left. The
+// outline's title row keeps a 2-cell gutter, selected or not, so the
+// cursor changes only the gutter: selected, it holds ❯, and the row is the
+// selection's purple but for the label.
+func titleLine(p Page, width int, pane PaneKind) LogLine {
+	room := width - 1
+	lead := 0
+	if p.Selectable || p.Selected {
+		lead = cellLen(selMark)
+	}
+	var metas [][]Span
+	for _, m := range [][]Span{p.Meta, p.Short} {
+		if len(m) > 0 {
+			metas = append(metas, m)
+		}
+	}
+	type form struct{ meta, label []Span }
+	var forms []form
+	if width >= labelFrom {
+		for _, m := range metas {
+			forms = append(forms, form{m, placeLabel(pane, false)})
+		}
+		forms = append(forms, form{nil, placeLabel(pane, false)}, form{nil, placeLabel(pane, true)})
+	} else {
+		for _, m := range metas {
+			forms = append(forms, form{m, nil})
+		}
+		forms = append(forms, form{nil, nil})
+	}
+	side := func(f form) int {
+		n := 0
+		if len(f.meta) > 0 {
+			n += 2 + spansLen(f.meta)
+		}
+		if len(f.label) > 0 {
+			n += 3 + spansLen(f.label)
+		}
+		return n
+	}
+	// When nothing fits whole, the last form's current crumb is cut to the
+	// room it leaves: from labelFrom cells the label stays, short.
+	pick := forms[len(forms)-1]
+	var crumbs []string
+	if n := len(p.Crumbs); n > 0 {
+		crumbs = []string{ellipsis(flat(p.Crumbs[n-1]), max(1, room-lead-side(pick)))}
+	}
+	for _, f := range forms {
+		if c, ok := fitCrumbs(p.Crumbs, room-lead-side(f)); ok {
+			pick, crumbs = f, c
+			break
+		}
+	}
+	var left []Span
 	for i, c := range crumbs {
 		if i > 0 {
-			spans = append(spans, Span{Text: crumbSep, Role: "muted"})
+			left = append(left, Span{Text: crumbSep, Role: "muted"})
 		}
 		if i == len(crumbs)-1 {
-			spans = append(spans, Span{Text: c, Role: "title", Bold: true})
+			left = append(left, Span{Text: c, Role: "title", Bold: true})
 		} else {
-			spans = append(spans, Span{Text: c, Role: "muted"})
+			left = append(left, Span{Text: c, Role: "muted"})
 		}
 	}
-	if meta != "" {
-		role := p.MetaRole
-		if role == "" {
-			role = "muted"
+	var right []Span
+	if len(pick.meta) > 0 {
+		right = append(right, pick.meta...)
+	}
+	if len(pick.label) > 0 {
+		if len(right) > 0 {
+			right = append(right, Span{Text: "   "})
 		}
-		gap := width - cellLen(spanText(spans)) - cellLen(meta) - 1
-		spans = append(spans, Span{Text: strings.Repeat(" ", gap)}, Span{Text: meta, Role: role}, Span{Text: " "})
+		right = append(right, pick.label...)
+	}
+	switch {
+	case p.Selected:
+		left = append([]Span{{Text: selMark}}, picked(left)...)
+		right = append(picked(right[:len(right)-len(pick.label)]), right[len(right)-len(pick.label):]...)
+	case lead > 0:
+		left = append([]Span{{Text: strings.Repeat(" ", lead)}}, left...)
+	}
+	spans := left
+	if len(right) > 0 {
+		gap := room - spansLen(left) - spansLen(right)
+		spans = append(append(spans, Span{Text: strings.Repeat(" ", max(2, gap))}), right...)
 	}
 	if p.Selected {
-		return spanLine("pick", append([]Span{{Text: selMark}}, picked(spans[1:])...)...)
+		return spanLine("pick", spans...)
 	}
 	return spanLine("text", spans...)
 }
 
-// FooterSeg is one footer segment, a key and what it does: "enter open".
-// Short is what it shrinks to when it is the last one that fits: "?".
-type FooterSeg struct{ Text, Short string }
+// FooterSeg is one footer segment, a key and what it does: "enter open"
+// (docs/ux.md §4). Wide is its longest form on this screen ("enter
+// create"): the footer is fitted by it, so moving the cursor never changes
+// which segments show. Rank, when set, outranks the key's own (1 is a
+// must-have).
+type FooterSeg struct {
+	Text, Wide string
+	Rank       int
+}
+
+// seg is a segment that reads text now and may read any of variants as
+// the cursor moves.
+func seg(text string, variants ...string) FooterSeg {
+	s := FooterSeg{Text: text, Wide: text}
+	for _, v := range variants {
+		if cellLen(v) > cellLen(s.Wide) {
+			s.Wide = v
+		}
+	}
+	return s
+}
 
 func segs(texts ...string) []FooterSeg {
 	out := make([]FooterSeg, len(texts))
@@ -525,57 +588,74 @@ func segs(texts ...string) []FooterSeg {
 	return out
 }
 
-// helpSeg is "? help", "?" when it is the last thing that fits.
-var helpSeg = FooterSeg{Text: "? help", Short: "?"}
+// helpSeg is "? help", always last and always kept.
+var helpSeg = FooterSeg{Text: "? help"}
 
-// fitFooter keeps the longest prefix of segs that fits width cells, joined
-// by two spaces (docs/ux.md §4): rank is display order. Before the last
-// kept segment drops, its short form is tried. Words are never cut, except
-// the first segment on a terminal too narrow even for it.
-func fitFooter(segs []FooterSeg, width int) []string {
-	for n := len(segs); n > 0; n-- {
-		kept := make([]string, n)
-		for i, s := range segs[:n] {
-			kept[i] = s.Text
-		}
-		if cellLen(strings.Join(kept, "  ")) <= width {
-			return kept
-		}
-		if s := segs[n-1].Short; s != "" {
-			if kept[n-1] = s; cellLen(strings.Join(kept, "  ")) <= width {
-				return kept
-			}
-		}
+// footerRank is which segments the footer keeps longest, by key (docs/ux.md
+// §4), after ? help: enter, esc, tab, ↑↓, typing, then a scroll's ends.
+var footerRank = map[string]int{"ctrl+c": 1, "enter": 2, "esc": 3, "tab": 4, "↑↓": 5, "type": 6, "end": 7, "home": 8}
+
+func (s FooterSeg) rank() int {
+	if s.Rank != 0 {
+		return s.Rank
 	}
-	if len(segs) == 0 {
-		return nil
+	key, _, _ := strings.Cut(s.Text, " ")
+	if r, ok := footerRank[key]; ok {
+		return r
 	}
-	return []string{strings.TrimRight(clip(segs[0].Text, width), " ")}
+	return len(footerRank) + 1
 }
 
-// footerKeys are the words a footer draws as keys.
-var footerKeys = map[string]bool{"enter": true, "esc": true, "tab": true, "?": true, "↑↓": true, "→": true, "home": true, "end": true, "ctrl+c": true}
+func (s FooterSeg) wide() int {
+	return max(cellLen(s.Text), cellLen(s.Wide))
+}
 
-// footerLine draws the footer: each segment's key bold, what it does
-// muted (the quit warning keeps its error color).
-func footerLine(segs []FooterSeg, width int, kind string) LogLine {
-	key := "text"
-	if kind == "error" {
-		key = "error"
+// footerSep joins the footer's segments.
+const footerSep = " · "
+
+// fitFooter keeps what of segs fits width cells, joined by " · "
+// (docs/ux.md §4): while they don't fit, the lowest-ranked segment goes
+// (the later of a tie), never ? help, and the order never changes. Each segment counts
+// as its widest form, so the cursor never changes what fits. Words are
+// never cut, except the last segment left on a terminal too narrow even
+// for it.
+func fitFooter(segs []FooterSeg, width int) []string {
+	kept := append([]FooterSeg(nil), segs...)
+	total := func() int {
+		n := 0
+		for i, s := range kept {
+			if i > 0 {
+				n += cellLen(footerSep)
+			}
+			n += s.wide()
+		}
+		return n
 	}
-	var spans []Span
-	for i, t := range fitFooter(segs, width) {
-		if i > 0 {
-			spans = append(spans, Span{Text: "  "})
+	for len(kept) > 1 && total() > width {
+		drop := -1
+		for i, s := range kept {
+			if s != helpSeg && (drop < 0 || s.rank() >= kept[drop].rank()) {
+				drop = i
+			}
 		}
-		word, _, _ := strings.Cut(t, " ")
-		if footerKeys[word] {
-			spans = append(spans, Span{Text: word, Role: key, Bold: true})
-			t = t[len(word):]
-		}
-		if t != "" {
-			spans = append(spans, Span{Text: t})
-		}
+		kept = append(kept[:drop], kept[drop+1:]...)
 	}
-	return spanLine(kind, spans...)
+	if len(kept) == 0 {
+		return nil
+	}
+	out := make([]string, len(kept))
+	for i, s := range kept {
+		out[i] = s.Text
+	}
+	if len(out) == 1 && cellLen(out[0]) > width {
+		out[0] = strings.TrimRight(clip(out[0], width), " ")
+	}
+	return out
+}
+
+// footerLine draws the footer (docs/ux.md §4): one muted line of "key
+// verb" segments, one cell short of the edge. The quit warning is muted
+// too.
+func footerLine(segs []FooterSeg, width int) LogLine {
+	return LogLine{Kind: "muted", Text: strings.Join(fitFooter(segs, width-1), footerSep)}
 }

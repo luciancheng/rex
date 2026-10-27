@@ -11,12 +11,22 @@ import (
 // column keeps the whole terminal (docs/ux.md §12).
 const TextOnlyBelow = 40 + Gutter + MinTextCols
 
+// maxText is the most of a wide terminal the text column takes (docs/ux.md
+// §4): wider, the rest of the row stays empty.
+const maxText = 100
+
+// blankFrom is the height from which row 2 is blank and the notice row
+// is H−2 (docs/ux.md §4); AGENT puts blank rows between its blocks from
+// there too (§10). Shorter, a notice takes row 1 while it shows.
+const blankFrom = 12
+
 // layout is how a terminal size splits into mascot, text and composer.
 type layout struct {
 	mascotCols int // 0 in text-only mode
 	gutter     int
 	textW      int // 0 when the text column would be too narrow
-	page       int // 1 when row 2 is the page title (docs/ux.md §4)
+	blank      int // 1 when row 2 is the blank row (docs/ux.md §4)
+	notice     int // 1 when H−2 is the notice row
 	composer   int // 3 = boxed, 1 = one bare row, 0 = none
 	bodyH      int
 	locked     bool // too narrow: only Ctrl+C (and Ctrl+L) do anything
@@ -36,17 +46,18 @@ func layoutFor(columns, lines int) layout {
 	if l.textW < MinTextCols {
 		l.textW, l.mascotCols, l.gutter, l.locked = 0, 0, 0, true
 	}
+	l.textW = min(l.textW, maxText)
 	switch {
 	case lines >= 16:
 		l.composer = InputRows
 	case lines >= 7:
 		l.composer = 1
 	}
-	if lines > 3 {
-		l.page = 1 // never on the footer's row
+	if lines >= blankFrom {
+		l.blank, l.notice = 1, 1
 	}
 	l.typing = l.composer > 0 && !l.locked
-	l.bodyH = max(0, lines-2-l.page-FooterRows-l.composer)
+	l.bodyH = max(0, lines-2-l.blank-l.notice-FooterRows-l.composer)
 	return l
 }
 
@@ -58,139 +69,53 @@ func (l layout) bare() layout {
 	return l
 }
 
-// untitled is l on a screen without a page title: AGENT under
-// agentTitleRows rows, where the body takes row 2 too.
-func (l layout) untitled() layout {
-	l.bodyH += l.page
-	l.page = 0
-	return l
-}
+// labelFrom is the text width from which row 0 ends with the places'
+// label, "plan · agent" (docs/ux.md §4).
+const labelFrom = 30
 
-// agentTitleRows is the height from which AGENT has a page title; PLAN
-// screens and Help always do (docs/ux.md §4).
-const agentTitleRows = 12
+// placeWords are the two places as row 0's label names them, in its order.
+var placeWords = [2]string{PanePlans: "plan", PaneChat: "agent"}
 
-// brandFrom is the text width from which row 0 starts with REX; narrower,
-// the mascot (or nothing) is the brand.
-const brandFrom = 42
-
-// tabWords are the two places, in the order row 0 always shows them.
-var tabWords = [2]string{PaneChat: "AGENT", PanePlans: "PLAN"}
-
-// tabBlock is the cells the tabs and their cue take: "[PLAN]•AGENT" and
-// "PLAN•[AGENT]" alike.
-const tabBlock = 12
-
-// headerRow is row 0, the tab bar (docs/ux.md §4): REX from brandFrom
-// cells; both places, the one on screen a pill, with the cue cell between
-// them (a 12-cell block, so the turn word never moves); the turn word;
-// and on the right the follow word ("following" or "latched") and the
-// open plan's path, shortened to fit. The word stays while it fits beside
-// min(5, stem) cells of path, judged against the longest turn word and
-// the longer follow word, so it doesn't come and go with the turn; a
-// dropped word never gives ".rex.json" its room back.
-func headerRow(width int, pane PaneKind, cue, state, follow, planRel string) LogLine {
-	state = strings.TrimSpace(flat(state))
-	if state == "" {
-		state = "idle"
+// placeLabel is row 0's quiet label (docs/ux.md §4): both places, the one
+// on screen bright text and the other and the dot muted; short, the place
+// on screen alone. It never blinks or changes color with news.
+func placeLabel(pane PaneKind, short bool) []Span {
+	here := Span{Text: placeWords[pane], Role: "text"}
+	if short {
+		return []Span{here}
 	}
-	var spans []Span
-	brand := 0
-	if width >= brandFrom {
-		spans = append(spans, Span{Text: "REX", Role: "title", Bold: true}, Span{Text: " "})
-		brand = cellLen("REX ")
+	other := PaneChat
+	if pane == PaneChat {
+		other = PanePlans
 	}
-	// The cue's glyph says which; neither is yellow, which is only the
-	// pin's (docs/ux.md §5).
-	mark := Span{Text: " "}
-	if cue == "•" || cue == "!" {
-		mark = Span{Text: cue, Role: "text", Bold: true}
-	}
+	there := Span{Text: placeWords[other], Role: "muted"}
 	if pane == PanePlans {
-		spans = append(append(spans, pill(tabWords[PanePlans], "text")...), mark, Span{Text: tabWords[PaneChat], Role: "muted"})
-	} else {
-		spans = append(append(spans, Span{Text: tabWords[PanePlans], Role: "muted"}, mark), pill(tabWords[PaneChat], "text")...)
+		return []Span{here, {Text: " · ", Role: "muted"}, there}
 	}
-	turn := Span{Text: state, Role: "muted"}
-	switch state {
-	case "thinking", "running":
-		turn.Role = "text"
-	case "ask":
-		turn.Role, turn.Bold = "text", true
-	case "error":
-		turn.Role, turn.Bold = "error", true
-	}
-	spans = append(spans, Span{Text: " "}, turn)
-	left := cellLen(spanText(spans))
-	var right []Span
-	if planRel = strings.TrimSpace(flat(planRel)); planRel != "" {
-		stem := strings.TrimSuffix(strings.TrimPrefix(planRel, "rex/plans/"), ".rex.json")
-		room := width - left - 2
-		keep := width - brand - tabBlock - 1 - max(cellLen(state), cellLen("thinking")) - 2 - cellLen("following ")
-		switch {
-		case follow == "":
-			if path := shortPlanPath(planRel, room); path != "" {
-				right = append(right, Span{Text: path, Role: "muted"})
-			}
-		case keep >= min(headPathMin, cellLen(stem)):
-			role := "muted"
-			if follow == "latched" {
-				role = "text"
-			}
-			right = append(right, Span{Text: follow, Role: role})
-			if path := shortPlanPath(planRel, room-cellLen(follow)-1); path != "" {
-				right = append(right, Span{Text: " " + path, Role: "muted"})
-			}
-		default:
-			if path := shortPlanPath(stem, room); path != "" {
-				right = append(right, Span{Text: path, Role: "muted"})
-			}
-		}
-	}
-	if len(right) > 0 {
-		spans = append(spans, Span{Text: strings.Repeat(" ", max(2, width-left-cellLen(spanText(right))))})
-		spans = append(spans, right...)
-	}
-	return spanLine("muted", spans...)
+	return []Span{there, {Text: " · ", Role: "muted"}, here}
 }
 
-// headPathMin is the fewest cells of the plan's path row 0 keeps: "…demo".
-const headPathMin = 5
-
-// shortPlanPath fits a repo-relative plan path into room cells: the whole
-// path when it fits, then without "rex/plans/", then without ".rex.json",
-// then "…/" and its last segment, then "…" and its tail, down to
-// headPathMin cells; under that it is dropped.
-func shortPlanPath(path string, room int) string {
-	stem := strings.TrimSuffix(strings.TrimPrefix(path, "rex/plans/"), ".rex.json")
-	for _, p := range []string{path, strings.TrimPrefix(path, "rex/plans/"), stem} {
-		if cellLen(p) <= room {
-			return p
-		}
+// otherPlace is the footer's word for Tab: the place not on screen.
+func otherPlace(pane PaneKind) string {
+	if pane == PanePlans {
+		return placeWords[PaneChat]
 	}
-	if i := strings.LastIndex(stem, "/"); i >= 0 {
-		if p := "…/" + stem[i+1:]; cellLen(p) <= room {
-			return p
-		}
-	}
-	if room < headPathMin {
-		return ""
-	}
-	return "…" + tailCells(stem, room-1)
+	return placeWords[PanePlans]
 }
 
 // withoutEnter is the plan list's footer when the screen is too short to
 // show its composer (docs/ux.md §12). Typing is ignored there, so "type
-// to …" goes; enter never submits a draft blind, so every enter goes but
-// "enter open" on an empty draft, which opens the selected row; and with
-// a hidden draft ? would be text, so "? help" goes too. Screens without a
-// composer keep their footers, since their keys act at once.
-func withoutEnter(segs []FooterSeg, draft string) []FooterSeg {
+// to …" goes; enter never submits a draft blind, so enter goes while the
+// draft has text, and in a Name prompt, which nothing can be typed into;
+// with a hidden draft ? would be text, so "? help" goes too. None of it
+// depends on the cursor. Screens without a composer keep their footers,
+// since their keys act at once.
+func withoutEnter(segs []FooterSeg, draft string, prompting bool) []FooterSeg {
 	var out []FooterSeg
 	for _, s := range segs {
 		switch {
 		case strings.HasPrefix(s.Text, "type to "):
-		case strings.HasPrefix(s.Text, "enter ") && (s.Text != "enter open" || draft != ""):
+		case strings.HasPrefix(s.Text, "enter ") && (draft != "" || prompting):
 		case s == helpSeg && draft != "":
 		default:
 			out = append(out, s)
@@ -199,24 +124,31 @@ func withoutEnter(segs []FooterSeg, draft string) []FooterSeg {
 	return out
 }
 
-// footerSegments is the footer for the current screen, highest rank first
-// (docs/ux.md §4): keys only, navigation first.
-func footerSegments(opt ComposeOptions, scroll int) ([]FooterSeg, string) {
+// footerSegments is the footer for the current screen, in display order
+// (docs/ux.md §4): keys only, ? help last.
+func footerSegments(opt ComposeOptions, scroll int) []FooterSeg {
 	if opt.QuitPending {
-		return segs("ctrl+c again to quit"), "error"
+		return segs("ctrl+c again to quit")
 	}
 	if opt.Footer != nil {
-		return opt.Footer, "muted"
+		return opt.Footer
 	}
 	if opt.Pane == PanePlans && opt.Plans != nil {
 		out := listFooter(opt.Plans, opt.Draft, opt.Preview)
 		if n := runeLen(opt.Draft); n >= draftCap-16 && len(out) > 0 && opt.Composer {
-			// The cap is not silent: near it, the count is a must-have.
-			out = append([]FooterSeg{out[0], {Text: fmt.Sprintf("%d/%d", n, draftCap)}}, out[1:]...)
+			// The cap is not silent: near it, the count is a must-have, after
+			// what enter does.
+			at := 0
+			for at < len(out) && !strings.HasPrefix(out[at].Text, "enter ") {
+				at++
+			}
+			at = min(at+1, len(out))
+			count := FooterSeg{Text: fmt.Sprintf("%d/%d", n, draftCap), Rank: 1}
+			out = append(append(append([]FooterSeg(nil), out[:at]...), count), out[at:]...)
 		}
-		return out, "muted"
+		return out
 	}
-	return agentFooter(scroll, false, false), "muted"
+	return agentFooter()
 }
 
 // hintText is how a placeholder reads: dim when there is color, in
@@ -228,78 +160,72 @@ func hintText(placeholder string, enabled bool) string {
 	return "(" + placeholder + ")"
 }
 
-// listFooter is the plan list's footer (docs/ux.md §4): what enter does
-// on the selected row, where esc goes, tab, then ? help while ? opens
-// Help (on an empty draft), then the rest.
-func listFooter(b *PlanBrowser, draft, preview string) []FooterSeg {
-	if preview != "" {
-		return segs(preview, "esc clear", "tab agent")
-	}
-	enter := "enter open"
+// enterOn is what enter does on the plan list's selected row, as the
+// footer says it: it opens a plan or a folder, or starts or makes a new
+// one. Its width is the longer, so the cursor never changes the footer.
+func enterOn(b *PlanBrowser) FooterSeg {
+	s := seg("enter open", "enter create")
 	if b.Cursor < len(b.Rows) {
 		switch b.Rows[b.Cursor].Kind {
 		case PlanRowNew, PlanRowMkdir, PlanRowCreateNamed:
-			enter = "enter create" // short enough that ? help fits at 38 cells in Browse too
+			s.Text = "enter create"
 		}
 	}
+	return s
+}
+
+// listFooter is the plan list's footer (docs/ux.md §4): ↑↓, what enter
+// does on the selected row, typing, where esc goes, tab, then ? help while
+// ? opens Help (on an empty draft).
+func listFooter(b *PlanBrowser, draft, preview string) []FooterSeg {
+	tab := FooterSeg{Text: "tab agent"}
+	move := FooterSeg{Text: "↑↓ select"}
+	if preview != "" {
+		return []FooterSeg{{Text: preview}, {Text: "esc clear"}, tab}
+	}
+	enter := enterOn(b)
 	switch {
 	case b.Prompting() && draft == "":
-		return []FooterSeg{{Text: "enter create"}, {Text: "esc cancel"}, {Text: "tab agent"}, helpSeg}
+		return []FooterSeg{{Text: "enter create"}, {Text: "esc cancel"}, tab, helpSeg}
 	case b.Prompting():
-		return segs("enter create", "esc clear", "tab agent")
+		return []FooterSeg{{Text: "enter create"}, {Text: "esc clear"}, tab}
 	case draft != "":
-		return segs(enter, "esc clear", "tab agent", "↑↓ move")
+		return []FooterSeg{move, enter, {Text: "esc clear"}, tab}
 	case b.Browsing():
-		esc := "esc up"
+		esc := seg("esc up", "esc plans")
 		if b.topFolder() {
-			esc = "esc plans" // from a top folder Esc is the plan list (docs/ux.md §11)
+			esc.Text = "esc plans" // from a top folder Esc is the plan list (docs/ux.md §11)
 		}
-		return []FooterSeg{{Text: enter}, {Text: esc}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}, {Text: "type to filter"}}
+		return []FooterSeg{move, enter, {Text: "type to filter"}, esc, tab, helpSeg}
 	case b.Current == "":
-		// With no plan open, Esc goes back to the Wait screen (docs/ux.md
-		// §3); "esc wait" keeps ? at 38 cells beside "enter create".
-		return []FooterSeg{{Text: enter}, {Text: "esc wait"}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}, {Text: "type to find"}}
+		// With no plan open, Esc goes back to the Wait screen (docs/ux.md §3).
+		return []FooterSeg{move, enter, {Text: "type to find"}, {Text: "esc wait"}, tab, helpSeg}
 	}
-	return []FooterSeg{{Text: enter}, {Text: "tab agent"}, helpSeg, {Text: "↑↓ move"}, {Text: "type to find"}}
+	return []FooterSeg{move, enter, {Text: "type to find"}, tab, helpSeg}
 }
 
-// agentFooter is AGENT's footer (docs/ux.md §4). Scrolled, end live leads,
-// and under agentTitleRows the scroll count leads it, since there is no
-// page title to carry it; offer is row 1's new plan that enter takes, and
-// it takes end live's place, since ↑↓ still reach live. ? help ranks over
-// ↑↓ scroll, so it is on every AGENT footer at 38 cells.
-func agentFooter(scroll int, titled, offer bool) []FooterSeg {
-	var out []FooterSeg
-	if scroll > 0 && !titled {
-		out = append(out, FooterSeg{Text: fmt.Sprintf("%d↑", scroll)})
-	}
-	switch {
-	case offer:
-		out = append(out, FooterSeg{Text: "enter switch"})
-	case scroll > 0:
-		out = append(out, FooterSeg{Text: "end live"})
-	}
-	out = append(out, FooterSeg{Text: "tab plan"}, helpSeg, FooterSeg{Text: "↑↓ scroll"})
-	if scroll == 0 && !offer {
-		out = append(out, segs("home oldest", "ctrl+c ×2 quit")...)
-	}
-	return out
+// agentFooter is AGENT's footer (docs/ux.md §4): scrolling, its ends,
+// Tab and Help. A new plan's offer is taken with o, which its notice
+// names, never the footer.
+func agentFooter() []FooterSeg {
+	return []FooterSeg{{Text: "↑↓ scroll"}, {Text: "home oldest"}, {Text: "end live"}, {Text: "tab plan"}, helpSeg}
 }
 
-// emptyFooter is the empty AGENT tab's footer (docs/ux.md §4): a page, so,
-// as on Wait, ↑↓ scroll only while it runs past the screen, and there is
-// no oldest or live to go to.
-func emptyFooter(more, offer bool) []FooterSeg {
+// pageFooter is the footer of a page that starts at its top (Wait, the
+// empty AGENT tab, Help): ↑↓ scroll only while it runs past the screen,
+// then where esc goes, if anywhere, and tab; help is "" on Help itself,
+// where ? does nothing.
+func pageFooter(more bool, esc, tab string, help bool) []FooterSeg {
 	var out []FooterSeg
-	if offer {
-		out = append(out, FooterSeg{Text: "enter switch"})
-	}
-	out = append(out, FooterSeg{Text: "tab plan"}, helpSeg)
 	if more {
 		out = append(out, FooterSeg{Text: "↑↓ scroll"})
 	}
-	if !offer {
-		out = append(out, FooterSeg{Text: "ctrl+c ×2 quit"})
+	if esc != "" {
+		out = append(out, FooterSeg{Text: esc})
+	}
+	out = append(out, FooterSeg{Text: tab})
+	if help {
+		out = append(out, helpSeg)
 	}
 	return out
 }
@@ -320,14 +246,15 @@ func composerRows(l layout, draft, prefix, placeholder string, enabled bool) []s
 	return nil
 }
 
-// cursorFor places the cursor after the draft, or hides it (row 0).
+// cursorFor places the cursor after the draft, or hides it (row 0). The
+// composer sits over the notice row and the footer.
 func cursorFor(l layout, lines int, draft, prefix string) (int, int) {
 	visible := visibleDraft(draft, l.textW-l.composerChrome()-cellLen(prefix))
 	switch l.composer {
 	case InputRows:
-		return lines - 2, l.mascotCols + l.gutter + 1 + 1 + cellLen(prefix) + cellLen(visible)
+		return lines - 2 - l.notice, l.mascotCols + l.gutter + 1 + 1 + cellLen(prefix) + cellLen(visible)
 	case 1:
-		return lines - 1, l.mascotCols + l.gutter + 1 + cellLen(prefix) + cellLen(visible)
+		return lines - 1 - l.notice, l.mascotCols + l.gutter + 1 + cellLen(prefix) + cellLen(visible)
 	}
 	return 0, 0
 }

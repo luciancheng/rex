@@ -58,7 +58,7 @@ func TestComposeFrameStringMatchesRows(t *testing.T) {
 	if got := ComposeFrame("idle", "yellow", opt); !strings.Contains(got, strings.Join(f.Rows, "\r\n")) {
 		t.Fatal("string frame and rows disagree")
 	}
-	if len(f.Rows) != 24 || f.CursorRow != 22 {
+	if len(f.Rows) != 24 || f.CursorRow != 21 { // the composer's middle row, over the notice row and the footer
 		t.Fatalf("rows=%d cursor=%d", len(f.Rows), f.CursorRow)
 	}
 	opt.Pane, opt.Composer = PaneChat, false // no composer, so no cursor

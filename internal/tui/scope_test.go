@@ -27,7 +27,7 @@ func TestOtherReposAreHiddenAndCounted(t *testing.T) {
 	}
 	typeText(a, "?")
 	press(a, "\r")
-	if a.overlay[a.pane] != overlayHelp || !strings.Contains(viewText(a.helpBody(PaneTextWidth(a.columns))), "1 event from other folders hidden") {
+	if a.overlay[a.pane] != overlayHelp || !strings.Contains(viewText(a.helpBody(PaneTextWidth(a.columns, a.lines))), "1 event from other folders hidden") {
 		t.Fatal("help shows the hidden count")
 	}
 }

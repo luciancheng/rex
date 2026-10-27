@@ -14,7 +14,8 @@ import (
 )
 
 // docs/ux.md §4, §12: rows 0 and 1, the blank row 2 and the notice row
-// from 12 rows, the footer; the text column is at most maxText cells.
+// from 12 rows, the footer; the mascot from 110 columns and 16 rows, and
+// the text column at most maxText cells.
 func TestLayoutTiers(t *testing.T) {
 	cases := []struct {
 		cols, lines                   int
@@ -23,22 +24,33 @@ func TestLayoutTiers(t *testing.T) {
 	}{
 		{120, 32, 40, 78, 3, 1, false, true},
 		{200, 32, 40, maxText, 3, 1, false, true}, // the measure
-		{66, 24, 40, 24, 3, 1, false, true},
-		{65, 24, 0, 65, 3, 1, false, true}, // text only
+		{110, 16, 40, 68, 3, 1, false, true},      // the mascot's floor
+		{109, 16, 0, maxText, 3, 1, false, true},  // a column short: text only, at the measure
+		{110, 15, 0, maxText, 1, 1, false, true},  // a row short
+		{109, 15, 0, maxText, 1, 1, false, true},
+		{80, 24, 0, 80, 3, 1, false, true}, // the plan gets the whole width
+		{66, 24, 0, 66, 3, 1, false, true},
 		{30, 24, 0, 30, 3, 1, false, true},
+		{24, 24, 0, 24, 3, 1, false, true},
 		{23, 24, 0, 0, 3, 1, true, false}, // widen
-		{100, 15, 40, 58, 1, 1, false, true},
-		{100, 12, 40, 58, 1, 1, false, true},
-		{100, 11, 40, 58, 1, 0, false, true},
-		{100, 6, 40, 58, 0, 0, false, false},
+		{100, 15, 0, 100, 1, 1, false, true},
+		{100, 12, 0, 100, 1, 1, false, true},
+		{100, 11, 0, 100, 1, 0, false, true},
+		{100, 6, 0, 100, 0, 0, false, false},
 	}
 	for _, c := range cases {
 		l := layoutFor(c.cols, c.lines)
 		if l.mascotCols != c.mascot || l.textW != c.text || l.composer != c.composer || l.blank != c.blank || l.notice != c.blank || l.locked != c.locked || l.typing != c.typing {
 			t.Fatalf("%dx%d: %+v", c.cols, c.lines, l)
 		}
+		if gutter := map[bool]int{true: Gutter, false: 0}[c.mascot > 0]; l.gutter != gutter {
+			t.Fatalf("%dx%d: gutter %d, want %d", c.cols, c.lines, l.gutter, gutter)
+		}
 		if want := max(0, c.lines-2-2*c.blank-FooterRows-c.composer); l.bodyH != want {
 			t.Fatalf("%dx%d: body %d, want %d", c.cols, c.lines, l.bodyH, want)
+		}
+		if got := PaneTextWidth(c.cols, c.lines); got != c.text {
+			t.Fatalf("%dx%d: PaneTextWidth %d, want %d", c.cols, c.lines, got, c.text)
 		}
 	}
 }
@@ -58,20 +70,33 @@ func frameAt(t *testing.T, cols, lines int, opt ComposeOptions) []string {
 	return f.Rows
 }
 
-func TestTextOnlyBelow66AndWidenBelow24(t *testing.T) {
-	rows := frameAt(t, 60, 24, ComposeOptions{Pane: PaneChat})
-	if !strings.HasPrefix(rows[0], "Agent ") || !strings.HasSuffix(strings.TrimRight(rows[0], " "), "plan · agent") {
-		t.Fatalf("text-only, row 0 starts at column 0: %q", rows[0])
+// docs/ux.md §12: under 110 columns or 16 rows there is no mascot, and
+// the text starts at column 0; under 24 text cells Rex asks to widen, with
+// no wordmark, and only Ctrl+C acts.
+func TestTextOnlyBelow110x16AndWidenBelow24(t *testing.T) {
+	for _, size := range [][2]int{{109, 24}, {110, 15}, {80, 24}, {60, 24}} {
+		rows := frameAt(t, size[0], size[1], ComposeOptions{Pane: PaneChat})
+		if !strings.HasPrefix(rows[0], "Agent ") || !strings.HasSuffix(strings.TrimRight(rows[0], " "), "plan · agent") {
+			t.Fatalf("%dx%d: text-only, row 0 starts at column 0: %q", size[0], size[1], rows[0])
+		}
+		if strings.ContainsAny(strings.Join(rows, ""), "▀▄█") {
+			t.Fatalf("%dx%d: the mascot shows from 110x16 only", size[0], size[1])
+		}
+		if n := cellLen(rows[0]); n != min(size[0], maxText) {
+			t.Fatalf("%dx%d: the text takes the width up to the measure: %d cells", size[0], size[1], n)
+		}
 	}
-	if strings.ContainsAny(strings.Join(rows, ""), "▀▄█") {
-		t.Fatal("mascot must be hidden below 66 cols")
+	if rows := frameAt(t, 110, 16, ComposeOptions{Pane: PaneChat}); !strings.ContainsAny(rows[0]+rows[10], "▀▄█") || !strings.HasPrefix(tailCells(rows[0], 68), "Agent ") {
+		t.Fatalf("110x16: the mascot, then the text: %q", rows[0])
 	}
-	narrow := frameAt(t, 20, 10, ComposeOptions{Pane: PaneChat})
-	if !strings.HasPrefix(narrow[0], "widen to 24 cols") {
-		t.Fatalf("%q", narrow[0])
-	}
-	if mid := frameAt(t, 23, 10, ComposeOptions{Pane: PaneChat}); !strings.HasPrefix(mid[0], "REX · widen to 24 cols") {
-		t.Fatalf("%q", mid[0])
+	for cols, want := range map[int]string{23: "widen to 24 columns", 19: "widen to 24 columns", 18: "widen to 24 cols", 10: "widen to …"} {
+		rows := frameAt(t, cols, 10, ComposeOptions{Pane: PaneChat})
+		if got := strings.TrimRight(rows[0], " "); got != want {
+			t.Errorf("%d columns: %q, want %q", cols, got, want)
+		}
+		if strings.Contains(strings.Join(rows, ""), "REX") {
+			t.Errorf("%d columns: no wordmark: %q", cols, rows[0])
+		}
 	}
 	a := testApp(t)
 	a.settle(20, 10)
@@ -82,6 +107,50 @@ func TestTextOnlyBelow66AndWidenBelow24(t *testing.T) {
 	press(a, CtrlC, CtrlC)
 	if !a.quit {
 		t.Fatal("ctrl+c still quits")
+	}
+}
+
+// docs/ux.md §12: where the mascot shows, its 40 columns hold only the
+// mascot (blank under its 20 rows), the gutter is blank, and every row of
+// the text column starts after them, the cursor too; where it doesn't,
+// no row holds a pixel of it. Every screen, in color and without.
+func TestMascotNeverOverlapsText(t *testing.T) {
+	for _, size := range [][2]int{{110, 16}, {110, 24}, {120, 32}, {200, 60}, {109, 24}, {110, 15}, {80, 24}} {
+		for _, s := range matrixScreens(t) {
+			a := matrixApp(t, s, size[0], size[1])
+			for _, enabled := range []bool{false, true} {
+				a.enabled = enabled
+				l := layoutFor(size[0], size[1])
+				f := a.frameRows()
+				name := fmt.Sprintf("%s %dx%d color=%v", s.name, size[0], size[1], enabled)
+				var art []string
+				if l.mascotCols > 0 {
+					art = stagedMascot(a.sprite(), a.color, l.mascotCols, enabled)
+				}
+				for i, row := range f.Rows {
+					plain := stripSGR(row)
+					if n := cellLen(plain); n != l.mascotCols+l.gutter+l.textW {
+						t.Errorf("%s: row %d is %d cells", name, i, n)
+					}
+					if l.mascotCols == 0 {
+						if strings.ContainsAny(plain, "▀▄█") {
+							t.Errorf("%s: row %d holds the mascot: %q", name, i, plain)
+						}
+						continue
+					}
+					want := strings.Repeat(" ", l.mascotCols)
+					if i < len(art) {
+						want = stripSGR(art[i])
+					}
+					if left := cutCells(plain, l.mascotCols+l.gutter); left != want+strings.Repeat(" ", l.gutter) {
+						t.Errorf("%s: row %d's left is not the mascot and the gutter: %q", name, i, left)
+					}
+				}
+				if f.CursorRow > 0 && f.CursorCol <= l.mascotCols+l.gutter {
+					t.Errorf("%s: the cursor at column %d is over the mascot", name, f.CursorCol)
+				}
+			}
+		}
 	}
 }
 
@@ -278,9 +347,15 @@ func plainRow(line LogLine, width int) string {
 }
 
 // textOf is the text column of a frame row at a terminal's width, trailing
-// blanks off.
+// blanks off. A row wider than the text-only column has the mascot and the
+// gutter in front of its text (docs/ux.md §12).
 func textOf(row string, cols int) string {
-	return strings.TrimRight(tailCells(stripSGR(row), PaneTextWidth(cols)), " ")
+	plain := stripSGR(row)
+	w := PaneTextWidth(cols, 1)
+	if cellLen(plain) > w {
+		w = PaneTextWidth(cols, textOnlyRows)
+	}
+	return strings.TrimRight(tailCells(plain, w), " ")
 }
 
 // sides is a row of width cells with left at its start and right ending a
@@ -561,24 +636,24 @@ func TestNoticePriorityAndExpiry(t *testing.T) {
 // docs/ux.md §4: under 12 rows there is no notice row; a notice takes row
 // 1 while it shows, so the footer always stays.
 func TestNoticeTakesRowOneUnder12Rows(t *testing.T) {
-	a, c, path := openDemo(t, demoPlan, 80, 12)
+	a, c, path := openDemo(t, demoPlan, 38, 12)
 	pin := "pinned  card-highlight · Selected pl…"
-	if r := a.frameRows().Rows; textOf(r[1], 80) != pin || textOf(r[10], 80) != "" {
-		t.Fatalf("12 rows, nothing to say: row 1 %q, notice row %q", textOf(r[1], 80), textOf(r[10], 80))
+	if r := a.frameRows().Rows; textOf(r[1], 38) != pin || textOf(r[10], 38) != "" {
+		t.Fatalf("12 rows, nothing to say: row 1 %q, notice row %q", textOf(r[1], 38), textOf(r[10], 38))
 	}
 	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"Outline view"`, `"Outline view, again"`, 1)), 0o644)
 	later(a, c)
-	if r := a.frameRows().Rows; textOf(r[1], 80) != pin || !strings.HasPrefix(textOf(r[10], 80), "plan updated") {
-		t.Fatalf("12 rows: the notice row: %q", textOf(r[10], 80))
+	if r := a.frameRows().Rows; textOf(r[1], 38) != pin || !strings.HasPrefix(textOf(r[10], 38), "plan updated") {
+		t.Fatalf("12 rows: the notice row: %q", textOf(r[10], 38))
 	}
-	a.settle(80, 11)
+	a.settle(38, 11)
 	r := a.frameRows().Rows
-	if !strings.HasPrefix(textOf(r[1], 80), "plan updated") || !strings.HasPrefix(textOf(r[10], 80), "enter details") {
-		t.Fatalf("11 rows: the notice takes row 1, the footer stays: %q / %q", textOf(r[1], 80), textOf(r[10], 80))
+	if !strings.HasPrefix(textOf(r[1], 38), "plan updated") || !strings.HasPrefix(textOf(r[10], 38), "enter details") {
+		t.Fatalf("11 rows: the notice takes row 1, the footer stays: %q / %q", textOf(r[1], 38), textOf(r[10], 38))
 	}
 	c.t = c.t.Add(toastFor)
-	if a.tick(); textOf(a.frameRows().Rows[1], 80) != pin {
-		t.Fatalf("then row 1 is the pin line again: %q", textOf(a.frameRows().Rows[1], 80))
+	if a.tick(); textOf(a.frameRows().Rows[1], 38) != pin {
+		t.Fatalf("then row 1 is the pin line again: %q", textOf(a.frameRows().Rows[1], 38))
 	}
 }
 
@@ -1028,7 +1103,7 @@ func TestFootersPinned(t *testing.T) {
 		press(a, "up")
 	}
 	type want [4]string // at 24, 38, 60 and 79 cells
-	sizes := [4]int{24, 80, 60, 121}
+	sizes := [4]int{24, 38, 60, 121}
 	home := want{"enter open · ? help", "enter open · tab agent · ? help", "↑↓ select · enter open · tab agent · ? help", "↑↓ select · enter open · type to find · tab agent · ? help"}
 	create := want{"enter create · ? help", "enter create · tab agent · ? help", "↑↓ select · enter create · tab agent · ? help", "↑↓ select · enter create · type to find · tab agent · ? help"}
 	outline := want{"enter details · ? help", "enter details · esc plans · ? help", "↑↓ select · enter details · esc plans · tab agent · ? help", "↑↓ select · enter details · esc plans · tab agent · ? help"}
@@ -1080,7 +1155,7 @@ func TestFootersPinned(t *testing.T) {
 			a.settle(cols, 24)
 			rows := a.frameRows().Rows
 			if got := textOf(rows[len(rows)-1], cols); got != tc.want[i] {
-				t.Errorf("%s at %d cells:\n got %q\nwant %q", tc.name, PaneTextWidth(cols), got, tc.want[i])
+				t.Errorf("%s at %d cells:\n got %q\nwant %q", tc.name, PaneTextWidth(cols, 24), got, tc.want[i])
 			}
 		}
 	}
@@ -1093,10 +1168,10 @@ func TestFootersPinned(t *testing.T) {
 		cols, rows int
 		want       string
 	}{
-		{"wait", true, func(a *app) {}, 80, 24, "esc plans · tab agent · ? help"},
-		{"agent, empty", true, func(a *app) { press(a, "\t") }, 80, 24, "tab plan · ? help"},
-		{"agent, empty, runs past", true, func(a *app) { a.health, a.hidden = notWired(), 4; press(a, "\t") }, 80, 12, "↑↓ scroll · tab plan · ? help"},
-		{"plan list, no plan open", true, func(a *app) { press(a, "esc") }, 80, 24, "enter create · esc wait · ? help"},
+		{"wait", true, func(a *app) {}, 38, 24, "esc plans · tab agent · ? help"},
+		{"agent, empty", true, func(a *app) { press(a, "\t") }, 38, 24, "tab plan · ? help"},
+		{"agent, empty, runs past", true, func(a *app) { a.health, a.hidden = notWired(), 4; press(a, "\t") }, 38, 12, "↑↓ scroll · tab plan · ? help"},
+		{"plan list, no plan open", true, func(a *app) { press(a, "esc") }, 38, 24, "enter create · esc wait · ? help"},
 		{"plan list, no plan open, wide", true, func(a *app) { press(a, "esc") }, 121, 24, "↑↓ select · enter create · type to find · esc wait · tab agent · ? help"},
 	} {
 		a := testApp(t)
@@ -1255,8 +1330,8 @@ func TestTitleRowNeverMovesWithTheCursor(t *testing.T) {
 			}
 		}
 	}
-	a, _, _ := openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Sixteen cell ttl"`, 1), 80, 24)
-	row0 := func() string { return textOf(a.frameRows().Rows[0], 80) }
+	a, _, _ := openDemo(t, strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Sixteen cell ttl"`, 1), 38, 24)
+	row0 := func() string { return textOf(a.frameRows().Rows[0], 38) }
 	on := ""
 	for _, key := range []string{"home", "down", "down", "up", "up"} {
 		press(a, key)

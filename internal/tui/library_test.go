@@ -164,7 +164,7 @@ func TestPlanListMockups(t *testing.T) {
 		keys        []string
 		want        string
 	}{
-		{80, 24, nil, `
+		{38, 24, nil, `
 OPEN ─────────────────────── following
 ❯ cuj/sendoff-demo                 1/3
     Send-off demo · active
@@ -184,7 +184,7 @@ FOLDERS ─────────────────── rex/plans/
 		// At 16 rows the accordion keeps 3 lines, over the blank rows. One
 		// ↓ scrolls the open plan away: ↑ more stands on its row, not on
 		// a heading.
-		{80, 16, []string{"down"}, `
+		{38, 16, []string{"down"}, `
   ↑ more
 RECENT ───────────────────────────────
 ❯ ux/redesign                      1/6
@@ -193,14 +193,14 @@ RECENT ────────────────────────�
     done    ✔ a
   auth-flow                        0/4
   ↓ more`},
-		{80, 12, nil, `
+		{38, 12, nil, `
 OPEN ─────────────────────── following
 ❯ cuj/sendoff-demo                 1/3
     pinned  ▸ card-highlight  Selecte…
 RECENT ───────────────────────────────
   ux/redesign                      1/6
   ↓ more`},
-		{80, 7, nil, `
+		{38, 7, nil, `
 ❯ cuj/sendoff-demo          open · 1/3
   ux/redesign                      1/6
   ↓ more`},
@@ -362,12 +362,12 @@ func TestAccordion(t *testing.T) {
 		cols, lines int
 		want        string
 	}{
-		{80, 24, "Send-off,goal,pinned,then,done"},
-		{80, 20, "Send-off,goal,pinned,then,done"},
-		{80, 16, "Send-off,pinned,done"},
-		{80, 15, "Send-off,pinned,done"},
-		{80, 12, "pinned"},
-		{80, 11, "pinned"}, // sized as 12 rows, where row 2 and the notice row take two (docs/ux.md §4)
+		{38, 24, "Send-off,goal,pinned,then,done"},
+		{38, 20, "Send-off,goal,pinned,then,done"},
+		{38, 16, "Send-off,pinned,done"},
+		{38, 15, "Send-off,pinned,done"},
+		{38, 12, "pinned"},
+		{38, 11, "pinned"}, // sized as 12 rows, where row 2 and the notice row take two (docs/ux.md §4)
 		{120, 16, "active ·,pinned,done"},
 		{120, 12, "pinned"},
 		{120, 24, "active ·,goal,pinned,then,done"},
@@ -378,12 +378,12 @@ func TestAccordion(t *testing.T) {
 			t.Errorf("%d×%d: %q, want %q", tc.cols, tc.lines, got, tc.want)
 		}
 	}
-	a.settle(80, 7)
+	a.settle(38, 7)
 	if n := len(block()); n != 1 {
 		t.Fatalf("at 7 rows only the row: %d lines", n)
 	}
 
-	a.settle(80, 24)
+	a.settle(38, 24)
 	for i, line := range block() {
 		if marked := strings.HasPrefix(line.Text, "❯ "); marked != (i == 0) || strings.Contains(line.Text, "▌") {
 			t.Errorf("line %d ❯=%v: only the plan's row has it: %q", i, marked, line.Text)
@@ -667,9 +667,9 @@ func TestAccordionNeverShrinksAsRowsGrow(t *testing.T) {
 					}
 				}
 				if n < was {
-					t.Errorf("%s at %d cells: %d lines at %d rows, %d at %d\n%s", screen, PaneTextWidth(cols), n, rows, was, rows-1, body(a))
+					t.Errorf("%s at %d cells: %d lines at %d rows, %d at %d\n%s", screen, PaneTextWidth(cols, rows), n, rows, was, rows-1, body(a))
 				}
-				if fold := len(accordion(a.plans.sums[a.plans.Rows[a.plans.Cursor].Path], PaneTextWidth(cols), 5, a.now())); rows >= 18 && n != fold {
+				if fold := len(accordion(a.plans.sums[a.plans.Rows[a.plans.Cursor].Path], PaneTextWidth(cols, rows), 5, a.now())); rows >= 18 && n != fold {
 					t.Errorf("%s at %d×%d: %d of the accordion's %d lines", screen, cols, rows, n, fold)
 				}
 				was = n
@@ -685,7 +685,7 @@ func TestAccordionNeverShrinksAsRowsGrow(t *testing.T) {
 func TestBrowseAccordionFillsItsRows(t *testing.T) {
 	repo := t.TempDir() // no .git: the notice
 	writePlan(t, repo, "cuj/a.rex.json", demoPlan)
-	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 80, 16)
+	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 38, 16)
 	press(a, "esc")
 	browseTo(t, a, "cuj")
 	pickRow(a, PlanRowPlan, "a.rex.json")
@@ -715,10 +715,10 @@ func TestBrowseAccordionFillsItsRows(t *testing.T) {
 
 `},
 	} {
-		a.settle(80, tc.rows)
+		a.settle(38, tc.rows)
 		lines := strings.Split(body(a), "\n")
-		if got, row1 := strings.Join(lines[:a.layout().bodyH], "\n"), textOf(a.frameRows().Rows[1], 80); got != tc.want || !strings.HasPrefix(row1, "not in git · plans go to") || !strings.HasSuffix(row1, "/rex/plans") {
-			t.Errorf("80×%d:\n%s\nwant\n%s", tc.rows, strings.Join(lines, "\n"), tc.want)
+		if got, row1 := strings.Join(lines[:a.layout().bodyH], "\n"), textOf(a.frameRows().Rows[1], 38); got != tc.want || !strings.HasPrefix(row1, "not in git · plans go to") || !strings.HasSuffix(row1, "/rex/plans") {
+			t.Errorf("38×%d:\n%s\nwant\n%s", tc.rows, strings.Join(lines, "\n"), tc.want)
 		}
 	}
 }
@@ -867,10 +867,10 @@ func TestOpenMarkGoesByFile(t *testing.T) {
 func TestFindFlat(t *testing.T) {
 	a := listRepo(t)
 	press(a, "esc")
-	a.settle(80, 12)
+	a.settle(38, 12)
 	typeText(a, "demo")
 	frame := a.frameRows().Rows
-	if head, ctx := textOf(frame[0], 80), textOf(frame[1], 80); !strings.HasPrefix(head, "Plans › Find ") || !strings.Contains(head, " 1 match ") || ctx != `Plans whose name or title has "demo".` {
+	if head, ctx := textOf(frame[0], 38), textOf(frame[1], 38); !strings.HasPrefix(head, "Plans › Find ") || !strings.Contains(head, " 1 match ") || ctx != `Plans whose name or title has "demo".` {
 		t.Fatalf("row 0 %q, row 1 %q", head, ctx)
 	}
 	got := body(a)
@@ -975,11 +975,11 @@ func TestNoBracketedActions(t *testing.T) {
 func TestNoPlansYet(t *testing.T) {
 	a := testApp(t)
 	press(a, "esc")
-	a.settle(80, 12)
-	if head := textOf(a.frameRows().Rows[0], 80); !strings.HasPrefix(head, "Plans ") || !strings.Contains(head, "no plans yet") {
+	a.settle(38, 12)
+	if head := textOf(a.frameRows().Rows[0], 38); !strings.HasPrefix(head, "Plans ") || !strings.Contains(head, "no plans yet") {
 		t.Fatalf("row 0 %q", head)
 	}
-	if ctx := textOf(a.frameRows().Rows[1], 80); ctx != "No plans here yet." {
+	if ctx := textOf(a.frameRows().Rows[1], 38); ctx != "No plans here yet." {
 		t.Fatalf("row 1 %q", ctx)
 	}
 	got := body(a)
@@ -1008,13 +1008,13 @@ func TestNoPlansYet(t *testing.T) {
 func TestNamePrompt(t *testing.T) {
 	a := listRepo(t)
 	press(a, "esc")
-	a.settle(80, 12)
+	a.settle(38, 12)
 	pickRow(a, PlanRowNew, "")
 	press(a, "\r")
 	typeText(a, "auth-flow2")
 	// At 38 cells the breadcrumb clips to its current crumb before the
 	// meta goes (docs/ux.md §4).
-	if head := textOf(a.frameRows().Rows[0], 80); !strings.HasPrefix(head, "New plan ") || !strings.Contains(head, " rex/plans/ ") {
+	if head := textOf(a.frameRows().Rows[0], 38); !strings.HasPrefix(head, "New plan ") || !strings.Contains(head, " rex/plans/ ") {
 		t.Fatalf("row 0 %q", head)
 	}
 	want := `  Name the plan, then enter.

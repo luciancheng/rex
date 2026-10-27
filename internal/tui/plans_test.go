@@ -204,8 +204,9 @@ func TestOutsideGitNoticeKeepsWherePlansGo(t *testing.T) {
 	}
 }
 
-// Every notice keeps its point at the narrowest text column (24 cells,
-// a 66-column terminal) and at 80 columns (38 cells).
+// Every notice keeps its point at the narrowest text column (24 cells),
+// at 38 cells and at 80 columns, which give the text all 80 (docs/ux.md
+// §12).
 func TestNoticesFitNarrowPanes(t *testing.T) {
 	cases := []struct{ notice, want string }{
 		{outsideGitPrefix + "~/work/clients/acme/very/deep/folder/rex/plans", "/rex/plans"},
@@ -213,7 +214,7 @@ func TestNoticesFitNarrowPanes(t *testing.T) {
 		{rexFileNotice, "plans off"},
 		{"rex-plans/ has 3 old plan(s) · move them into rex/plans", "rex-plans/"},
 	}
-	for _, width := range []int{PaneTextWidth(66) - 2, PaneTextWidth(80) - 2} {
+	for _, width := range []int{PaneTextWidth(24, 24) - 2, PaneTextWidth(38, 24) - 2, PaneTextWidth(80, 24) - 2} {
 		for _, c := range cases {
 			got := fitNotice(c.notice, width)
 			if cellLen(got) > width || !strings.Contains(got, c.want) {
@@ -421,7 +422,7 @@ func TestComposeFramePlansPane(t *testing.T) {
 	b := NewPlanBrowser(repo)
 	page := libraryPage(b)
 	frame := ComposeFrame("idle", "yellow", ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24,
+		Enabled: false, Columns: 38, Lines: 24,
 		Pane: PanePlans, Plans: b, Composer: true, Page: &page,
 	})
 	// Row 0 at 38 cells: the title, the meta's short form, the label

@@ -7,9 +7,14 @@ import (
 	"github.com/luciancheng/rex/internal/mascot"
 )
 
-// TextOnlyBelow is the width under which the mascot is hidden so the text
-// column keeps the whole terminal (docs/ux.md §12).
-const TextOnlyBelow = 40 + Gutter + MinTextCols
+// TextOnlyBelow and textOnlyRows are the terminal size under which the
+// mascot is hidden and the text column takes the whole width, up to
+// maxText (docs/ux.md §12). At 110 columns the mascot, the gutter and a
+// 68-cell text column fit; at 80 the mascot would leave the plan 38.
+const (
+	TextOnlyBelow = 110
+	textOnlyRows  = 16
+)
 
 // maxText is the most of a wide terminal the text column takes (docs/ux.md
 // §4): wider, the rest of the row stays empty.
@@ -36,15 +41,15 @@ type layout struct {
 func layoutFor(columns, lines int) layout {
 	columns, lines = max(1, columns), max(1, lines)
 	var l layout
-	if columns >= TextOnlyBelow {
-		l.mascotCols = min(mascot.StageSize, columns)
+	if columns >= TextOnlyBelow && lines >= textOnlyRows {
+		l.mascotCols = mascot.StageSize
 		l.gutter = Gutter
 		l.textW = columns - l.mascotCols - l.gutter
 	} else {
 		l.textW = columns
 	}
 	if l.textW < MinTextCols {
-		l.textW, l.mascotCols, l.gutter, l.locked = 0, 0, 0, true
+		l.textW, l.locked = 0, true
 	}
 	l.textW = min(l.textW, maxText)
 	switch {

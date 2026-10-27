@@ -496,7 +496,7 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	if got := a.statusLine().Text; got != "Your agent wrote Send-off demo (two) · opens when the prompt closes" {
 		t.Fatalf("a named prompt: %q", got)
 	}
-	a.settle(66, 24) // narrow, the notice keeps why it waits
+	a.settle(24, 24) // narrow, the notice keeps why it waits
 	if got := strings.TrimRight(statusRow(a.statusLine(), a.layout().textW, false), " "); got != "new plan two · waiting" {
 		t.Fatalf("narrow: %q", got)
 	}
@@ -671,9 +671,9 @@ func TestTitleSaysFollowing(t *testing.T) {
 	if got := textOf(a.frameRows().Rows[0], 120); got != "  Send-off demo"+strings.Repeat(" ", 77-15-35)+"1/3 done · following   plan · agent" {
 		t.Fatalf("row 0 following: %q", got)
 	}
-	a.settle(80, 24)
-	if got := textOf(a.frameRows().Rows[0], 80); got != "  Send-off demo    1/3   plan · agent" {
-		t.Fatalf("row 0 at 80x24: %q", got)
+	a.settle(38, 24)
+	if got := textOf(a.frameRows().Rows[0], 38); got != "  Send-off demo    1/3   plan · agent" {
+		t.Fatalf("row 0 at 38x24: %q", got)
 	}
 	a.settle(120, 32)
 	a.latch()
@@ -864,7 +864,7 @@ func TestKeysActBeforeTheEventsReadWithThem(t *testing.T) {
 	}
 }
 
-// A held attach says so on the notice row, and on an 80-column terminal
+// A held attach says so on the notice row, and in a 38-cell text column
 // keeps a clipped name (docs/ux.md §4). Letters on the Wait screen or the
 // tape hold nothing: there is no composer there (docs/ux.md §2).
 func TestAHeldAttachShowsOnRowOne(t *testing.T) {
@@ -878,9 +878,9 @@ func TestAHeldAttachShowsOnRowOne(t *testing.T) {
 	if got := a.notice().Text; got != "Your agent wrote Send-off demo (team/a-much-longer-plan-name) · opens when the line is clear" {
 		t.Fatalf("notice %q", got)
 	}
-	a.settle(80, 24)
-	if row := textOf(a.frameRows().Rows[22], 80); !strings.HasPrefix(row, "Your agent wrote …") || !strings.HasSuffix(row, "-name · waiting") {
-		t.Fatalf("the notice row at 80 columns: %q", row)
+	a.settle(38, 24)
+	if row := textOf(a.frameRows().Rows[22], 38); !strings.HasPrefix(row, "Your agent wrote …") || !strings.HasSuffix(row, "-name · waiting") {
+		t.Fatalf("the notice row at 38 columns: %q", row)
 	}
 	press(a, "\x15")
 	if a.plans.Current != two || strings.HasPrefix(a.notice().Text, "Your agent wrote") {
@@ -1327,8 +1327,8 @@ func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 	if row := textOf(a.frameRows().Rows[30], a.columns); row != "rex-plan skill is out of date · rex ingest --install-skill" {
 		t.Fatalf("drawn on the notice row: %q", row)
 	}
-	a.settle(80, 24)
-	if row := textOf(a.frameRows().Rows[22], 80); row != "rex-plan skill out of date · ? help" {
+	a.settle(38, 24)
+	if row := textOf(a.frameRows().Rows[22], 38); row != "rex-plan skill out of date · ? help" {
 		t.Fatalf("38 cells: %q", row)
 	}
 	press(a, "?")
@@ -1418,7 +1418,7 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 	if got := body(30, 4); !strings.Contains(got, "  teach it:\n  rex ingest --install-skill\n") {
 		t.Errorf("30 cells, 4 rows:\n%s", got)
 	}
-	// An older Rex's skill keeps its short hint at 38×3 (80×7): one line
+	// An older Rex's skill keeps its short hint at 38×3 (38×7): one line
 	// when it fits, else it scrolls rather than go.
 	for c, want := range map[skill.Copy]string{
 		skill.Stale:        "  no plan yet · tell your agent to\n  make one\n  update: rex ingest --install-skill\n",
@@ -1428,15 +1428,15 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 		if got := body(38, 3); got != want {
 			t.Errorf("copy %d at 38×3:\n%s", c, got)
 		}
-		a.settle(80, 7)
+		a.settle(38, 7)
 		if c == skill.Stale && !strings.Contains(strings.Join(a.frameRows().Rows, "\n"), "rex ingest --install-skill") {
-			t.Errorf("80×7 shows the hint\n%s", strings.Join(a.frameRows().Rows, "\n"))
+			t.Errorf("38×7 shows the hint\n%s", strings.Join(a.frameRows().Rows, "\n"))
 		}
 	}
 	a.skill.got, a.skill.at = skill.Missing, a.now()
-	a.settle(80, 7)
+	a.settle(38, 7)
 	if !strings.Contains(strings.Join(a.frameRows().Rows, "\n"), "teach it: rex ingest --install-skill") {
-		t.Errorf("80×7 shows the hint\n%s", strings.Join(a.frameRows().Rows, "\n"))
+		t.Errorf("38×7 shows the hint\n%s", strings.Join(a.frameRows().Rows, "\n"))
 	}
 
 	a.settle(24, 6) // text only: 3 body rows under rows 0 and 1, and a headline of 3
@@ -1544,12 +1544,12 @@ func TestTheOfferKeepsAClippedName(t *testing.T) {
 			t.Errorf("%d %+v: got %q, want %q", tc.width, tc.name, got, tc.want)
 		}
 	}
-	a, _, _ := openDemo(t, demoPlan, 80, 24)
+	a, _, _ := openDemo(t, demoPlan, 38, 24)
 	next := writePlan(t, a.plans.Repo, "cuj/a-much-longer-plan-name-from-the-agent.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
 	a.toast = StatusLine{}
-	if row := strings.TrimSpace(textOf(a.frameRows().Rows[22], 80)); !strings.HasPrefix(row, "Your agent wrote …") || !strings.HasSuffix(row, "-agent · o opens it") {
-		t.Fatalf("the notice at 80 columns: %q", row)
+	if row := strings.TrimSpace(textOf(a.frameRows().Rows[22], 38)); !strings.HasPrefix(row, "Your agent wrote …") || !strings.HasSuffix(row, "-agent · o opens it") {
+		t.Fatalf("the notice at 38 columns: %q", row)
 	}
 }
 

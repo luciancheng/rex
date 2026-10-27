@@ -35,6 +35,9 @@ var (
 
 const (
 	DefaultAnimation = "idle"
+	// Glance is the idle pose looking aside, the glance transform of the
+	// idle grid: the live screen shows it once when a plan opens.
+	Glance = "idle_look"
 )
 
 func RegisterSprite(sprite Sprite) Sprite {

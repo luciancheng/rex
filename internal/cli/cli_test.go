@@ -81,7 +81,7 @@ func TestUnknownCommandIsErrorButNotBlock(t *testing.T) {
 
 func TestComposeFramePutsTextRightOfMascot(t *testing.T) {
 	frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 24,
+		Enabled: false, Columns: 110, Lines: 24, // the mascot from 110×16 (docs/ux.md §12)
 	})
 	line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
 	if !strings.Contains(line, "Agent ") || !strings.Contains(line, "plan · agent") {
@@ -191,22 +191,27 @@ func TestComposeFrameScrollsOlderEvents(t *testing.T) {
 	}
 }
 
+// At the mascot's 16-row floor it is cropped from the bottom and the
+// title stays on row 0 beside it; a row shorter, the text starts at
+// column 0 (docs/ux.md §12).
 func TestComposeFrameStaysTopAlignedWhenShort(t *testing.T) {
-	frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: false, Columns: 80, Lines: 6,
-	})
-	line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
-	if strings.Index(line, "Agent") < mascot.StageSize {
-		t.Fatalf("not top aligned: %q", line)
-	}
-	if len(strings.Split(frame, "\n")) > 7 {
-		t.Fatalf("too many lines")
+	for lines, at := range map[int]int{16: mascot.StageSize, 15: 0, 6: 0} {
+		frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
+			Enabled: false, Columns: 110, Lines: lines,
+		})
+		line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
+		if i := strings.Index(line, "Agent"); i < at || (at == 0 && i != 0) {
+			t.Fatalf("%d rows: not top aligned: %q", lines, line)
+		}
+		if n := len(strings.Split(frame, "\n")); n > lines+1 {
+			t.Fatalf("%d rows: %d lines", lines, n)
+		}
 	}
 }
 
 func TestComposeFrameKeepsFullColoredSprite(t *testing.T) {
 	frame := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
-		Enabled: true, Columns: 80, Lines: 24,
+		Enabled: true, Columns: 120, Lines: 24,
 	})
 	body := strings.Join(mascot.MustRenderRows(
 		mascot.FitStageDefault(mascot.MustSprite("idle").Rows),

@@ -56,7 +56,7 @@ The top row says where you are (Esc goes back along it), the plan's progress, th
 ## Requirements
 
 - [Go 1.22+](https://go.dev/dl/). There are no prebuilt binaries yet, so both installs build from source.
-- macOS, Linux or Windows 10+, and a terminal at least 24 columns wide (66+ to show the dino). It works in Terminal.app, iTerm, Windows Terminal and the VS Code terminal.
+- macOS, Linux or Windows 10+, and a terminal at least 24 columns wide. The dino shows from 110 columns and 16 rows; on a smaller terminal the plan gets the whole width. It works in Terminal.app, iTerm, Windows Terminal and the VS Code terminal.
 - A git repo for your plans (outside one, Rex says where plans would go).
 
 ## Install
@@ -178,7 +178,7 @@ The install script downloads Rex's source through Go and git.
 - **Codex shows nothing.** Trust the Rex hooks in Codex's `/hooks`, and again after moving `rex`.
 - **Events stopped after moving `rex`, or installing it to a different folder.** Hooks call the binary by its path. Run the `rex ingest --install <agent>` command again.
 - **Events land in another file.** Hooks use the agent's `REX_EVENTS`, not your shell's. Set it in both places, or in neither.
-- **No dino, or "widen".** The dino needs 66+ columns. Under 24 columns of text Rex asks you to widen the terminal.
+- **No dino, or "widen".** The dino shows only from 110 columns and 16 rows, so a smaller terminal gives the plan all of its width. Under 24 columns Rex asks you to widen the terminal.
 - **The agent doesn't get the pinned task.** Claude Code, Codex, Cursor and OpenCode get the note, and only while a task is `active` in the plan Rex last opened in that repo: open that plan in Rex once. Any other plan sends nothing, even one with an `active` task. A subagent never gets it. Cursor takes it before each prompt only on recent builds (3.20 and the CLI 2026.10 were seen taking it); it also gets it when a chat starts, if `~/.cursor/hooks.json` has Rex's `sessionStart` entry (run `rex ingest --install cursor` again to add it), and that note is as of the chat's start: a pin moved later reaches it only through the plan file. Cursor's cloud agents don't run your user hooks. OpenCode needs the plugin from this Rex: run `rex ingest --install opencode` again, then restart OpenCode.
 - **The agent still gets a task you have moved on from.** It is still `active` in the plan. Ask your agent to set it back to `pending` (or edit its `status` yourself), or to finish it.
 - **The agent doesn't pin or finish tasks in the plan.** Install the skill (`rex ingest --install-skill`, then start a new agent session), and ask it to work the plan. The wait screen and Help (`?`, the `skill` row) say when the skill is installed nowhere Rex knows, or when a copy is from an older Rex (run the command they show); an older copy is also a status-line notice when Rex starts on a plan.

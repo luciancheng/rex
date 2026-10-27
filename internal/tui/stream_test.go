@@ -530,7 +530,7 @@ func TestLogViewRebuildsOnTurn(t *testing.T) {
 		t.Fatalf("turn %v", a.turn)
 	}
 	live, rev := a.logLines(), a.logRev
-	if v := viewText(a.logView(PaneTextWidth(a.columns))); !strings.Contains(v, "thinking ×2") || live < 2 {
+	if v := viewText(a.logView(PaneTextWidth(a.columns, a.lines))); !strings.Contains(v, "thinking ×2") || live < 2 {
 		t.Fatalf("live\n%s", v)
 	}
 	if !a.ingest([]watch.Event{{Source: "cursor", Kind: "idle", Text: "turn completed", TS: 5}}) {
@@ -798,7 +798,7 @@ func TestOldestRowReachableWhileLive(t *testing.T) {
 	if a.logLines() != bodyH+1 || !a.viewOpt().live {
 		t.Fatalf("setup: %d rows, body %d", a.logLines(), bodyH)
 	}
-	oldest := strings.SplitN(viewText(a.logView(PaneTextWidth(a.columns))), "\n", 2)[0]
+	oldest := strings.SplitN(viewText(a.logView(PaneTextWidth(a.columns, a.lines))), "\n", 2)[0]
 	for _, k := range []string{"up", "home", "pageup"} {
 		press(a, "end", k)
 		if body := strings.Join(agentBody(a), "\n"); a.scroll != 1 || !strings.Contains(body, oldest) {
@@ -834,7 +834,7 @@ func TestAgentMockups(t *testing.T) {
 		return a
 	}
 	live := turn(t, thoughts("x", "y", "The bar is drawn per row, so the fill has to start at column 0 to cover the gutter.")...)
-	if got, want := frame(live, 80, 12), strings.Join([]string{
+	if got, want := frame(live, 38, 12), strings.Join([]string{
 		"Agent             live   plan · agent",
 		"thinking        pinned card-highlight",
 		"",
@@ -866,7 +866,7 @@ func TestAgentMockups(t *testing.T) {
 	}, "\n"); got != want {
 		t.Errorf("24×12:\n%s\nwant\n%s", got, want)
 	}
-	// The §10 mockup at 80×24: the turn over, an edit next to the pin's
+	// The §10 mockup at 38×24: the turn over, an edit next to the pin's
 	// files soft drift, which only AGENT's drift block lists (§4).
 	over, c, _ := cujApp(t)
 	press(over, "\t")
@@ -882,7 +882,7 @@ func TestAgentMockups(t *testing.T) {
 	}
 	over.ingest(append(evs, edit(over, c, 30*time.Second, "internal/tui/live_view.go")))
 	over.ingest([]watch.Event{at(c, 31*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "The selected card is one block now.\n- plans.go draws the card through one painter\n- live.go starts the fill at column 0"})})
-	if got, want := frame(over, 80, 24), strings.Join([]string{
+	if got, want := frame(over, 38, 24), strings.Join([]string{
 		"Agent             live   plan · agent",
 		"idle            pinned card-highlight",
 		"",
@@ -911,7 +911,7 @@ func TestAgentMockups(t *testing.T) {
 		t.Errorf("38×24, the turn over:\n%s\nwant\n%s", got, want)
 	}
 	ask := turn(t, append(thoughts("Two of them.", "Two painters draw the card: one for the bar, one for the fill."), watch.Event{Source: "claude", Kind: "question", Text: "Keep the old card style too?"})...)
-	if got, want := frame(ask, 80, 7), strings.Join([]string{
+	if got, want := frame(ask, 38, 7), strings.Join([]string{
 		"Agent             live   plan · agent",
 		"waiting on you  pinned card-highlight",
 		"$ Edit internal/tui/live.go",

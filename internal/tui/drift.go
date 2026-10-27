@@ -280,7 +280,7 @@ func (a *app) noteDrift(n driftNote) bool {
 			before := a.logLines()
 			// The rows under the block, measured from the head: blocks pack
 			// or space by kind, so the tail alone can't say.
-			below := a.scroll > 0 && before-len(BuildLogView(a.log[:i+1], PaneTextWidth(a.columns), a.viewOpt())) <= a.scroll
+			below := a.scroll > 0 && before-len(BuildLogView(a.log[:i+1], PaneTextWidth(a.columns, a.lines), a.viewOpt())) <= a.scroll
 			e.Text = strings.Join(text, "\n")
 			e.Meta["rows"] = rows
 			a.logRev++

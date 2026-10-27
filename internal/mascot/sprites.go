@@ -62,7 +62,7 @@ func init() {
 	breathe := ShiftBody(idle, 1, 7)
 	for name, rows := range map[string][]string{
 		"idle_blink":   blink,
-		"idle_look":    look,
+		Glance:         look,
 		"idle_breathe": breathe,
 	} {
 		if err := ValidatePixels(name, rows); err != nil {

@@ -84,17 +84,17 @@ func TestComposeFramePutsTextRightOfMascot(t *testing.T) {
 		Enabled: false, Columns: 80, Lines: 24,
 	})
 	line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
-	if !strings.Contains(line, "PLAN [AGENT]") {
-		t.Fatalf("missing the tab bar: %q", line)
+	if !strings.Contains(line, "Agent ") || !strings.Contains(line, "plan · agent") {
+		t.Fatalf("missing the title row: %q", line)
 	}
-	if strings.Index(line, "PLAN") < mascot.StageSize {
-		t.Fatalf("tab bar not right of mascot: %q", line)
+	if strings.Index(line, "Agent") < mascot.StageSize {
+		t.Fatalf("title row not right of mascot: %q", line)
 	}
 	wide := tui.ComposeFrame("idle", "yellow", tui.ComposeOptions{
 		Enabled: false, Columns: 120, Lines: 24,
 	})
-	if !strings.Contains(wide, "REX PLAN [AGENT]") || !strings.Contains(wide, "ctrl+c ×2 quit") {
-		t.Fatal("missing quit hint when the footer has room")
+	if !strings.Contains(wide, "↑↓ scroll · home oldest · end live · tab plan · ? help") {
+		t.Fatal("missing the whole footer when it has room")
 	}
 	if strings.Contains(frame, "q quit") {
 		t.Fatal("unexpected q quit")
@@ -115,7 +115,8 @@ func TestComposeFrameShowsAgentEvents(t *testing.T) {
 			{Source: "cursor", Kind: "command", Text: "pytest -q"},
 			{Source: "cursor", Kind: "question", Text: "run tests?"},
 		},
-		Status: "thinking",
+		Status:  "thinking",
+		Context: tui.StatusLine{Text: "thinking"},
 	})
 	// Each block is named by its first characters, with no rule (docs/ux.md §10).
 	for _, needle := range []string{
@@ -130,9 +131,9 @@ func TestComposeFrameShowsAgentEvents(t *testing.T) {
 	if strings.Contains(frame, "── ") {
 		t.Fatalf("a rule on a block that has none\n%s", frame)
 	}
-	header := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
-	if !strings.Contains(header, "thinking") {
-		t.Fatalf("status missing: %q", header)
+	// The turn is row 1, AGENT's context (docs/ux.md §4).
+	if row1 := ansi.ReplaceAllString(strings.Split(frame, "\n")[1], ""); !strings.Contains(row1, "thinking") {
+		t.Fatalf("status missing: %q", row1)
 	}
 	if strings.Contains(frame, "Ready.") {
 		t.Fatal("Ready should be gone")
@@ -185,7 +186,7 @@ func TestComposeFrameScrollsOlderEvents(t *testing.T) {
 	if !strings.Contains(older, "block-00") {
 		t.Fatal("older missing oldest")
 	}
-	if !strings.Contains(older, "↑  end live") {
+	if !strings.Contains(older, "↑↓ scroll") {
 		t.Fatal("missing scroll footer")
 	}
 }
@@ -195,7 +196,7 @@ func TestComposeFrameStaysTopAlignedWhenShort(t *testing.T) {
 		Enabled: false, Columns: 80, Lines: 6,
 	})
 	line := ansi.ReplaceAllString(strings.Split(frame, "\n")[0], "")
-	if strings.Index(line, "PLAN") < mascot.StageSize {
+	if strings.Index(line, "Agent") < mascot.StageSize {
 		t.Fatalf("not top aligned: %q", line)
 	}
 	if len(strings.Split(frame, "\n")) > 7 {

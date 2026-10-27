@@ -50,9 +50,8 @@ func (h *feedHealth) saw(ev watch.Event) {
 }
 
 // lines is the health block under its FEED header (docs/ux.md §10); sk is
-// how the rex-plan skill stands. waiting says so in the header, for the
-// empty AGENT tab when it has no page title to say it.
-func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, waiting bool) []LogLine {
+// how the rex-plan skill stands.
+func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time) []LogLine {
 	var lines []LogLine
 	// A row's words wrap in the value column. One wider than the column (a
 	// flag, a path) gets a row of its own, hung at column 4, whole: a
@@ -85,11 +84,7 @@ func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, w
 			flush()
 		}
 	}
-	meta := ""
-	if waiting {
-		meta = "waiting for agent events"
-	}
-	lines = append(lines, h2Line("FEED", meta, width))
+	lines = append(lines, h2Line("FEED", "", width))
 	last := "no events yet"
 	if h.last != nil {
 		last = "last event " + ago(now.Sub(time.Unix(0, int64(h.last.TS*1e9)))) + " (" + h.last.Source + ")"
@@ -131,33 +126,19 @@ func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, w
 	return lines
 }
 
-// feedLead heads the empty AGENT tab, above FEED (docs/ux.md §10).
-const feedLead = "Rex shows your agent's work here as its hooks report it."
+// feedLead is the empty AGENT tab's row 1 (docs/ux.md §4, §10); narrow,
+// feedShort.
+const (
+	feedLead  = "Rex shows your agent's work here as its hooks report it."
+	feedShort = "Rex shows your agent's work here."
+)
 
-// emptyAgent is AGENT before any event: from agentTitleRows rows the lead
-// (a blank row under it from 16, as above any H2), then the feed's health,
-// whose header says it waits where there is no page title to. The lead
-// comes only whole and only with the whole block under it: the blank row
-// goes first, then the lead, so the page never starts mid-sentence.
+// emptyAgent is AGENT before any event: the feed's health (docs/ux.md
+// §10). Its lead, what the tab is for, is row 1 (§4).
 func (a *app) emptyAgent(width int) []LogLine {
 	now := time.Now()
 	a.health.refresh(now)
-	health := a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), now, a.lines < agentTitleRows)
-	if a.lines < agentTitleRows {
-		return health
-	}
-	var lines []LogLine
-	for _, w := range wrap(feedLead, max(8, width-2)) {
-		lines = append(lines, LogLine{Kind: "text", Text: "  " + w})
-	}
-	room := PaneBodyHeight(a.lines) - len(health)
-	switch {
-	case a.lines >= 16 && room > len(lines):
-		lines = append(lines, LogLine{Kind: "gap"})
-	case room < len(lines):
-		lines = nil
-	}
-	return append(lines, health...)
+	return a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), now)
 }
 
 func ago(d time.Duration) string {

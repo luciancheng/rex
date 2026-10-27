@@ -83,7 +83,7 @@ type PlanBrowser struct {
 	docPath  string
 	opened   []string // the plans opened this run, the latest first; memory only
 	findMore int      // find matches past maxMatches, left out
-	total    int      // what the page title counts: plans, matches, or the plans in and under this folder
+	total    int      // what the title's meta counts: plans, matches, or the plans in and under this folder
 	now      func() time.Time
 
 	inGit bool
@@ -644,6 +644,30 @@ func (b *PlanBrowser) promptBase() string {
 	return b.Dir
 }
 
+// promptRel is where a Name prompt creates, repo-relative with a
+// trailing "/": the meta of its title (docs/ux.md §4).
+func (b *PlanBrowser) promptRel() string {
+	rel, err := filepath.Rel(b.Repo, b.promptBase())
+	if err != nil {
+		return "rex/plans/"
+	}
+	return filepath.ToSlash(rel) + "/"
+}
+
+// where is the plan list's title meta (docs/ux.md §4): the repo, or the
+// folder outside git, and how many plans it holds; short, just the count.
+func (b *PlanBrowser) where() (meta, short []Span) {
+	count := plural(b.total, "%d plan", "%d plans")
+	if b.total == 0 {
+		count = "no plans yet"
+	}
+	place := filepath.Base(b.Repo)
+	if !b.inGit {
+		place = homePath(b.Repo)
+	}
+	return metaSpans(place + " · " + count), metaSpans(count)
+}
+
 // relName is path relative to rex/plans, with "/" separators.
 func (b *PlanBrowser) relName(path string) string {
 	if rel, err := filepath.Rel(b.Root, path); err == nil && !strings.HasPrefix(rel, "..") {
@@ -730,7 +754,7 @@ func (b *PlanBrowser) remember(path string) {
 }
 
 // showDoc hands the list the open plan as Rex shows it (docs/ux.md §6):
-// its last good copy, or the error row 1 shows. OPEN's row and accordion
+// its last good copy, or the error the notice row shows. OPEN's row and accordion
 // read it, not the file, so a save caught half-written never puts
 // "can't read" under OPEN while the outline still shows the plan.
 func (b *PlanBrowser) showDoc(d *planDoc) {
@@ -815,8 +839,8 @@ func readSum(path string) planSummary {
 	return summarize(p)
 }
 
-// unreadable leads the outline's error for a plan Rex can't open; row 1
-// and the plan list show only the cause after it.
+// unreadable leads the outline's error for a plan Rex can't open; the
+// notice row and the plan list show only the cause after it.
 const unreadable = "can't read the file: "
 
 // cause is err as a row shows it. An *fs.PathError leads with the
@@ -1154,40 +1178,39 @@ func composerPrefix(opt ComposeOptions) string {
 }
 
 // listFit is the room the plan list is drawn in: its body rows under the
-// page title, whether the terminal is tall enough (16 rows) for blank
-// rows and the composer's box, and the OPEN group's meta, the follow word.
+// title, whether the terminal is tall enough (16 rows) for blank rows and
+// the composer's box, whether it is too short (under blankFrom rows) for
+// the blank row 2 and the notice row, and the OPEN group's meta, the
+// follow word.
 type listFit struct {
-	body   int
-	tall   bool
-	follow string
+	body        int
+	tall, short bool
+	follow      string
 }
 
 // tallBody is the plan list's body at 16 rows, where the composer becomes
 // its 3-row box and takes two of the rows a 15-row terminal gives the list.
 var tallBody = layoutFor(TextOnlyBelow, 16).bodyH
 
-// BuildPlanView is the plan list's body under its page title as an 80×24
-// terminal lays it out: 17 body rows, blank rows above its H2s.
+// spacedBody is the plan list's body at blankFrom rows, where row 2 and
+// the notice row take two of the rows an 11-row terminal gives the list.
+var spacedBody = layoutFor(TextOnlyBelow, blankFrom).bodyH
+
+// BuildPlanView is the plan list's body under its title as an 80×24
+// terminal lays it out, blank rows above its H2s.
 func BuildPlanView(b *PlanBrowser, width int) []LogLine {
-	return planList(b, width, listFit{body: 17, tall: true})
+	return planList(b, width, listFit{body: layoutFor(80, 24).bodyH, tall: true})
 }
 
-// planList is the plan list's body under its page title, which names the
-// screen (docs/ux.md §4, §11): the notice and the error, which stay put
-// while the rest scrolls, then the groups, a find's matches, a folder or
-// the Name prompt.
+// planList is the plan list's body under its title, which names the
+// screen (docs/ux.md §4, §11): the groups, a find's matches, a folder or
+// the Name prompt. Its notice is row 1 and its error the notice row's.
 func planList(b *PlanBrowser, width int, fit listFit) []LogLine {
 	if width <= 0 || b == nil {
 		return nil
 	}
 	inner := max(1, width-2)
 	var head []LogLine
-	if b.Notice != "" {
-		head = append(head, LogLine{Kind: "idle", Text: "  " + clip(fitNotice(b.Notice, inner), inner), Head: true})
-	}
-	if b.Err != "" {
-		head = append(head, LogLine{Kind: "error", Text: "  " + clip(b.Err, inner), Head: true})
-	}
 	gap := LogLine{Kind: "gap", Head: true}
 	viewH := fit.body - len(head)
 	if b.Prompting() {
@@ -1208,15 +1231,15 @@ func planList(b *PlanBrowser, width int, fit listFit) []LogLine {
 	// The screen without the accordion and the blank rows sizes them both.
 	t := tier{heads: viewH >= 5}
 	rest := draw(t)
-	need := 0 // blank rows in view: the one under the head, or above two H2s
+	need := 0 // blank rows in view: the one under the head, or above the second H2
 	switch {
 	case !b.Browsing() && b.Find == "" && t.heads:
-		need = 2
+		need = 1
 	case len(head) > 0:
 		need = 1
 	}
 	plans := slices.ContainsFunc(b.Rows, func(r PlanRow) bool { return r.Kind == PlanRowPlan })
-	t = listTier(t, viewH, len(head), len(rest), need, fit.tall, plans)
+	t = listTier(t, viewH, len(head), len(rest), need, fit, plans)
 	body := rest
 	if t.fold > 0 || t.gaps {
 		body = draw(t)
@@ -1241,21 +1264,26 @@ type tier struct {
 // at most, the selected row and two either side. The blank rows go in from
 // 16 rows only where the accordion keeps its lines with need of them in
 // view. The selection margin reads what this lays out, so the edges agree.
-func listTier(t tier, viewH, head, rest, need int, tall, plans bool) tier {
+func listTier(t tier, viewH, head, rest, need int, fit listFit, plans bool) tier {
 	if !plans {
-		t.gaps = tall // no accordion to make room for
+		t.gaps = fit.tall // no accordion to make room for
 		return t
 	}
 	room := viewH
-	if !tall {
+	if !fit.tall {
 		// At 16 rows the composer's box takes two of a 15-row terminal's
 		// rows: 15 rows size the accordion as 16 do, so a taller terminal
 		// never shows fewer of its lines.
 		room = min(room, tallBody-head)
 	}
+	if fit.short {
+		// Likewise row 2 and the notice row at 12 rows: 11 rows size it as
+		// 12 do.
+		room = min(room, spacedBody-head)
+	}
 	keep := min(rest, 5)
 	t.fold = min(5, max(0, room-keep))
-	t.gaps = tall && viewH-t.fold-keep >= need
+	t.gaps = fit.tall && viewH-t.fold-keep >= need
 	return t
 }
 
@@ -1266,9 +1294,6 @@ func (b *PlanBrowser) homeLines(width int, follow string, t tier) []LogLine {
 	var lines []LogLine
 	if b.total == 0 {
 		if t.heads && b.Notice != rexFileNotice {
-			if t.gaps {
-				lines = append(lines, LogLine{Kind: "gap"})
-			}
 			// Creating here isn't the only way in: the agent's write opens a
 			// plan (docs/ux.md §11).
 			lines = appendWrapped(lines, "text", "No plans in rex/plans/ yet. Type a name below, or ask your agent to write one.", max(1, width-2))
@@ -1283,7 +1308,7 @@ func (b *PlanBrowser) homeLines(width int, follow string, t tier) []LogLine {
 	for i, row := range b.Rows {
 		if t.heads && row.Group != group {
 			group = row.Group
-			if t.gaps {
+			if t.gaps && len(lines) > 0 { // the first H2's is row 2, under the title
 				lines = append(lines, LogLine{Kind: "gap"})
 			}
 			meta := ""

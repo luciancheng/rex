@@ -181,7 +181,7 @@ type outlineView struct {
 	sel    string
 	view   int
 	scroll int
-	pos    string // where the selection is while the list scrolls with TASKS gone: the page title says it (docs/ux.md §4)
+	pos    string // where the selection is while the list scrolls with TASKS gone: row 0's meta says it (docs/ux.md §4)
 }
 
 // taskKey identifies a task across reloads: its id, or its position when
@@ -294,7 +294,7 @@ func glyph(t *plan.Task, g *plan.Graph, pin *plan.Task) (mark, tag, tagKind stri
 	case t.Status == plan.Blocked:
 		return "!", "blocked", "muted"
 	case t.Status == plan.Active && pin != nil && pin.Status == plan.Active:
-		return "▸", "also active", "error" // a second active task; row 1 warns
+		return "▸", "also active", "error" // a second active task
 	case t.Status == plan.Active:
 		// Active but never the pin (it has no id, which Problems reports),
 		// and the pin isn't active: "also" would point at nothing.
@@ -417,7 +417,7 @@ type outlineFit struct {
 	blanks, goal        bool // the blank rows above the card and TASKS; the goal line
 	card                cardTier
 	tasks               bool // the TASKS H2
-	problems, readOnly  bool // the red warnings
+	problems            bool // the red warning; read-only is the notice row's (docs/ux.md §4)
 }
 
 // ladder is the collapse ladder, in order (docs/ux.md §6): each step
@@ -434,7 +434,6 @@ var ladder = []func(*outlineFit){
 	func(f *outlineFit) { f.tasks = false },
 	func(f *outlineFit) { f.card = cardNone },
 	func(f *outlineFit) { f.problems = false },
-	func(f *outlineFit) { f.readOnly = false },
 }
 
 // outline is an open plan laid out at one width (docs/ux.md §6). The
@@ -447,8 +446,8 @@ type outline struct {
 	width int
 	rows  int // task rows, one per task the cursor reaches
 
-	goal, readOnly, problems []LogLine
-	cards                    map[outlineFit][]LogLine
+	goal, problems []LogLine
+	cards          map[outlineFit][]LogLine
 }
 
 // newOutline is p laid out at width, with the goal and warning lines its
@@ -458,9 +457,6 @@ func newOutline(p *plan.Plan, width int) *outline {
 	o := &outline{p: p, g: g, pin: g.Pin(), width: width, rows: len(outlineRows(p)) - 1, cards: map[outlineFit][]LogLine{}}
 	if strings.TrimSpace(p.Goal) != "" {
 		o.goal = []LogLine{{Kind: "muted", Text: "  " + clip(p.Goal, max(1, width-2))}}
-	}
-	if p.ReadOnly != "" {
-		o.readOnly = warnLines("read-only: "+p.ReadOnly, width)
 	}
 	if n := len(p.Problems); n > 0 {
 		o.problems = warnLines(plural(n, "! %d problem", "! %d problems")+" · enter on the title lists them", width)
@@ -477,11 +473,11 @@ func wantRows(rows, n int) int {
 	return min(n, 3)
 }
 
-// outlineScreen is the open plan's outline in rows body rows under its page
+// outlineScreen is the open plan's outline in rows body rows under its
 // title (docs/ux.md §6): the head the ladder keeps, which stays put, then
 // the window of tasks around the selection, laid out to the row. It leaves
 // in v where the selection is while the list scrolls with TASKS gone, for
-// the page title to say (§4).
+// row 0's meta to say (§4).
 func outlineScreen(d *planDoc, v *outlineView, width, rows int) []LogLine {
 	v.pos = ""
 	if d.plan == nil {
@@ -589,7 +585,7 @@ func taskRows(lines []LogLine) int {
 	return n
 }
 
-// outlineLayout is the outline in rows body rows under its page title
+// outlineLayout is the outline in rows body rows under its title
 // (docs/ux.md §6): its head, which stays put, its task list, which the
 // selection's window shows, and where the selection is in the list while
 // it scrolls with TASKS gone. The collapse ladder fits the head. Whether
@@ -597,7 +593,7 @@ func taskRows(lines []LogLine) int {
 // the selection's blurb row, so moving the cursor never changes them; the
 // blurb row takes only a row the list leaves over: one it doesn't fill,
 // or, while it scrolls, one past its wanted rows and both markers. The
-// page title is chrome and the selected row is in the list, so neither is
+// title is chrome and the selected row is in the list, so neither is
 // ever dropped.
 func outlineLayout(p *plan.Plan, v *outlineView, width, rows int) (head, list []LogLine, pos string) {
 	o := newOutline(p, width)
@@ -636,7 +632,7 @@ func outlineLayout(p *plan.Plan, v *outlineView, width, rows int) (head, list []
 // fitFor is the fit the ladder's steps in on leave: steps apply in the
 // ladder's order, so a later step on the card outranks an earlier one.
 func (o *outline) fitFor(on []bool) outlineFit {
-	f := outlineFit{done: true, needs: true, second: true, blanks: true, goal: true, tasks: o.rows > 0, problems: true, readOnly: true}
+	f := outlineFit{done: true, needs: true, second: true, blanks: true, goal: true, tasks: o.rows > 0, problems: true}
 	if o.width < cardFrom {
 		f.card = cardStrip
 	}
@@ -659,7 +655,7 @@ func (o *outline) collapse(rows, want int) ([]bool, []LogLine) {
 	fits := func(head []LogLine) bool { return len(head)+want <= rows }
 	head := o.head(o.fitFor(on))
 	for i := range ladder {
-		if fits(head) || (i >= len(ladder)-2 && o.rows == 0) {
+		if fits(head) || (i >= len(ladder)-1 && o.rows == 0) {
 			break
 		}
 		on[i] = true
@@ -679,23 +675,21 @@ func (o *outline) collapse(rows, want int) ([]bool, []LogLine) {
 	return on, head
 }
 
-// head is the outline's head for f: the goal line, the warnings, the
+// head is the outline's head for f: the goal line, the warning, the
 // PINNED card (or what stands in for it) and the TASKS H2, with blank rows
-// above the card and TASKS. With no goal the card's blank row is the one
-// under the page title, as About and task detail have.
+// above the card and TASKS. With nothing over the card its blank row is
+// row 2, the one under the title (docs/ux.md §4), as About and task detail
+// have.
 func (o *outline) head(f outlineFit) []LogLine {
 	var head []LogLine
 	if f.goal {
 		head = append(head, o.goal...)
 	}
-	if f.readOnly {
-		head = append(head, o.readOnly...)
-	}
 	if f.problems {
 		head = append(head, o.problems...)
 	}
 	card := o.card(f)
-	if f.blanks && len(card) > 0 {
+	if f.blanks && len(card) > 0 && len(head) > 0 {
 		head = append(head, LogLine{Kind: "gap"})
 	}
 	head = append(head, card...)
@@ -1023,12 +1017,15 @@ func (b *detailBody) gap() {
 	}
 }
 
-// section adds an H2 and what it heads; nothing when that is empty.
+// section adds an H2 and what it heads; nothing when that is empty. The
+// first line of the page goes under row 2's blank row, with no gap.
 func (b *detailBody) section(label, meta string, body []LogLine) {
 	if len(body) == 0 {
 		return
 	}
-	b.gap()
+	if len(b.lines) > 0 {
+		b.gap()
+	}
 	b.lines = append(b.lines, h2Line(label, meta, b.width))
 	b.lines = append(b.lines, body...)
 }
@@ -1061,36 +1058,22 @@ func nonEmpty(s string) []string {
 	return []string{s}
 }
 
-// barCells is About's progress bar from 60 cells (docs/ux.md §6).
-const barCells = 20
+// progressWide is the text width from which the outline's rows carry their
+// tags and blurbs (docs/ux.md §6).
+const progressWide = 60
 
 // planDetail is About (docs/ux.md §6), under PLANS › title › about: the
 // title, the status and progress, the path, then GOAL, SCOPE, STACK and
 // DONE, every done task and what it accomplished, which is the send-off's
 // Done section kept in the plan; then PROBLEMS and READ-ONLY.
-func planDetail(d *planDoc, rel string, width int, tall bool) []LogLine {
+func planDetail(d *planDoc, width int, tall bool) []LogLine {
 	p := d.plan
 	if p == nil {
 		return []LogLine{{Kind: "error", Text: "  " + clip(d.err, width-2)}}
 	}
 	g := p.Graph()
+	// Its title, status, progress and path are rows 0 and 1 (docs/ux.md §4).
 	b := &detailBody{width: width, tall: tall}
-	b.gap()
-	b.title(planTitle(p, d.path))
-	done, total := g.Progress()
-	sum := fmt.Sprintf("%d of %d done", done, total)
-	if total == 0 {
-		sum = "no tasks yet"
-	}
-	if p.Status != "" {
-		sum = string(p.Status) + " · " + sum
-	}
-	status := []Span{{Text: "  "}, {Text: sum, Role: "muted"}}
-	if width >= progressWide && total > 0 {
-		n := (barCells*done + total/2) / total
-		status = append(status, Span{Text: "  "}, Span{Text: strings.Repeat("━", n)}, Span{Text: strings.Repeat("─", barCells-n), Role: "border"})
-	}
-	b.lines = append(b.lines, spanLine("text", status...), LogLine{Kind: "muted", Text: "  " + clip(rel, max(1, width-2))})
 	b.section("GOAL", "", b.para(h3{items: nonEmpty(p.Goal)}))
 	// in and out read as a pair, in their own narrow column, bulleted.
 	b.section("SCOPE", "", b.fields(5, h3{label: "in", items: p.Scope.In, list: true}, h3{label: "out", items: p.Scope.Out, list: true}))
@@ -1109,7 +1092,7 @@ func planDetail(d *planDoc, rel string, width int, tall bool) []LogLine {
 			skipped++
 		}
 	}
-	// The status line counts skipped tasks as finished, as TASKS and row 1
+	// The status counts skipped tasks as finished, as TASKS and row 0
 	// do; DONE's count says how many of them were skipped.
 	meta := fmt.Sprint(len(dones))
 	if skipped > 0 {
@@ -1123,45 +1106,57 @@ func planDetail(d *planDoc, rel string, width int, tall bool) []LogLine {
 	b.section("PROBLEMS", fmt.Sprint(len(problems)), b.para(h3{items: problems, role: "error"}))
 	b.section("READ-ONLY", "", b.para(h3{items: nonEmpty(p.ReadOnly), role: "error"}))
 	if p.Goal == "" && len(p.Scope.In) == 0 && len(p.Scope.Out) == 0 && len(problems) == 0 {
-		b.gap()
+		if len(b.lines) > 0 {
+			b.gap()
+		}
 		b.lines = append(b.lines, LogLine{Kind: "idle", Text: "  " + clip("No goal or scope yet · your agent fills this file", width-2)})
 	}
 	return b.lines
 }
 
-// taskState is a task detail's status line (docs/ux.md §6): the pin's
-// badge and status, else its glyph and state, and the parent it is under.
-func taskState(t *plan.Task, g *plan.Graph, pin *plan.Task) []Span {
-	spans := []Span{{Text: "  "}}
-	switch mark, tag, kind := glyph(t, g, pin); {
+// taskWord is a task's state as its title's meta says it (docs/ux.md §4):
+// "pinned" in the pin's yellow for the agent's pin, "next up" for the pin
+// Rex worked out, a parent's progress, else its state in words.
+func taskWord(t *plan.Task, g *plan.Graph, pin *plan.Task) (word, role string) {
+	mark, tag, kind := glyph(t, g, pin)
+	switch {
 	case t == pin && t.Status == plan.Active:
-		spans = append(append(spans, pill("PINNED", "accent")...), Span{Text: " active", Role: "muted"})
+		return "pinned", "accent"
 	case t == pin:
-		spans = append(append(spans, pill("NEXT UP", "muted")...), Span{Text: " " + string(t.Status), Role: "muted"})
+		return "next up", "muted"
 	case !g.Leaf(t):
-		spans = append(spans, Span{Text: tag + " done", Role: "muted"})
-	default:
-		words := map[string]string{doneMark: "done", "–": "skipped", "!": "blocked", "▸": "active", "○": "ready"}[mark]
-		switch {
-		case tag == "cycle":
-			words = "cycle"
-		case tag == "also active":
-			words = "active · also active"
-		case mark == "·":
-			words = "waiting · " + tag
-		}
-		if kind != "error" {
-			kind = "muted"
-		}
-		spans = append(spans, Span{Text: mark + " " + words, Role: kind})
+		return tag + " done", "muted"
+	case tag == "cycle":
+		return "cycle", "error"
+	case tag == "also active":
+		return "also active", "error"
+	case mark == "·":
+		return "waiting", "muted"
 	}
-	if parent := g.Task(t.Parent); parent != nil {
-		spans = append(spans, Span{Text: " · under " + taskKey(parent), Role: "muted"})
+	if kind != "error" {
+		kind = "muted"
 	}
-	return spans
+	return map[string]string{doneMark: "done", "–": "skipped", "!": "blocked", "▸": "active", "○": "ready"}[mark], kind
 }
 
-// taskDetail is a task under its page title (PLANS › title › id, docs/ux.md
+// taskPlace is a task detail's row 1 (docs/ux.md §4): where the task is in
+// the plan, "task 2 of 8", and the parent it is under.
+func taskPlace(p *plan.Plan, key string) string {
+	keys := outlineRows(p)[1:]
+	at := slices.Index(keys, key)
+	if at < 0 {
+		return ""
+	}
+	s := fmt.Sprintf("task %d of %d", at+1, len(keys))
+	if t := findTask(p, key); t != nil {
+		if parent := p.Graph().Task(t.Parent); parent != nil {
+			s += " · under " + taskKey(parent)
+		}
+	}
+	return s
+}
+
+// taskDetail is a task under its title (<title> › <id>, docs/ux.md
 // §6): its status line and title, then DOES, VERIFY, FILES, CONTEXT and
 // DESCRIPTION, and SO FAR when it has completion fields; a done task leads
 // with DONE, what it did, then INTENDED.
@@ -1226,9 +1221,8 @@ func taskDetail(d *planDoc, key string, width int, tall bool) []LogLine {
 	if done || len(t.Accomplished)+len(t.Modified)+len(t.VerifiedHow) > 0 || t.CompletedNotes != "" {
 		col = h3Col(append(append(context, did...), intended...)...)
 	}
+	// Its state and place are rows 0 and 1 (docs/ux.md §4).
 	b := &detailBody{width: width, tall: tall}
-	b.gap()
-	b.lines = append(b.lines, spanLine("muted", taskState(t, g, pin)...))
 	if strings.TrimSpace(t.Title) != "" {
 		b.title(t.Title)
 	}
@@ -1260,8 +1254,8 @@ func countOf(items []string) string {
 
 var errPos = regexp.MustCompile(`^(\d+:\d+): `)
 
-// docStatus is row 1 for the open plan (docs/ux.md §4), or false when
-// the plan has nothing to say.
+// docStatus is the open plan's error for the notice row (docs/ux.md §4),
+// or false when the plan has nothing to say.
 func docStatus(d *planDoc) (StatusLine, bool) {
 	if d == nil {
 		return StatusLine{}, false
@@ -1282,74 +1276,68 @@ func docStatus(d *planDoc) (StatusLine, bool) {
 	return StatusLine{}, false
 }
 
-// pinStatus is row 1's pin line: the pin, a warning about two active
-// tasks, or why there is no pin. The agent writes the pin; Rex only shows
-// it (docs/ux.md §7).
+// pinStatus is the outline's row 1, the pin line (docs/ux.md §4): the
+// agent's pin, "pinned  <id> · <title>" with the id in the pin's yellow;
+// else what Rex would pin next, which is never sent, nor yellow; else why
+// nothing is pinned. Narrow, the title clips, and with fewer than
+// pinTitleMin cells of it the line is the id alone. The agent writes the
+// pin; Rex only shows it (docs/ux.md §7).
 func pinStatus(p *plan.Plan) StatusLine {
-	if p == nil || len(p.Tasks) == 0 {
+	muted := func(text string) StatusLine { return StatusLine{Text: text, Kind: "muted"} }
+	if p == nil {
 		return StatusLine{}
+	}
+	if len(p.Tasks) == 0 {
+		return muted("nothing pinned · no tasks yet")
 	}
 	g := p.Graph()
 	pin := g.Pin()
-	var active []string // leaves only: a parent marked active is no second pin
-	for i := range p.Tasks {
-		if t := &p.Tasks[i]; t.Status == plan.Active && g.Leaf(t) && g.Task(t.ID) == t {
-			active = append(active, taskKey(t))
-		}
-	}
-	if len(active) > 1 && pin != nil {
-		return StatusLine{Text: fmt.Sprintf("%d active: %s · pinned %s", len(active), strings.Join(active, ", "), pin.ID), Kind: "error"}
-	}
 	if pin == nil {
 		if done, total := g.Progress(); done == total {
-			return StatusLine{Text: "no pin · all tasks done", Kind: "muted"}
+			return muted(doneMark + " all tasks done")
 		}
-		return StatusLine{Text: "no pin · nothing unblocked", Kind: "muted"}
+		return muted("nothing pinned · nothing unblocked")
 	}
-	// The agent's active task needs no word and is the pin's yellow; a pin
-	// Rex worked out says "(next up)" and is not (docs/ux.md §4, §5, §7).
-	mark, tail, role := "▸ "+flat(pin.ID), "", "accent"
+	lead, role := "pinned  ", "accent"
 	if pin.Status != plan.Active {
-		tail, role = " (next up)", "text"
+		lead, role = "nothing pinned · next up ", "text"
 	}
-	title := flat(pin.Title)
-	if strings.TrimSpace(title) == "" {
-		return StatusLine{Text: mark + tail, Kind: "text", Spans: func(text string) []Span {
-			return []Span{{Text: mark, Role: role, Bold: true}, {Text: strings.TrimPrefix(text, mark), Role: "muted"}}
-		}}
-	}
-	return StatusLine{
-		Text:  mark + "  " + title + tail,
-		Short: mark + tail,
-		Kind:  "text",
-		Clip:  true,
-		Fit: func(w int) string {
-			room := w - cellLen(mark+"  "+tail)
+	id, title := flat(pin.ID), flat(pin.Title)
+	s := StatusLine{Text: lead + id, Kind: "muted"}
+	if strings.TrimSpace(title) != "" {
+		s.Text += " · " + title
+		s.Fit = func(w int) string {
+			room := w - cellLen(lead+id+" · ")
 			if room < pinTitleMin {
-				return mark + tail
+				return lead + id
 			}
-			return mark + "  " + ellipsis(title, room) + tail
-		},
-		Spans: func(text string) []Span {
-			rest, ok := strings.CutPrefix(text, mark)
-			if !ok {
-				return nil
-			}
-			spans := []Span{{Text: mark, Role: role, Bold: true}}
-			if body, ok := strings.CutSuffix(rest, tail); ok && tail != "" {
-				return append(spans, Span{Text: body}, Span{Text: tail, Role: "muted"})
-			}
-			return append(spans, Span{Text: rest})
-		},
+			return lead + id + " · " + ellipsis(title, room)
+		}
 	}
+	s.Spans = func(text string) []Span {
+		rest, ok := strings.CutPrefix(text, lead)
+		if !ok {
+			return nil
+		}
+		spans := []Span{{Text: lead}}
+		if rest, ok = strings.CutPrefix(rest, id); !ok {
+			return append(spans, Span{Text: rest, Role: role})
+		}
+		spans = append(spans, Span{Text: id, Role: role})
+		if body, ok := strings.CutPrefix(rest, " · "); ok {
+			return append(spans, Span{Text: " · "}, Span{Text: body, Role: "text"})
+		}
+		return append(spans, Span{Text: rest})
+	}
+	return s
 }
 
-// pinTitleMin is the fewest title cells row 1's pin line keeps; with
-// fewer, it is just the pin's id.
+// pinTitleMin is the fewest title cells the pin line keeps; with fewer,
+// it is just the pin's id.
 const pinTitleMin = 8
 
-// progress is the open plan's progress for row 1: "1/3", or "" before it
-// has tasks.
+// progress is the open plan's progress for row 0's meta: "1/3", or ""
+// before it has tasks.
 func progress(p *plan.Plan) string {
 	if p == nil {
 		return ""

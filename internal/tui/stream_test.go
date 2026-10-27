@@ -485,10 +485,10 @@ func TestNoBlankRowsWhenShort(t *testing.T) {
 					blank++
 				}
 			}
-			if size[1] < agentTitleRows && blank != 0 {
+			if size[1] < blankFrom && blank != 0 {
 				t.Errorf("%s %dx%d: %d blank rows\n%s", name, size[0], size[1], blank, strings.Join(rows, "\n"))
 			}
-			if size[1] >= agentTitleRows && blank == 0 {
+			if size[1] >= blankFrom && blank == 0 {
 				t.Errorf("%s %dx%d: tall screens space blocks\n%s", name, size[0], size[1], strings.Join(rows, "\n"))
 			}
 			if name == "prompt" && size[0] >= 80 && !strings.Contains(strings.Join(rows, "\n"), "bar and fill") {
@@ -608,12 +608,12 @@ func TestTrimmedRows(t *testing.T) {
 // agentBody is AGENT's body rows as text, under the page title.
 func agentBody(a *app) []string {
 	rows := a.frameRows().Rows
-	top := 2
-	if a.lines >= agentTitleRows {
-		top = 3
+	top, bottom := 2, len(rows)-1
+	if a.lines >= blankFrom {
+		top, bottom = 3, len(rows)-2 // row 2 is blank, and the notice row is the footer's
 	}
 	var out []string
-	for _, r := range rows[top : len(rows)-1] {
+	for _, r := range rows[top:bottom] {
 		out = append(out, textOf(r, a.columns))
 	}
 	return out
@@ -649,20 +649,18 @@ func TestScrolledViewStable(t *testing.T) {
 	steps := []struct {
 		what string
 		evs  []watch.Event
-		news int
 	}{
-		{"a thought joins the run", thoughts("and another"), 0},
-		{"the turn ends", []watch.Event{{Source: "claude", Kind: "idle", Text: "turn completed", TS: 50}}, 0},
-		{"a command", commands("go test ./..."), 1},
+		{"a thought joins the run", thoughts("and another")},
+		{"the turn ends", []watch.Event{{Source: "claude", Kind: "idle", Text: "turn completed", TS: 50}}},
+		{"a command", commands("go test ./...")},
 	}
 	for _, s := range steps {
-		before := a.unseenLines
 		a.ingest(s.evs)
 		if got := top(); got != first {
 			t.Fatalf("%s moved the view: %q → %q", s.what, first, got)
 		}
-		if a.unseenLines-before != s.news {
-			t.Fatalf("%s: %d new, want %d", s.what, a.unseenLines-before, s.news)
+		if got := textOf(a.frameRows().Rows[0], a.columns); !strings.Contains(got, fmt.Sprintf("↓ %d newer", a.scroll)) {
+			t.Fatalf("%s: row 0 says what is below: %q (scroll %d)", s.what, got, a.scroll)
 		}
 	}
 	// The live run just under the view, or further down, settles without
@@ -716,8 +714,8 @@ func TestScrolledViewStable(t *testing.T) {
 		t.Fatalf("a trim moved the view: %q → %q (scroll %d)", first, got, a.scroll)
 	}
 	press(a, "end")
-	if a.scroll != 0 || a.unseenLines != 0 {
-		t.Fatalf("end is live: scroll %d, %d new", a.scroll, a.unseenLines)
+	if a.scroll != 0 {
+		t.Fatalf("end is live: scroll %d", a.scroll)
 	}
 }
 
@@ -837,9 +835,8 @@ func TestAgentMockups(t *testing.T) {
 	}
 	live := turn(t, thoughts("x", "y", "The bar is drawn per row, so the fill has to start at column 0 to cover the gutter.")...)
 	if got, want := frame(live, 80, 12), strings.Join([]string{
-		"PLAN [AGENT] thinking  following …demo",
-		"▸ card-highlight  Selected plan…   1/3",
-		"  AGENT                          live",
+		"Agent             live   plan · agent",
+		"thinking        pinned card-highlight",
 		"",
 		"rex › plan · card-highlight → active",
 		"thinking ×4  Looking at the plans vie…",
@@ -848,15 +845,15 @@ func TestAgentMockups(t *testing.T) {
 		"$ go test ./internal/tui",
 		"thinking ×3  The bar is drawn per row,",
 		"  so the fill has to start at column…",
-		"tab plan  ? help  ↑↓ scroll",
+		"",
+		"↑↓ scroll · tab plan · ? help",
 	}, "\n"); got != want {
 		t.Errorf("38×12, live:\n%s\nwant\n%s", got, want)
 	}
 	if got, want := frame(live, 24, 12), strings.Join([]string{
-		"PLAN [AGENT] thinking",
-		"▸ card-highlight     1/3",
-		"  AGENT            live",
-		"                block",
+		"Agent              live",
+		"thinking",
+		"",
 		"",
 		"rex › plan · card-highl…",
 		"thinking ×4",
@@ -864,12 +861,13 @@ func TestAgentMockups(t *testing.T) {
 		"$ Edit internal/tui/liv…",
 		"$ go test ./internal/tui",
 		"thinking ×3",
-		"tab plan  ? help",
+		"",
+		"tab plan · ? help",
 	}, "\n"); got != want {
 		t.Errorf("24×12:\n%s\nwant\n%s", got, want)
 	}
 	// The §10 mockup at 80×24: the turn over, an edit next to the pin's
-	// files on row 1.
+	// files soft drift, which only AGENT's drift block lists (§4).
 	over, c, _ := cujApp(t)
 	press(over, "\t")
 	over.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "make the selected card one block"})})
@@ -885,10 +883,9 @@ func TestAgentMockups(t *testing.T) {
 	over.ingest(append(evs, edit(over, c, 30*time.Second, "internal/tui/live_view.go")))
 	over.ingest([]watch.Event{at(c, 31*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "The selected card is one block now.\n- plans.go draws the card through one painter\n- live.go starts the fill at column 0"})})
 	if got, want := frame(over, 80, 24), strings.Join([]string{
-		"PLAN [AGENT] idle  following …off-demo",
-		"drift · soft: live_view.go         1/3",
-		"  AGENT                          live",
-		"                     card one block",
+		"Agent             live   plan · agent",
+		"idle            pinned card-highlight",
+		"",
 		"",
 		"rex › plan · card-highlight → active",
 		"thinking ×4  Looking at the plans vie…",
@@ -908,19 +905,20 @@ func TestAgentMockups(t *testing.T) {
 		"    one painter",
 		"  • live.go starts the fill at column",
 		"    0",
-		"tab plan  ? help  ↑↓ scroll",
+		"",
+		"↑↓ scroll · tab plan · ? help",
 	}, "\n"); got != want {
 		t.Errorf("38×24, the turn over:\n%s\nwant\n%s", got, want)
 	}
 	ask := turn(t, append(thoughts("Two of them.", "Two painters draw the card: one for the bar, one for the fill."), watch.Event{Source: "claude", Kind: "question", Text: "Keep the old card style too?"})...)
 	if got, want := frame(ask, 80, 7), strings.Join([]string{
-		"PLAN [AGENT] ask  following …doff-demo",
-		"▸ card-highlight  Selected plan…   1/3",
+		"Agent             live   plan · agent",
+		"waiting on you  pinned card-highlight",
 		"$ Edit internal/tui/live.go",
 		"$ go test ./internal/tui",
 		"thinking ×2  Two painters draw the ca…",
 		"[ASK] Keep the old card style too?",
-		"tab plan  ? help  ↑↓ scroll",
+		"↑↓ scroll · tab plan · ? help",
 	}, "\n"); got != want {
 		t.Errorf("38×7:\n%s\nwant\n%s", got, want)
 	}

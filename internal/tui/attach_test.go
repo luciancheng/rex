@@ -88,8 +88,8 @@ func TestStartOpensTheLastPlan(t *testing.T) {
 	if a.pane != PanePlans || a.at != atOutline || a.plans.Current != last || !a.follow || a.outline.sel != "card-highlight" {
 		t.Fatalf("at=%d current=%q follow=%v sel=%q", a.at, a.plans.Current, a.follow, a.outline.sel)
 	}
-	if !strings.Contains(a.frame(), "idle                    following rex/plans/cuj/last.rex.json") {
-		t.Fatalf("%s", a.frame())
+	if !strings.HasSuffix(textOf(a.frameRows().Rows[0], a.columns), "1/3 done · following   plan · agent") {
+		t.Fatalf("row 0 says Rex follows the plan (docs/ux.md §4)\n%s", a.frame())
 	}
 }
 
@@ -133,7 +133,8 @@ func TestStartAttachesTheNewestPlan(t *testing.T) {
 }
 
 // Each harness reports a write its own way; every one of them opens the
-// plan, and the screen changes only in PLAN.
+// plan, and the screen changes only in PLAN, where the toast saying why
+// waits for you (docs/ux.md §4).
 func TestEveryHarnessWriteOpensThePlan(t *testing.T) {
 	cases := []struct {
 		source, name string
@@ -173,8 +174,11 @@ func TestEveryHarnessWriteOpensThePlan(t *testing.T) {
 		if a.pane != PaneChat {
 			t.Fatalf("%s: an attach moved you: pane=%d", tc.source, a.pane)
 		}
-		if s := a.statusLine(); !strings.Contains(s.Text, "following "+planStem(tc.name)) || s.Kind != "text" {
-			t.Fatalf("%s: row 1 says why the plan changed, in text, not the pin's yellow: %q %q", tc.source, s.Text, s.Kind)
+		if s := a.toast; !a.toastLive() || s.Text != "following "+planStem(tc.name) || s.Kind != "text" || a.notice().Text != "" {
+			t.Fatalf("%s: the toast that says why the plan changed waits for PLAN, in text, not the pin's yellow: %q %q", tc.source, s.Text, s.Kind)
+		}
+		if press(a, "\t"); a.notice().Text != "following "+planStem(tc.name) {
+			t.Fatalf("%s: back on PLAN the notice row says why: %q", tc.source, a.notice().Text)
 		}
 		if last := a.log[len(a.log)-1]; last.Source != "rex" || last.Kind != "plan" || last.Text != "following "+planStem(tc.name) {
 			t.Fatalf("%s: the tape keeps a record of the move: %+v", tc.source, last)
@@ -287,13 +291,13 @@ func TestLastWriteWinsAndTheOpenPlanStays(t *testing.T) {
 	}
 }
 
-// Latched: another plan's write is offered on row 1 until taken; Enter on
-// an empty draft takes it and follows again.
+// Latched: another plan's write is offered on the notice row until taken
+// (docs/ux.md §4); o takes it and follows again, and enter never does.
 func TestLatchedOffersTheNewPlan(t *testing.T) {
 	a, c, path := openDemo(t, demoPlan, 120, 32)
 	repo := a.plans.Repo
-	if a.follow || !strings.Contains(a.frame(), "latched rex/plans/cuj/demo.rex.json") {
-		t.Fatalf("a plan picked in the list is latched\n%s", a.frame())
+	if a.follow || strings.Contains(a.frameRows().Rows[0], "following") {
+		t.Fatalf("a plan picked in the list is latched, which shows no word\n%s", a.frame())
 	}
 	other := writePlan(t, repo, "cuj/next.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(repo, other)})
@@ -302,33 +306,38 @@ func TestLatchedOffersTheNewPlan(t *testing.T) {
 	}
 	c.t = c.t.Add(10 * toastFor)
 	a.tick()
-	if got := a.statusLine().Text; got != "new plan cuj/next · enter switch" {
-		t.Fatalf("row 1 offers the plan until it is taken: %q", got)
+	const offer = "Your agent wrote Send-off demo (cuj/next) · o opens it"
+	if got := a.statusLine().Text; got != offer {
+		t.Fatalf("the notice offers the plan until it is taken: %q", got)
 	}
-	if !strings.Contains(a.frame(), "enter switch") {
-		t.Fatalf("%s", a.frame())
+	if footer := a.frameRows().Rows[a.lines-1]; strings.Contains(footer, "o ") || strings.Contains(footer, "switch") {
+		t.Fatalf("o never joins the footer: %q", footer)
 	}
 	press(a, "esc")
-	if got := a.statusLine().Text; got != "new plan cuj/next" {
-		t.Fatalf("in the list enter opens the selected row, so the offer doesn't claim it: %q", got)
+	if got := a.statusLine().Text; got != offer {
+		t.Fatalf("on the plan list's Home o opens it too: %q", got)
 	}
 	press(a, "\r") // the open plan, under OPEN
 	if a.offer != "" || a.plans.Current != path || a.follow {
 		t.Fatalf("opening a plan settles the offer: offer=%q current=%q", a.offer, a.plans.Current)
 	}
 	a.ingest([]watch.Event{wrote(repo, other)})
-	press(a, "s", "\r") // a letter does nothing on the outline; enter switches
-	if a.plans.Current != other || !a.follow || a.offer != "" || a.at != atOutline {
-		t.Fatalf("enter switches: current=%q follow=%v", a.plans.Current, a.follow)
+	press(a, "s", "\r") // a letter does nothing on the outline; enter opens the task
+	if a.plans.Current != path || a.at != atTaskDetail || a.offer == "" {
+		t.Fatalf("enter never takes the offer: current=%q at=%d", a.plans.Current, a.at)
 	}
-	if !strings.Contains(a.frame(), "following rex/plans/cuj/next.rex.json") {
+	press(a, "esc", "o")
+	if a.plans.Current != other || !a.follow || a.offer != "" || a.at != atOutline {
+		t.Fatalf("o opens it: current=%q follow=%v", a.plans.Current, a.follow)
+	}
+	if !strings.Contains(a.frameRows().Rows[0], " · following") {
 		t.Fatalf("%s", a.frame())
 	}
 }
 
 // Taking the offer opens the plan, so it never runs while that would drop
-// what you typed in the plan list: a find, or a Name prompt. Row 1 and the
-// footer stop saying enter switch, and enter does what it did before.
+// what you typed in the plan list: a find, or a Name prompt. The notice
+// stops naming o, and o does what it did before.
 func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 	offered := func(t *testing.T) (*app, string, string) {
 		a, _, path := openDemo(t, demoPlan, 120, 32)
@@ -336,31 +345,35 @@ func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 	}
 	noSwitch := func(t *testing.T, a *app) {
 		t.Helper()
-		if got := a.statusLine().Text; got != "new plan cuj/next" || strings.Contains(a.frame(), "enter switch") {
+		if got := a.statusLine().Text; got != "Your agent wrote Send-off demo (cuj/next)" || strings.Contains(a.frame(), "o opens") {
 			t.Fatalf("row 1 %q\n%s", got, a.frame())
 		}
 	}
 
-	// A find half typed in the plan list, enter on the tape.
+	// A find half typed in the plan list, o on AGENT.
 	a, path, next := offered(t)
 	press(a, "esc")
 	typeText(a, "half")
 	press(a, "\t")
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
 	noSwitch(t, a)
-	press(a, "\r")
+	press(a, "o", "\r")
 	if a.plans.Current != path || a.draft != "half" {
 		t.Fatalf("the find was dropped: current=%q draft=%q", a.plans.Current, a.draft)
 	}
-	press(a, "\t", "\x15", "\t") // clear it, back to the tape
-	if a.statusLine().Text != "new plan cuj/next · enter switch" {
+	press(a, "\t")
+	if typeText(a, "o"); a.draft != "halfo" || a.plans.Current != path {
+		t.Fatalf("in a find o is a letter: draft=%q current=%q", a.draft, a.plans.Current)
+	}
+	press(a, "\x15", "\t") // clear it, back to AGENT
+	if a.statusLine().Text != "Your agent wrote Send-off demo (cuj/next) · o opens it" {
 		t.Fatalf("with nothing to lose the offer is back: %q", a.statusLine().Text)
 	}
-	if press(a, "\r"); a.plans.Current != next || a.pane != PaneChat {
+	if press(a, "o"); a.plans.Current != next || a.pane != PaneChat {
 		t.Fatalf("current=%q pane=%d", a.plans.Current, a.pane)
 	}
 
-	// A Name prompt in the plan list, enter on the tape.
+	// A Name prompt in the plan list, o on AGENT.
 	a, path, next = offered(t)
 	press(a, "esc")
 	pickRow(a, PlanRowNew, "")
@@ -371,18 +384,22 @@ func TestTheOfferKeepsWhatYouTyped(t *testing.T) {
 	press(a, "\t")
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
 	noSwitch(t, a)
-	if press(a, "\r"); a.plans.Current != path || !a.plans.Prompting() {
+	if press(a, "o", "\r"); a.plans.Current != path || !a.plans.Prompting() {
 		t.Fatalf("the Name prompt was dropped: current=%q", a.plans.Current)
 	}
 }
 
-// From the tape, enter takes the offer for PLAN and leaves you on the tape.
+// From AGENT, o takes the offer for PLAN and leaves you on AGENT; enter
+// never does.
 func TestTakingTheOfferFromTheTape(t *testing.T) {
 	a, _, _ := openDemo(t, demoPlan, 120, 32)
 	other := writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan)
 	press(a, "\t")
 	a.ingest([]watch.Event{wrote(a.plans.Repo, other)})
-	press(a, "\r")
+	if press(a, "\r"); a.plans.Current == other || a.offer == "" {
+		t.Fatalf("enter took the offer: current=%q", a.plans.Current)
+	}
+	press(a, "o")
 	if a.pane != PaneChat || a.plans.Current != other || !a.follow {
 		t.Fatalf("pane=%d current=%q", a.pane, a.plans.Current)
 	}
@@ -394,7 +411,7 @@ func TestTakingTheOfferFromTheTape(t *testing.T) {
 	gone := writePlan(t, a.plans.Repo, "cuj/gone.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(a.plans.Repo, gone)})
 	os.Remove(gone)
-	press(a, "\r")
+	press(a, "o")
 	if a.follow || a.plans.Current != demo || a.offer != "" || !strings.Contains(a.statusLine().Text, "cuj/gone is gone") {
 		t.Fatalf("current=%q row 1 %q", a.plans.Current, a.statusLine().Text)
 	}
@@ -451,8 +468,9 @@ func TestAttachWaitsForTheDraft(t *testing.T) {
 }
 
 // A Name prompt in the plan list is you making a plan: a write waits until
-// you cancel it, and is offered on row 1 if you create one (docs/ux.md
-// §11). Row 1 says the prompt holds it, even an empty one.
+// you cancel it, and is offered on the notice row if you create one
+// (docs/ux.md §4, §11). The notice says the prompt holds it, even an empty
+// one.
 func TestANamePromptHoldsTheAttach(t *testing.T) {
 	repo := attachRepo(t)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
@@ -471,14 +489,14 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	if a.plans.Current != one || a.at != atLibrary || !a.plans.Prompting() || a.pending != two {
 		t.Fatalf("an empty Name prompt holds it: current=%q at=%d pending=%q", a.plans.Current, a.at, a.pending)
 	}
-	if got := a.statusLine().Text; got != "new plan two · opens when the prompt closes" {
+	if got := a.statusLine().Text; got != "Your agent wrote Send-off demo (two) · opens when the prompt closes" {
 		t.Fatalf("the line is clear, the prompt isn't closed: %q", got)
 	}
 	typeText(a, "x")
-	if got := a.statusLine().Text; got != "new plan two · opens when the prompt closes" {
+	if got := a.statusLine().Text; got != "Your agent wrote Send-off demo (two) · opens when the prompt closes" {
 		t.Fatalf("a named prompt: %q", got)
 	}
-	a.settle(66, 24) // progress yields rather than cost the line why it waits
+	a.settle(66, 24) // narrow, the notice keeps why it waits
 	if got := strings.TrimRight(statusRow(a.statusLine(), a.layout().textW, false), " "); got != "new plan two · waiting" {
 		t.Fatalf("narrow: %q", got)
 	}
@@ -498,8 +516,8 @@ func TestANamePromptHoldsTheAttach(t *testing.T) {
 	if a.plans.Current != filepath.Join(PlansDir(repo), "mine.rex.json") || a.follow || a.pending != "" || a.offer != three {
 		t.Fatalf("creating latches and offers it: current=%q follow=%v pending=%q offer=%q", a.plans.Current, a.follow, a.pending, a.offer)
 	}
-	if got := a.statusLine().Text; got != "new plan three · enter switch" {
-		t.Fatalf("row 1 %q", got)
+	if got := a.statusLine().Text; got != "Your agent wrote Send-off demo (three) · o opens it" {
+		t.Fatalf("notice %q", got)
 	}
 }
 
@@ -533,9 +551,9 @@ func TestALinkedFolderOutOfRexPlansNeverAttaches(t *testing.T) {
 	}
 }
 
-// Picking a plan while a write is held makes it the row-1 offer, neither
-// opened nor lost (docs/ux.md §11); picking another plan latches, and
-// picking the open one again keeps following.
+// Picking a plan while a write is held makes it the notice row's offer,
+// neither opened nor lost (docs/ux.md §4, §11); picking another plan
+// latches, and picking the open one again keeps following.
 func TestLatchingOffersAHeldAttach(t *testing.T) {
 	repo := attachRepo(t)
 	alt := writePlan(t, repo, "alt.rex.json", demoPlan)
@@ -555,12 +573,12 @@ func TestLatchingOffersAHeldAttach(t *testing.T) {
 			t.Fatalf("%s: current=%q follow=%v pending=%q offer=%q", pick.find, a.plans.Current, a.follow, a.pending, a.offer)
 		}
 		a.settle(a.columns, a.lines)
-		if a.plans.Current != pick.want || a.statusLine().Text != "new plan two · enter switch" {
-			t.Fatalf("offered, not opened: current=%q row 1 %q", a.plans.Current, a.statusLine().Text)
+		if a.plans.Current != pick.want || a.statusLine().Text != "Your agent wrote Send-off demo (two) · o opens it" {
+			t.Fatalf("offered, not opened: current=%q notice %q", a.plans.Current, a.statusLine().Text)
 		}
 	}
-	if press(a, "\r"); a.plans.Current != two || !a.follow {
-		t.Fatalf("enter takes it and follows again: current=%q follow=%v", a.plans.Current, a.follow)
+	if press(a, "o"); a.plans.Current != two || !a.follow {
+		t.Fatalf("o takes it and follows again: current=%q follow=%v", a.plans.Current, a.follow)
 	}
 
 	// The held write is the plan you pick: nothing left to offer.
@@ -577,7 +595,8 @@ func TestLatchingOffersAHeldAttach(t *testing.T) {
 }
 
 // The QA scenario: find a plan, the agent writes another meanwhile, enter
-// opens the one you found. Yours is latched and the agent's is offered.
+// opens the one you found. Yours is latched and the agent's is offered on
+// the notice row (docs/ux.md §4).
 func TestPickingWhileHeldKeepsTheAgentsPlan(t *testing.T) {
 	a, c, _ := cujApp(t)
 	scratch := filepath.Join(a.plans.Root, "scratch.rex.json")
@@ -594,8 +613,8 @@ func TestPickingWhileHeldKeepsTheAgentsPlan(t *testing.T) {
 	if a.plans.Current != scratch || a.follow || a.offer != other {
 		t.Fatalf("picked: current=%q follow=%v offer=%q", a.plans.Current, a.follow, a.offer)
 	}
-	if got := a.statusLine().Text; got != "new plan agent-new · enter switch" {
-		t.Fatalf("row 1 %q", got)
+	if got := a.statusLine().Text; got != "Your agent wrote agent-new · o opens it" {
+		t.Fatalf("notice %q", got)
 	}
 }
 
@@ -643,65 +662,27 @@ func TestColdStartFindsAPlanWithoutAHook(t *testing.T) {
 	}
 }
 
-// docs/ux.md §4: row 0 says following or latched in words. The path
-// drops rex/plans/ and .rex.json, then clips down to a few cells, before
-// the word goes; a dropped word never gives ".rex.json" its room back.
-// Both words come and go together, at 38 cells.
-func TestHeaderSaysFollowingOrLatched(t *testing.T) {
-	row := func(w int, state, follow, path string) string {
-		return strings.TrimRight(paintLine(headerRow(w, PanePlans, "", state, follow, path), w, false), " ")
+// docs/ux.md §4: row 0's meta says following in words while Rex follows
+// the agent's writes; latched shows no word. Narrow, the meta's short form
+// (the progress) stands in, before the places' label shortens.
+func TestTitleSaysFollowing(t *testing.T) {
+	a, _, _ := cujApp(t) // start follows the plan it lands on
+	a.settle(120, 32)
+	if got := textOf(a.frameRows().Rows[0], 120); got != "  Send-off demo"+strings.Repeat(" ", 77-15-35)+"1/3 done · following   plan · agent" {
+		t.Fatalf("row 0 following: %q", got)
 	}
-	cases := []struct {
-		width               int
-		state, follow, path string
-		want                string
-	}{
-		{78, "running", "following", "rex/plans/cuj/sendoff-demo.rex.json", "REX [PLAN] AGENT running         following rex/plans/cuj/sendoff-demo.rex.json"},
-		{38, "running", "latched", "rex/plans/scratch.rex.json", "[PLAN] AGENT running   latched scratch"},
-		{38, "running", "latched", "rex/plans/cuj/sendoff-demo.rex.json", "[PLAN] AGENT running  latched …ff-demo"},
-		{38, "thinking", "following", "rex/plans/cuj/sendoff-demo.rex.json", "[PLAN] AGENT thinking  following …demo"},
-		{38, "idle", "following", "rex/plans/plan_attach.rex.json", "[PLAN] AGENT idle  following …n_attach"},
-		{30, "running", "following", "rex/plans/cuj/sendoff-demo.rex.json", "[PLAN] AGENT running  …ff-demo"},
-		{32, "idle", "following", "rex/plans/x.rex.json", "[PLAN] AGENT idle              x"},
-		{36, "idle", "latched", "rex/plans/scan.rex.json", "[PLAN] AGENT idle               scan"},
-		{37, "idle", "latched", "rex/plans/cuj/sendoff-demo.rex.json", "[PLAN] AGENT idle    cuj/sendoff-demo"},
-		{32, "idle", "", "rex/plans/x.rex.json", "[PLAN] AGENT idle     x.rex.json"},
-		{38, "running", "", "", "[PLAN] AGENT running"},
+	a.settle(80, 24)
+	if got := textOf(a.frameRows().Rows[0], 80); got != "  Send-off demo    1/3   plan · agent" {
+		t.Fatalf("row 0 at 80x24: %q", got)
 	}
-	for _, tc := range cases {
-		if got := row(tc.width, tc.state, tc.follow, tc.path); got != tc.want {
-			t.Errorf("%d %s %s:\n got %q\nwant %q", tc.width, tc.follow, tc.path, got, tc.want)
-		}
+	a.settle(120, 32)
+	a.latch()
+	if got := textOf(a.frameRows().Rows[0], 120); got != "  Send-off demo"+strings.Repeat(" ", 77-15-23)+"1/3 done   plan · agent" {
+		t.Fatalf("row 0 latched: %q", got)
 	}
-	// From 38 cells the word always shows; a name under 5 cells lets it in
-	// a little sooner.
-	for w := 24; w <= 130; w++ {
-		for path, from := range map[string]int{"rex/plans/x.rex.json": 34, "rex/plans/scan.rex.json": 37, "rex/plans/cuj/sendoff-demo.rex.json": 38} {
-			f := strings.Contains(row(w, "idle", "following", path), " following")
-			l := strings.Contains(row(w, "idle", "latched", path), " latched")
-			if f != l || f != (w >= from) {
-				t.Errorf("%d cells, %s: following %v, latched %v", w, path, f, l)
-			}
-		}
-	}
-	// At 80 columns the word shows whatever the turn state and the name.
-	w := layoutFor(80, 24).textW
-	for _, state := range []string{"idle", "thinking", "running", "ask", "error"} {
-		for _, follow := range []string{"following", "latched"} {
-			for _, path := range []string{"rex/plans/cuj/sendoff-demo.rex.json", "rex/plans/a-rather-long/plan_attach_and_more.rex.json"} {
-				if got := paintLine(headerRow(w, PaneChat, "", state, follow, path), w, false); !strings.Contains(got, state+"  ") || !strings.Contains(got, " "+follow+" ") || cellLen(got) != w {
-					t.Errorf("80 columns, %s %s %s: %q", state, follow, path, got)
-				}
-			}
-		}
-	}
-	a := testApp(t)
-	if a.followWord() != "" || strings.Contains(a.frameRows().Rows[0], "following") {
+	b := testApp(t)
+	if b.followWord() != "" || strings.Contains(b.frameRows().Rows[0], "following") {
 		t.Fatal("no plan, no word")
-	}
-	b, _, _ := openDemo(t, demoPlan, 80, 24)
-	if row := b.frameRows().Rows[0]; !strings.Contains(row, "idle     latched cuj/demo") {
-		t.Fatalf("row 0 at 80x24: %q", row)
 	}
 }
 
@@ -714,12 +695,12 @@ func TestOldVerbsDoNothingWithoutAPlan(t *testing.T) {
 		if tab {
 			press(a, "\t")
 		}
-		before := a.frame()
-		for _, word := range []string{"d", "s", "p", "b", "done", "sendoff", "pin load", "brief", "x"} {
+		before, row1 := a.frame(), a.statusLine().Text
+		for _, word := range []string{"d", "s", "p", "b", "o", "done", "sendoff", "pin load", "brief", "x"} {
 			typeText(a, word)
 			press(a, "\r", PastePrefix+word)
 		}
-		if a.frame() != before || a.draft != "" || a.statusLine().Text != "" || len(a.log) != 0 {
+		if a.frame() != before || a.draft != "" || a.statusLine().Text != row1 || a.notice().Text != "" || len(a.log) != 0 {
 			t.Fatalf("tape %v: something changed\n%s", tab, a.frame())
 		}
 		if _, err := os.Stat(a.statePath); !os.IsNotExist(err) {
@@ -728,10 +709,11 @@ func TestOldVerbsDoNothingWithoutAPlan(t *testing.T) {
 	}
 }
 
-// docs/ux.md §4: the plan file's error, a toast and hard drift outrank a
-// new-plan offer on row 1, soft drift sits under it, and enter switches only
-// while row 1 shows the offer; under anything else it does what it did.
-func TestRowOneOutranksTheOffer(t *testing.T) {
+// docs/ux.md §4: the plan file's error and a toast outrank a new-plan
+// offer on the notice row, hard drift sits under it, and o opens it only
+// while the notice shows it; under anything else o does nothing, and
+// enter never takes it.
+func TestNoticeRanksTheOffer(t *testing.T) {
 	// Any drift comes in the batch that brings the offer, which is judged
 	// before the offer is up (§11); after it, the agent's edits are the
 	// offered plan's and are not judged (§9a).
@@ -747,14 +729,15 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 		c.t = c.t.Add(toastFor)
 		return a, c, path, next
 	}
+	const offer = "Your agent wrote Send-off demo (cuj/next) · o opens it"
 	hidden := func(t *testing.T, a *app, path, want string) {
 		t.Helper()
-		if got := a.statusLine().Text; !strings.HasPrefix(got, want) || strings.Contains(a.frame(), "enter switch") {
-			t.Fatalf("row 1 %q, want %q\n%s", got, want, a.frame())
+		if got := a.notice().Text; !strings.HasPrefix(got, want) || strings.Contains(a.frame(), "o opens it") {
+			t.Fatalf("notice %q, want %q\n%s", got, want, a.frame())
 		}
-		press(a, "\r") // the outline's own enter
+		press(a, "o", "\r") // o does nothing here; enter is the outline's own
 		if a.plans.Current != path || a.at != atTaskDetail || a.offer == "" {
-			t.Fatalf("enter switched to an offer row 1 didn't show: current=%q at=%d", a.plans.Current, a.at)
+			t.Fatalf("an offer the notice didn't show was taken: current=%q at=%d", a.plans.Current, a.at)
 		}
 		press(a, "esc")
 	}
@@ -765,25 +748,28 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 	later(a, c)
 	hidden(t, a, path, "plan updated · load-outline → skipped")
 	c.t = c.t.Add(toastFor)
-	if got := a.statusLine().Text; got != "new plan cuj/next · enter switch" {
+	if got := a.notice().Text; got != offer {
 		t.Fatalf("the offer is back once the toast is gone: %q", got)
 	}
-	if press(a, "\r"); a.plans.Current != next || !a.follow {
+	if press(a, "o"); a.plans.Current != next || !a.follow {
 		t.Fatalf("current=%q follow=%v", a.plans.Current, a.follow)
 	}
 
-	// Hard drift: it stays until resolved, and so does enter's usual meaning.
-	a, _, path, _ = offered(t, "README.md")
-	hidden(t, a, path, "drift · hard: README.md")
-
-	// Soft drift sits under the offer, and shows once it is settled.
-	a, _, _, _ = offered(t, "internal/tui/live.go")
-	if s, ok := a.driftStatus(plan.Soft); !ok || a.statusLine().Text != "new plan cuj/next · enter switch" {
-		t.Fatalf("soft drift %q (%v) is under the offer: %q", s.Text, ok, a.statusLine().Text)
+	// Hard drift sits under the offer, and shows once it is settled.
+	a, _, _, _ = offered(t, "README.md")
+	if s, ok := a.driftStatus(); !ok || a.notice().Text != offer {
+		t.Fatalf("hard drift %q (%v) is under the offer: %q", s.Text, ok, a.notice().Text)
 	}
 	press(a, "esc", "\r") // the open plan settles the offer
-	if got := a.statusLine().Text; a.offer != "" || !strings.HasPrefix(got, "drift · soft: internal/tui/live.go") {
-		t.Fatalf("row 1 %q", got)
+	if got := a.notice().Text; a.offer != "" || got != "off pin · README.md · outside card-highlight files" {
+		t.Fatalf("notice %q", got)
+	}
+
+	// Soft drift is AGENT's only.
+	a, _, _, _ = offered(t, "internal/tui/live.go")
+	press(a, "esc", "\r")
+	if got := a.notice().Text; a.offer != "" || got != "" || a.drift.soft == nil {
+		t.Fatalf("soft drift on the notice row: %q", got)
 	}
 
 	// The plan file can't be read.
@@ -791,7 +777,7 @@ func TestRowOneOutranksTheOffer(t *testing.T) {
 	os.WriteFile(path, []byte("{"), 0o644)
 	later(a, c)
 	later(a, c)
-	hidden(t, a, path, "plan JSON error")
+	hidden(t, a, path, "✗ plan JSON error")
 }
 
 // docs/ux.md §11: Rex has no actions on a plan, so nothing on the outline
@@ -835,7 +821,7 @@ func TestOpenRowKeepsFollowing(t *testing.T) {
 		t.Fatal("setup: on OPEN")
 	}
 	press(a, "\r")
-	if a.plans.Current != one || a.at != atOutline || !a.follow || !strings.Contains(a.frame(), "following rex/plans/one.rex.json") {
+	if a.plans.Current != one || a.at != atOutline || !a.follow || !strings.Contains(textOf(a.frameRows().Rows[0], a.columns), " · following") {
 		t.Fatalf("follow=%v\n%s", a.follow, a.frame())
 	}
 	two := writePlan(t, repo, "two.rex.json", demoPlan)
@@ -865,7 +851,7 @@ func TestKeysActBeforeTheEventsReadWithThem(t *testing.T) {
 	}
 
 	// Latched: enter read with the write that makes the offer opens the task
-	// you were on; the offer waits on row 1.
+	// you were on; the offer waits on the notice row.
 	b, _, path := openDemo(t, demoPlan, 120, 32)
 	next := writePlan(t, b.plans.Repo, "cuj/next.rex.json", demoPlan)
 	if b.step([]string{"\r"}, []watch.Event{wrote(b.plans.Repo, next)}); b.plans.Current != path || b.at != atTaskDetail || b.offer != next {
@@ -878,9 +864,9 @@ func TestKeysActBeforeTheEventsReadWithThem(t *testing.T) {
 	}
 }
 
-// A held attach says so on row 1, and on an 80-column terminal keeps a
-// clipped name. Letters on the Wait screen or the tape hold nothing: there
-// is no composer there (docs/ux.md §2).
+// A held attach says so on the notice row, and on an 80-column terminal
+// keeps a clipped name (docs/ux.md §4). Letters on the Wait screen or the
+// tape hold nothing: there is no composer there (docs/ux.md §2).
 func TestAHeldAttachShowsOnRowOne(t *testing.T) {
 	repo := attachRepo(t)
 	writePlan(t, repo, "one.rex.json", demoPlan)
@@ -889,16 +875,16 @@ func TestAHeldAttachShowsOnRowOne(t *testing.T) {
 	typeText(a, "pi")
 	two := writePlan(t, repo, "team/a-much-longer-plan-name.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(repo, two)})
-	if got := a.statusLine().Text; got != "new plan team/a-much-longer-plan-name · opens when the line is clear" {
-		t.Fatalf("row 1 %q", got)
+	if got := a.notice().Text; got != "Your agent wrote Send-off demo (team/a-much-longer-plan-name) · opens when the line is clear" {
+		t.Fatalf("notice %q", got)
 	}
 	a.settle(80, 24)
-	if row := strings.TrimSpace(a.frameRows().Rows[1]); !strings.HasPrefix(row, "new plan …") || !strings.HasSuffix(row, "-name · waiting") {
-		t.Fatalf("row 1 at 80 columns: %q", row)
+	if row := textOf(a.frameRows().Rows[22], 80); !strings.HasPrefix(row, "Your agent wrote …") || !strings.HasSuffix(row, "-name · waiting") {
+		t.Fatalf("the notice row at 80 columns: %q", row)
 	}
 	press(a, "\x15")
-	if a.plans.Current != two || strings.HasPrefix(a.statusLine().Text, "new plan") {
-		t.Fatalf("current=%q row 1 %q", a.plans.Current, a.statusLine().Text)
+	if a.plans.Current != two || strings.HasPrefix(a.notice().Text, "Your agent wrote") {
+		t.Fatalf("current=%q notice %q", a.plans.Current, a.notice().Text)
 	}
 
 	for _, tape := range []bool{false, true} {
@@ -1034,7 +1020,7 @@ func TestAnotherSpellingIsTheSamePlan(t *testing.T) {
 		t.Fatalf("opened again: current=%q sel %q -> %q", b.plans.Current, sel, b.outline.sel)
 	}
 
-	// An offer that has become the open plan: enter only follows again.
+	// An offer that has become the open plan: o only follows again.
 	c, _, path := openDemo(t, demoPlan, 120, 32)
 	next := writePlan(t, c.plans.Repo, "cuj/next.rex.json", demoPlan)
 	c.ingest([]watch.Event{wrote(c.plans.Repo, next)})
@@ -1044,7 +1030,7 @@ func TestAnotherSpellingIsTheSamePlan(t *testing.T) {
 	}
 	press(c, "down")
 	sel = c.outline.sel
-	if press(c, "\r"); c.plans.Current != path || !c.follow || c.offer != "" || c.outline.sel != sel || c.at != atOutline {
+	if press(c, "o"); c.plans.Current != path || !c.follow || c.offer != "" || c.outline.sel != sel || c.at != atOutline {
 		t.Fatalf("current=%q follow=%v sel %q -> %q at=%d", c.plans.Current, c.follow, sel, c.outline.sel, c.at)
 	}
 
@@ -1103,7 +1089,8 @@ func TestOpenPlanIsListedOnceByFile(t *testing.T) {
 				n++
 			}
 		}
-		if n != 1 || strings.Contains(a.frame(), "open ·") {
+		rows := a.frameRows().Rows
+		if n != 1 || strings.Contains(strings.Join(rows[:len(rows)-1], "\n"), "open ·") { // not the footer's "enter open · …"
 			t.Fatalf("listed %d times\n%s", n, a.frame())
 		}
 	}
@@ -1128,7 +1115,7 @@ func TestOpenPlanIsListedOnceByFile(t *testing.T) {
 		h.plans.walk = planWalk{}
 		press(h, "esc")
 		once(t, h, hdemo, "cuj/sendoff-demo.rex.json")
-		if meta := libraryPage(h.plans).Meta; meta != "1 plan" {
+		if meta := spanText(libraryPage(h.plans).Short); meta != "1 plan" {
 			t.Fatalf("a hard link counted twice: %q", meta)
 		}
 	}
@@ -1141,7 +1128,7 @@ func TestOpenPlanIsListedOnceByFile(t *testing.T) {
 	b.plans.walk = planWalk{}
 	press(b, "esc")
 	once(t, b, demo, "cuj/sendoff-demo.rex.json")
-	if title := strings.TrimSpace(textOf(b.frameRows().Rows[2], b.columns)); !strings.HasSuffix(title, " 1 plan") {
+	if title := textOf(b.frameRows().Rows[0], b.columns); !strings.HasSuffix(title, " · 1 plan   plan · agent") {
 		t.Fatalf("one plan, counted once: %q", title)
 	}
 	// Latched on the link, the file keeps the link's name, and a find
@@ -1152,15 +1139,16 @@ func TestOpenPlanIsListedOnceByFile(t *testing.T) {
 }
 
 // With plans off, the Wait screen says so and how to turn them on, and
-// sends you nowhere else; outside git it names the folder plans go to.
+// sends you nowhere else; outside git it names the folder plans go to. The
+// notice is row 1 (docs/ux.md §4), the rest the body.
 func TestWaitCopyFollowsWherePlansGo(t *testing.T) {
 	text := func(lines []LogLine) string { return viewText(lines) }
 	a := testApp(t)
 	os.WriteFile(filepath.Join(a.plans.Repo, "rex"), []byte("x"), 0o644)
 	a.plans.Rebuild()
 	off := text(a.waitBody(300, 40))
-	if !strings.Contains(off, rexFileNotice) || !strings.Contains(off, "Move it to turn plans on") {
-		t.Fatalf("plans off:\n%s", off)
+	if a.context().Text != rexFileNotice || strings.Contains(off, rexFileNotice) || !strings.Contains(off, "Move it to turn plans on") {
+		t.Fatalf("plans off: row 1 %q\n%s", a.context().Text, off)
 	}
 	for _, never := range []string{"tell your agent", "Rex opens", "install-skill"} {
 		if strings.Contains(off, never) {
@@ -1173,8 +1161,8 @@ func TestWaitCopyFollowsWherePlansGo(t *testing.T) {
 	out := t.TempDir() // not a git repo
 	b := newApp("yellow", false, "idle", NewPlanBrowser(out), 120, 32)
 	body := text(b.waitBody(300, 40))
-	if !strings.Contains(body, "it writes rex/plans/<name>.rex.json\n") || !strings.Contains(body, "not in a git repo · plans go to "+homePath(PlansDir(out))) {
-		t.Fatalf("outside git:\n%s", body)
+	if !strings.Contains(body, "it writes rex/plans/<name>.rex.json\n") || b.context().Text != "not in a git repo · plans go to "+homePath(PlansDir(out)) {
+		t.Fatalf("outside git: row 1 %q\n%s", b.context().Text, body)
 	}
 	if body := text(b.waitBody(38, 40)); strings.Count(body, homePath(PlansDir(out))) > 0 || !strings.Contains(body, "     rex/plans/<name>.rex.json\n") {
 		t.Fatalf("outside git at 38 cells, the folder is only in the notice:\n%s", body)
@@ -1309,9 +1297,9 @@ func TestWaitHintGoesOnceTheSkillIsInstalled(t *testing.T) {
 }
 
 // docs/ux.md §11: start lands on a plan, so an upgrader with an older
-// Rex's skill never sees the Wait screen's hint. Row 1 says so once, over
-// the Library's notice, and Help keeps a skill row; a current skill, or
-// none, puts nothing on row 1.
+// Rex's skill never sees the Wait screen's hint. The notice row says so
+// once, as a toast over the Library's notice (row 1 there, docs/ux.md §4),
+// and Help keeps a skill row; a current skill, or none, says nothing.
 func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 	repo := attachRepo(t)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
@@ -1334,13 +1322,13 @@ func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 	}
 	a := start()
 	if s := a.statusLine(); s.Text != "rex-plan skill is out of date · rex ingest --install-skill" || s.Kind != "text" {
-		t.Fatalf("row 1 on the first frame, in text: %q %q", s.Text, s.Kind)
+		t.Fatalf("the notice on the first frame, in text: %q %q", s.Text, s.Kind)
 	}
-	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "rex-plan skill is out of date · rex ingest --install-skill            1/3 done" {
-		t.Fatalf("drawn: %q", row)
+	if row := textOf(a.frameRows().Rows[30], a.columns); row != "rex-plan skill is out of date · rex ingest --install-skill" {
+		t.Fatalf("drawn on the notice row: %q", row)
 	}
 	a.settle(80, 24)
-	if row := strings.TrimSpace(a.frameRows().Rows[1]); row != "rex-plan skill out of date · ? help" {
+	if row := textOf(a.frameRows().Rows[22], 80); row != "rex-plan skill out of date · ? help" {
 		t.Fatalf("38 cells: %q", row)
 	}
 	press(a, "?")
@@ -1348,17 +1336,17 @@ func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 		t.Fatalf("Help keeps the skill row\n%s", help)
 	}
 
-	// An old rex-plans/ folder's notice too: the skill toast wins row 1, and
-	// the Library still says the notice.
+	// An old rex-plans/ folder's notice too: the skill toast wins the
+	// notice row, and the Library's row 1 still says the notice.
 	os.MkdirAll(filepath.Join(repo, "rex-plans"), 0o755)
 	os.WriteFile(filepath.Join(repo, "rex-plans", "old.rex.json"), []byte(demoPlan), 0o644)
 	a = start()
 	if got := a.statusLine().Text; got != "rex-plan skill is out of date · rex ingest --install-skill" {
-		t.Fatalf("row 1 with a notice too: %q", got)
+		t.Fatalf("the notice with a Library notice too: %q", got)
 	}
 	press(a, "esc")
-	if a.at != atLibrary || !strings.Contains(viewText(BuildPlanView(a.plans, 78)), "rex-plans/ has 1 old plan(s)") {
-		t.Fatalf("the Library keeps the notice: at=%d\n%s", a.at, viewText(BuildPlanView(a.plans, 78)))
+	if a.at != atLibrary || !strings.Contains(a.context().Text, "rex-plans/ has 1 old plan(s)") {
+		t.Fatalf("the Library keeps the notice: at=%d row 1 %q", a.at, a.context().Text)
 	}
 	os.RemoveAll(filepath.Join(repo, "rex-plans"))
 
@@ -1418,8 +1406,10 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(body(38, 17), "\n\n") || strings.Contains(body(38, 16), "\n\n") {
-		t.Errorf("the blank rows go first:\n%s", body(38, 16))
+	// Row 2 is the blank row under the title: the body starts with the
+	// headline.
+	if !strings.Contains(body(38, 16), "\n\n") || strings.Contains(body(38, 15), "\n\n") || strings.HasPrefix(body(38, 40), "\n") {
+		t.Errorf("the blank rows go first:\n%s", body(38, 15))
 	}
 	// Narrow, the command wraps whole rather than clipping.
 	if got := body(24, 40); !strings.Contains(got, "  --install-skill\n") || strings.Contains(got, "…") {
@@ -1439,7 +1429,7 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 			t.Errorf("copy %d at 38×3:\n%s", c, got)
 		}
 		a.settle(80, 7)
-		if c == skill.Stale && !strings.Contains(strings.Join(a.frameRows().Rows, "\n"), "update: rex ingest --install-skill") {
+		if c == skill.Stale && !strings.Contains(strings.Join(a.frameRows().Rows, "\n"), "rex ingest --install-skill") {
 			t.Errorf("80×7 shows the hint\n%s", strings.Join(a.frameRows().Rows, "\n"))
 		}
 	}
@@ -1449,12 +1439,12 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 		t.Errorf("80×7 shows the hint\n%s", strings.Join(a.frameRows().Rows, "\n"))
 	}
 
-	a.settle(24, 6) // text only: 2 body rows, and a headline of 3
+	a.settle(24, 6) // text only: 3 body rows under rows 0 and 1, and a headline of 3
 	l := a.layout()
 	all := a.waitBody(l.textW, l.bodyH)
 	seen := map[string]bool{}
 	look := func() {
-		for _, row := range a.frameRows().Rows[3 : 3+l.bodyH] {
+		for _, row := range a.frameRows().Rows[2 : 2+l.bodyH] {
 			seen[strings.TrimSpace(row)] = true
 		}
 	}
@@ -1472,7 +1462,7 @@ func TestTheWaitScreenScrolls(t *testing.T) {
 		}
 	}
 	press(a, "home")
-	if a.outline.scroll != 0 || !strings.Contains(a.frameRows().Rows[3], "no plan") {
+	if a.outline.scroll != 0 || !strings.Contains(a.frameRows().Rows[2], "no plan") {
 		t.Fatal("Home is the top")
 	}
 	press(a, "end")
@@ -1527,38 +1517,44 @@ func TestSamePlanGoesByTheFile(t *testing.T) {
 	}
 }
 
-// docs/ux.md §4: row 1's offer keeps a clipped name while 5 cells are
-// free for it, then drops its tail, and only then the name.
+// docs/ux.md §4: the offer's notice drops the plan's title first, then
+// clips its path from the left while 5 cells are free for it, then drops
+// its tail's long form, and only then its lead.
 func TestTheOfferKeepsAClippedName(t *testing.T) {
+	named := wroteAs{title: "Send-off demo", path: "cuj/sendoff-demo"}
+	bare := wroteAs{path: "cuj/sendoff-demo"}
+	const o = " · o opens it"
 	cases := []struct {
-		width                   int
-		name, tail, short, want string
+		width       int
+		name        wroteAs
+		tail, short string
+		want        string
 	}{
-		{40, "cuj/sendoff-demo", " · enter switch", "", "new plan cuj/sendoff-demo · enter switch"},
-		{30, "cuj/sendoff-demo", " · enter switch", "", "new plan …-demo · enter switch"},
-		{25, "cuj/sendoff-demo", " · enter switch", "", "new plan cuj/sendoff-demo"},
-		{20, "cuj/sendoff-demo", " · enter switch", "", "new plan …ndoff-demo"},
-		{13, "cuj/sendoff-demo", " · enter switch", "", "new plan"},
-		{38, "a-much-longer-plan-name", " · opens when the line is clear", " · waiting", "new plan …h-longer-plan-name · waiting"},
-		{19, "two", " · opens when the prompt closes", " · waiting", "new plan two"},
-		{14, "x", "", "", "new plan x"},
+		{78, named, o, o, "Your agent wrote Send-off demo (cuj/sendoff-demo) · o opens it"},
+		{50, named, o, o, "Your agent wrote cuj/sendoff-demo · o opens it"},
+		{38, named, o, o, "Your agent wrote …ff-demo · o opens it"},
+		{34, named, o, o, "new plan …endoff-demo · o opens it"},
+		{24, bare, o, o, "new plan · o opens it"},
+		{38, bare, " · opens when the line is clear", " · waiting", "Your agent wrote …ndoff-demo · waiting"},
+		{20, bare, " · opens when the prompt closes", " · waiting", "new plan · waiting"},
+		{30, wroteAs{path: "x"}, "", "", "Your agent wrote x"},
 	}
 	for _, tc := range cases {
-		if got := fitNewPlan(tc.name, tc.tail, tc.short, tc.width); got != tc.want || cellLen(got) > tc.width {
-			t.Errorf("%d %q: got %q, want %q", tc.width, tc.name, got, tc.want)
+		if got := fitWrote(tc.name, tc.tail, tc.short, tc.width); got != tc.want || cellLen(got) > tc.width {
+			t.Errorf("%d %+v: got %q, want %q", tc.width, tc.name, got, tc.want)
 		}
 	}
 	a, _, _ := openDemo(t, demoPlan, 80, 24)
 	next := writePlan(t, a.plans.Repo, "cuj/a-much-longer-plan-name-from-the-agent.rex.json", demoPlan)
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
 	a.toast = StatusLine{}
-	if row := strings.TrimSpace(a.frameRows().Rows[1]); !strings.HasPrefix(row, "new plan …") || !strings.HasSuffix(row, "he-agent · enter switch") {
-		t.Fatalf("row 1 at 80 columns: %q", row)
+	if row := strings.TrimSpace(textOf(a.frameRows().Rows[22], 80)); !strings.HasPrefix(row, "Your agent wrote …") || !strings.HasSuffix(row, "-agent · o opens it") {
+		t.Fatalf("the notice at 80 columns: %q", row)
 	}
 }
 
 // Latched in the plan list, a plan the agent writes shows up in it at
-// once, so row 1 never names a plan the list can't open.
+// once, so the notice row never names a plan the list can't open.
 func TestTheListShowsAPlanTheAgentWrote(t *testing.T) {
 	a, _, _ := openDemo(t, demoPlan, 120, 32)
 	press(a, "esc")
@@ -1566,5 +1562,35 @@ func TestTheListShowsAPlanTheAgentWrote(t *testing.T) {
 	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
 	if a.plans.Rows[a.plans.Cursor].Group != groupOpen || !strings.Contains(viewText(BuildPlanView(a.plans, 78)), "cuj/zzz-brand-new ") {
 		t.Fatalf("cursor on %v\n%s", a.plans.Rows[a.plans.Cursor].Kind, viewText(BuildPlanView(a.plans, 78)))
+	}
+}
+
+// docs/ux.md §3: on the plan list's Home, with an empty draft, o opens the
+// plan the notice offers; after other text, and in Browse, it is a letter.
+func TestOOpensTheOfferFromThePlanList(t *testing.T) {
+	a, _, path := openDemo(t, demoPlan, 120, 32)
+	next := writePlan(t, a.plans.Repo, "cuj/next.rex.json", demoPlan)
+	a.ingest([]watch.Event{wrote(a.plans.Repo, next)})
+	press(a, "esc")
+	typeText(a, "n")
+	if a.draft != "n" || a.notice().Text != "Your agent wrote Send-off demo (cuj/next)" {
+		t.Fatalf("with text, o would be a letter, and the notice doesn't name it: %q %q", a.draft, a.notice().Text)
+	}
+	if typeText(a, "o"); a.draft != "no" || a.plans.Current != path {
+		t.Fatalf("o after text is text: %q %q", a.draft, a.plans.Current)
+	}
+	press(a, "\x15")
+	a.plans.Screen, a.plans.Dir = ScreenBrowse, filepath.Join(a.plans.Root, "cuj")
+	a.plans.Rebuild()
+	if typeText(a, "o"); a.draft != "o" || a.plans.Current != path {
+		t.Fatalf("in Browse o filters: %q %q", a.draft, a.plans.Current)
+	}
+	press(a, "\x15", "esc")
+	if a.plans.Screen != ScreenHome || a.notice().Text != "Your agent wrote Send-off demo (cuj/next) · o opens it" {
+		t.Fatalf("back on Home with an empty draft: %d %q", a.plans.Screen, a.notice().Text)
+	}
+	press(a, "o")
+	if a.plans.Current != next || !a.follow || a.at != atOutline || a.draft != "" {
+		t.Fatalf("o opens it, following: %q follow=%v at=%d draft=%q", a.plans.Current, a.follow, a.at, a.draft)
 	}
 }

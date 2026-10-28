@@ -1,0 +1,58 @@
+80×24
+Agent                                              no events yet   plan · agent
+Your agent's prompts, steps and replies show here.
+
+  Hooks
+    claude      wired · sends the pin with each prompt
+    codex       not found
+    cursor      wired · rerun rex ingest --install cursor
+    opencode    not found
+
+  Skill
+    rex-plan    missing · rex ingest --install-skill
+
+  Feed
+    events      ~/.rex/session.jsonl · none yet
+
+
+
+
+
+
+
+
+
+tab plan · ? help
+120×32
+Agent                                            no events yet   plan · agent
+Your agent's prompts, steps and replies show here.
+
+  Hooks
+    claude      wired · sends the pin with each prompt
+    codex       not found
+    cursor      wired · rerun rex ingest --install cursor
+    opencode    not found
+
+  Skill
+    rex-plan    missing · rex ingest --install-skill
+
+  Feed
+    events      ~/.rex/session.jsonl · none yet
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+tab plan · ? help

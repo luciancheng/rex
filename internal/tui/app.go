@@ -76,7 +76,7 @@ type app struct {
 	now        func() time.Time
 	statePath  string
 	drift      driftState    // drift from the current pin, shown only
-	driftGen   int           // numbers each pin stint's drift block
+	lastRow    rowID         // the last live event marked with its place in the stream
 	driftQueue []watch.Event // live events to judge once their batch is on AGENT
 	skill      skillSeen     // whether an agent can learn plans, for Plans' first run
 
@@ -231,7 +231,7 @@ func (a *app) composeOptions() ComposeOptions {
 
 // helpPages names the page Help was opened over, on Help's row 1.
 var helpPages = map[string]string{
-	"agent": "Agent", "about": "About", "task": "this task", "tasks": "the task list",
+	"agent": "Agent", "no events": "Agent", "about": "About", "task": "this task", "tasks": "the task list",
 	"no tasks": "a plan with no tasks", "can't read": "a plan Rex can't read",
 	"open a plan": "Open a plan", "new plan": "a new plan", "plans": "Plans",
 }
@@ -662,14 +662,11 @@ func (a *app) logView(width int) []LogLine {
 	return a.view.lines
 }
 
-// viewOpt is how AGENT lays out now (docs/ux.md §10): a thought run that
-// is the newest block is live while the turn is in flight, and blocks get
-// blank rows from blankFrom rows. Live never looks at the scroll or
-// at what the turn last did: scrolling and a hidden tool call (a file
-// look) leave the layout alone, so one ↑ is one row and nothing bounces.
-// A drawn block or the turn's end settles the run.
+// viewOpt is how AGENT lays out now (docs/ux.md §10): blocks get blank
+// rows from blankFrom rows. Nothing else changes the layout, the turn and
+// the scroll included, so one ↑ is one row and nothing bounces.
 func (a *app) viewOpt() viewOpt {
-	return viewOpt{live: a.turn == TurnThinking || a.turn == TurnRunning, tall: a.lines >= blankFrom}
+	return viewOpt{tall: a.lines >= blankFrom}
 }
 
 func (a *app) logLines() int {
@@ -682,8 +679,8 @@ func (a *app) logLines() int {
 
 // ingest applies hook events: turn state for every event, AGENT for the
 // ones worth drawing. A scrolled-up view keeps showing the same lines while
-// new ones arrive below, a run under it settles, or MaxLog trims the oldest
-// above it (docs/ux.md §10).
+// new ones arrive below or MaxLog trims the oldest above it (docs/ux.md
+// §10).
 func (a *app) ingest(fresh []watch.Event) (changed bool) {
 	for _, ev := range fresh {
 		a.health.saw(ev)
@@ -701,8 +698,8 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 		// A hidden event still changes the count the empty AGENT tab shows.
 		return a.hidden != hidden && len(a.log) == 0
 	}
-	// The layout as it was before the batch: a turn that ends settles the
-	// live run, so both the rows and a trim are measured on it.
+	// The layout as it was before the batch: both the rows and a trim are
+	// measured on it.
 	opt, before := a.viewOpt(), a.logLines()
 	prevTurn := a.turn
 	n := len(a.log)
@@ -734,10 +731,10 @@ func (a *app) ingest(fresh []watch.Event) (changed bool) {
 		// from the bottom never moves for.
 		before -= trimmedRows(old, dropped, PaneTextWidth(a.columns, a.lines), opt)
 	}
-	if len(added) > 0 || a.turn != prevTurn {
-		a.below(before) // a turn's end draws nothing but can settle a run
+	if len(added) > 0 {
+		a.below(before)
 	}
-	drifted := a.applyDrift() // after the batch, so its block sits below what it judges
+	drifted := a.applyDrift() // after the batch, so what it judges is on AGENT to tag
 	if len(added) > 0 || a.turn != prevTurn {
 		a.syncTurn()
 		return true
@@ -809,9 +806,9 @@ var feedKinds = map[string]bool{
 	"question": true, "result": true, "idle": true, "error": true,
 }
 
-// fromFeed drops feed lines that claim to be Rex's own blocks (the
-// "before rex started" rule, a plan or drift line): those are made in this
-// process only.
+// fromFeed drops feed lines that claim to be Rex's own lines (before Rex
+// started, a plan line, an edit drawn for its drift): those are made in
+// this process only.
 func fromFeed(events []watch.Event) []watch.Event {
 	kept := events[:0:0]
 	for _, ev := range events {
@@ -845,8 +842,9 @@ func (a *app) own(events []watch.Event, live bool) []watch.Event {
 			continue
 		}
 		if live {
-			a.checkDrift(ev) // history from before Rex started never counts
-			a.sawWrite(ev)   // nor opens a plan; raw, since quiet results never reach AGENT
+			ev = a.marked(ev) // its place in the stream, for its drift's tag
+			a.checkDrift(ev)  // history from before Rex started never counts
+			a.sawWrite(ev)    // nor opens a plan; raw, since quiet results never reach AGENT
 		}
 		out = append(out, a.scope.Display(ev))
 	}
@@ -856,7 +854,7 @@ func (a *app) own(events []watch.Event, live bool) []watch.Event {
 // warmStart shows what this repo's agent was doing just before Rex
 // started (docs/ux.md §10): the turn is restored only if the newest event
 // is under two minutes old, and the last few events are painted under a
-// "before rex started" rule.
+// muted "before Rex started" line.
 func (a *app) warmStart(recent []watch.Event, now time.Time) {
 	recent = a.own(fromFeed(recent), false)
 	if len(recent) == 0 {
@@ -882,7 +880,7 @@ func (a *app) warmStart(recent []watch.Event, now time.Time) {
 	if len(shown) == 0 {
 		return
 	}
-	a.log = append([]watch.Event{watch.NewEvent("rex", "before", "before rex started", nil)}, shown...)
+	a.log = append([]watch.Event{watch.NewEvent("rex", "before", "before Rex started", nil)}, shown...)
 	a.logRev++
 }
 
@@ -1447,7 +1445,8 @@ func (a *app) overlayKey(key string) bool {
 }
 
 // helpBody is the Help overlay's lines at width: the page it was opened
-// over first, then the feed's health (docs/ux.md §13).
+// over first, then the feed's health and what Rex never does (docs/ux.md
+// §13).
 func (a *app) helpBody(width int) []LogLine {
 	tall := a.lines >= 16
 	help := helpLines(width, a.helpOver[a.pane], tall)
@@ -1455,12 +1454,15 @@ func (a *app) helpBody(width int) []LogLine {
 		help = append(help, LogLine{Kind: "gap"})
 	}
 	a.health.refresh(a.now())
-	return append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now())...)
+	help = append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), false, tall)...)
+	return append(help, rexNever(width, tall)...)
 }
 
-// pageKind names the page Help opens over, for its THIS PAGE section.
+// pageKind names the page Help opens over, for its This page section.
 func (a *app) pageKind() string {
 	switch {
+	case a.pane == PaneChat && len(a.log) == 0:
+		return "no events" // the empty tab is a page: nothing folds, home and end are its ends
 	case a.pane == PaneChat:
 		return "agent"
 	case a.at == atLibrary || a.doc == nil:

@@ -59,7 +59,7 @@ The task list, task details, About, AGENT and Help have **no text field**; their
 
 **`?` is a single key everywhere.** On a screen without a text field it opens Help at once, no enter. On Plans, a `?` typed while the field is **empty** (or closed) opens Help at once too (nobody finds a plan named "?"); a `?` after other text is just text. Inside Help it does nothing. So every footer can say `? help`.
 
-Rex's own lines on AGENT (`rex › plan · …`, `rex › drift · …`, `── before rex started ──`, §10) exist only in Rex's memory. They are never written to the feed, never reach the agent, and never start or end a turn.
+Rex's own lines on AGENT (`rex · …`, `before Rex started`, and the step Rex draws for an edit off the pin that AGENT has no step for, §10) exist only in Rex's memory. They are never written to the feed, never reach the agent, and never start or end a turn.
 
 ### Editing (Plans' field only)
 
@@ -129,7 +129,7 @@ Every screen has the same frame: where you are on row 0, what the page is on row
 |---|---|---|---|
 | 0 | **Title row**: the breadcrumb, the page's meta, the places' label | ✓ | ✓ |
 | 1 | **Context row**: what the page is; on the task list, the pin line | ✓ | ✓, but a notice takes it while one shows |
-| 2 | blank; while the open plan's list or page is scrolled, `↑ N more` at its right end (§6) | ✓ | – |
+| 2 | blank; while the open plan's list or page is scrolled, `↑ N more` at its right end (§6); while AGENT's older rows are cut off the top, `↑ N earlier` there (§10) | ✓ | – |
 | 3… | Body; Plans' text field at its top while it is open (§2) | | |
 | last−1 | **Notice row**: one message, or blank | ✓ | – |
 | last | **Footer**: keys | ✓ | ✓ |
@@ -179,7 +179,7 @@ Muted, one line, saying what the page is:
 | Find | `Plans whose name or title has "send".` |
 | Open a plan | `Folders, then plans. Type to filter.` |
 | New plan | `Name it. a/b puts plan b in folder a.` |
-| AGENT | the turn: `idle`, `thinking`, `running`, `waiting on you` (`text`), `turn error` (red); on the right, while a plan is open, `pinned <id>` (the id the pin's yellow) or `nothing pinned`, which goes before the turn word would clip; the empty tab: `Rex shows your agent's work here as its hooks report it.` |
+| AGENT | the turn: `idle`, `thinking`, `running`, `waiting on you` (`text`), `turn error` (red); on the right, while a plan is open, `pinned <id>` (the id the pin's yellow) or `nothing pinned`, which goes before the turn word would clip; the empty tab: `Your agent's prompts, steps and replies show here.` |
 | Help | `Keys for the task list, then everywhere.` |
 
 ### The notice row
@@ -253,24 +253,27 @@ An offer changes no footer. Near the draft cap the count is a must-have, after w
 | `❯` | the selection, in the 2-cell gutter at column 0, on one row of the screen: a list's selected row, or a card on Plans (§11) |
 | `+` | `+ Create x`, at the end of a find on Plans: it creates the plan (§11) |
 | `→` | on New plan, where the plan will be written (§11) |
-| `›` | between the crumbs of row 0's title (§4); `rex ›` starts Rex's own lines on AGENT (§10) |
-| `·` | between the facts on one row, and between the footer's keys (§4) |
+| `›` | between the crumbs of row 0's title (§4); on AGENT, your prompt, in the gutter (§10) |
+| `·` | between the facts on one row, and between the footer's keys (§4); on AGENT, a list item's bullet in a reply or a prompt (§10) |
 | `×N` | on AGENT, a run of N thoughts folded to its latest (§10) |
-| `✗` | on AGENT, a failed step or the turn's own error (§10) |
-| `[ASK]` | on AGENT, the agent waits on you: a bold pill (§10) |
+| `✗` | on AGENT, in the gutter, a failed step or the turn's own error, red (§10) |
+| `?` | on AGENT, in the gutter, your agent asks you something, bold (§10) |
+| `$` | on AGENT, a shell command your agent ran (§10) |
+| `off pin` · `off pin?` | on AGENT, at the end of an edit's or a prompt's row, after why (muted) when it fits: hard drift in the pin's yellow, soft drift muted (§9a, §10) |
+| `↑ N earlier` | on AGENT, row 2's right end: rows cut off the top (§10) |
 
 **The five rules.**
 1. **Nothing is filled.** No background color is ever painted in the text column (no SGR 48; the mascot's half-block pixels are its own palette). The selection is `❯` in the gutter and the selected row's text in purple (`pick`); on it the marks that carry meaning keep their color: `✔` its green, the `pinned` tag its yellow, a red tag its red.
-2. **Each color has one meaning.** Yellow (`accent`) is only the pin: the agent's `active` task, which is what reaches the agent (§7a) — its id on row 1's pin line and on AGENT's row 1, its `pinned` tag on the task list (the only yellow there) and its `pinned` state on its details' row 0 — and hard drift's `off pin`, which is off the pin; plus the mascot's own palette. Purple (`pick`) is only the selection. Green (`action`) is only `✔`. Red (`error`) is only an error: a turn's error, a failed step, `can't read`, a plan's problems, read-only, `also active`, a cycle or a bad reference. Everything else is `text` or `muted`: a computed next up (never sent, so never yellow), titles, crumbs, the places' label, rules, group labels, page labels, Plans' cards and text field, commands, prompts, folders, `+ Create`, toasts and offers, the footer, a block, soft drift, an ask.
-3. **Three header levels, three devices.** H1 is row 0's title: the current crumb in the bright bold `title`, the rest muted. H2 is a bold label in capitals at column 0, a slate rule to the edge and optional muted meta (`HOW IT GOES ───`, `FEED ───`); from 16 rows a blank row goes above it; what it heads is indented 2. A page's labels (task details, About) are muted, in a 14-cell column, with their values beside them in `text` (§6); a group label on the task list, a task's title on its details and Plans' `Recent` are bold `text`, in title case, with no rule; a card's label on Plans is the bright bold `title` (§11). Titles are never yellow.
+2. **Each color has one meaning.** Yellow (`accent`) is only the pin: the agent's `active` task, which is what reaches the agent (§7a) — its id on row 1's pin line and on AGENT's row 1, its `pinned` tag on the task list (the only yellow there), its `pinned` state on its details' row 0, and the id in `with pin <id>` under each prompt on AGENT that carried it — and hard drift's `off pin` (on the notice row and as AGENT's tag), which is off the pin; plus the mascot's own palette. Purple (`pick`) is only the selection. Green (`action`) is only `✔`. Red (`error`) is only an error: a turn's error, a failed step, `can't read`, a plan's problems, read-only, `also active`, a cycle or a bad reference. Everything else is `text` or `muted`: a computed next up (never sent, so never yellow), titles, crumbs, the places' label, section and group labels, page labels, Plans' cards and text field, AGENT's steps, prompts and replies, folders, `+ Create`, toasts and offers, the footer, soft drift's `off pin?`, an ask.
+3. **Header levels.** Row 0's title is the page: the current crumb in the bright bold `title`, the rest muted. A section label is bold `text` in title case at column 2, with no colon, rule or meta: Help's sections (`This page`, `Everywhere`, `Marks`, `Your agent and the pin`, `Feed`, §13), the feed's (`Hooks`, `Skill`, `Feed`, §10), Plans' `Recent`, a group on the task list and a task's title on its details; from 16 rows a blank row goes above each of Help's and the feed's but the first, and what it heads is indented 4. A page's labels (task details, About) are muted, in a 14-cell column, with their values beside them in `text` (§6); a card's label on Plans is the bright bold `title` (§11). Titles are never yellow. There are no rules.
 4. **Color never changes the characters.** Color and bold only add emphasis: a color frame stripped of its SGR is the NO_COLOR frame (a test checks every screen). Under NO_COLOR `❯` still says where you are and `✔` what is done.
-5. **One left edge in PLAN.** Column 0 is the selection gutter and content starts at column 2; H2 labels are outdented to column 0. The chrome (rows 0 and 1, the notice row and the footer) and AGENT start at column 0.
+5. **Two edges.** The chrome (rows 0 and 1, the notice row and the footer) starts at column 0. The body starts at column 2: columns 0–1 are the gutter, which holds `❯` on a list and AGENT's `›`, `✗` and `?` (§10), and nothing on a page.
 
 Rules:
 - No glyph is an emoji, and the set avoids emoji-capable code points such as `▶`, `📌`, `⏎` and `↔`. Keys are words (§3). The one exception is `✔` (U+2714), which defaults to text presentation: Rex prints it bare, never with U+FE0F, and counts it as one cell; if a terminal draws it two cells wide, `✓` is a one-line swap with the same meaning.
 - Meaning is never carried by color alone. Under `NO_COLOR` every state still reads from its glyph and its words.
-- **Bold (SGR 1) is the only attribute** Rex adds: the current crumb, the pill's word, H2 labels, a group label on the task list, a task's title on its details, Plans' card labels and `Recent`, `ask` / `error`, and on AGENT the `thinking ×N` and `reply` labels, `rex ›` and a reply's headings. No dim, reverse or underline.
-- Color roles come from `mascot.UI`: `title` (240,244,250, bold), `text`, `muted`, `accent` (the pin), `pick` (175,135,255; xterm 141 under 256 colors), `action` (`✔`), `error`, `border` (rules). No new palettes and no new roles; `pickbg`, `folder` and `you` are retired.
+- **Bold (SGR 1) is the only attribute** Rex adds: the current crumb, section labels (Help's, the feed's, `Recent`, a group on the task list, a task's title on its details), Plans' card labels, and on AGENT your agent's `?` and a reply's headings. No dim, reverse or underline.
+- Color roles come from `mascot.UI`: `title` (240,244,250, bold), `text`, `muted`, `accent` (the pin), `pick` (175,135,255; xterm 141 under 256 colors), `action` (`✔`), `error`, `border` (kept in `mascot.UI`; nothing paints it now: there are no rules and no boxed cards). No new palettes and no new roles; `pickbg`, `folder` and `you` are retired.
 - Terminal.app has no 24-bit color. When `TERM_PROGRAM=Apple_Terminal` and `COLORTERM` is not `truecolor`/`24bit`, the same yellow palette is quantized to the 256-color cube and gray ramp, whichever is nearer.
 
 ---
@@ -435,15 +438,15 @@ Rex writes a plan only on `p` and `d`, and only its `status` values (§7b); neve
 
 Reload behaviour:
 - **Invalid JSON is debounced.** It shows only after it persists for two polls, because agents save files in pieces.
-- **Edits** (by the agent, a teammate's pull, or your editor) reload live: the rows, row 1 and drift follow at once. Each gets one notice saying who made it (§7b: `Your agent pinned load-outline`; `The plan changed · …` when no write of your agent's claims it within a second) and one line on AGENT such as `rex › plan · plans-ui → done · +1 task` (the plan's own status as `plan → done`; `edited` when nothing else changed; §10). This is how the agent's pins and dones arrive (§7, §8): the tags follow the pin. The selection stays on the same task by id; a task that left, or became a group, gives way to the pin, and when the reload fills a plan that had no tasks, the cursor moves to the pin (§1). Reading the plan never writes it.
+- **Edits** (by the agent, a teammate's pull, or your editor) reload live: the rows, row 1 and drift follow at once. Each gets one notice saying who made it (§7b: `Your agent pinned load-outline`; `The plan changed · …` when no write of your agent's claims it within a second) and one line on AGENT such as `rex · plans-ui → done · +1 task` (the plan's own status as `plan → done`; `edited` when nothing else changed; §10). This is how the agent's pins and dones arrive (§7, §8): the tags follow the pin. The selection stays on the same task by id; a task that left, or became a group, gives way to the pin, and when the reload fills a plan that had no tasks, the cursor moves to the pin (§1). Reading the plan never writes it.
 
 ---
 
 ## 7. Pinning: you or your agent
 
 - **The effective pin.** It is the first `active` leaf task, else the first `pending` leaf whose `depends_on` are all `done` or `skipped`. With no tasks there is no pin, and drift is off. Rex shows it, and judges drift against it (§9a), in three places: row 1's pin line (`pinned  <id> · <title>`, or `nothing pinned · next up <id> · <title>` when it is computed, §4); the task list's tag on its row, `pinned` for the agent's `active` task or `next up` for a computed one (§6); and its details' row 0, where its state says the same, and whose fields are the note the agent gets (§6, §7a). The agent's `active` task is in the pin's yellow in all three; a computed pin is never sent (§7a), so it is never yellow (§5). Plans' Continue card names the agent's pin too, muted (`pinned <id>`, §11).
-- **You pin with `p`.** On the task list or a task's details, `p` on a leaf that isn't `active` pins it, at once, with no confirm: Rex writes that task `active`, every other `active` leaf `pending`, and the plan's own `status` `active` if it was `pending` or `done` (§7b). The cursor stays; row 1, the tags and the footer follow (it says `p unpin` now, which is also the undo); the notice says what moved: `Pinned agent-stream · sends with your next prompt` (in the send state's words where it won't go: `· not sent · ? help` with no wired agent to take it, `· not sent` when this isn't the plan that sends, §7a), then whichever apply, `· page-titles unpinned`, `· waits on page-titles` (it can be pinned while it waits), `· reopened` (it was done), `· it was blocked` (narrow, `unpinned` goes first, then `reopened` or `it was blocked`, then what it waits on). AGENT gets `rex › plan · you pinned agent-stream`. `p` on the pinned task unpins it (`pending`): `Unpinned agent-stream · nothing is sent now`. `p` on a second `active` task (tagged `also active`) pins it, which moves the pin off the first (`· page-titles unpinned`); the footer says `p unpin` only on the pin. `p` never latches the plan (§11). Your next prompt carries the pin to your agent (§7a).
-- **Your agent pins too, and Rex shows it.** You ask your agent to work, continue or pick up the plan (or a task of it); the `rex-plan` skill has it set that leaf's `status` to `active`, set any other active leaf to `pending`, and the plan's own `status` to `active` if it was `pending` or `done` (never a parent's status: a parent marked `active` is only a label), and to save that first, before any other edit, so its edits are judged against the task it is on (§9a). Rex reloads the file within a poll and shows the move: a notice that credits it (`Your agent pinned card-highlight`, §7b), one `rex › plan` line on AGENT, row 1 and the list's tags; seen from AGENT, the notice waits for PLAN (§4). The skill also tells your agent that you may have moved the pin since its last turn, and to say which task it is on.
+- **You pin with `p`.** On the task list or a task's details, `p` on a leaf that isn't `active` pins it, at once, with no confirm: Rex writes that task `active`, every other `active` leaf `pending`, and the plan's own `status` `active` if it was `pending` or `done` (§7b). The cursor stays; row 1, the tags and the footer follow (it says `p unpin` now, which is also the undo); the notice says what moved: `Pinned agent-stream · sends with your next prompt` (in the send state's words where it won't go: `· not sent · ? help` with no wired agent to take it, `· not sent` when this isn't the plan that sends, §7a), then whichever apply, `· page-titles unpinned`, `· waits on page-titles` (it can be pinned while it waits), `· reopened` (it was done), `· it was blocked` (narrow, `unpinned` goes first, then `reopened` or `it was blocked`, then what it waits on). AGENT gets `rex · you pinned agent-stream`. `p` on the pinned task unpins it (`pending`): `Unpinned agent-stream · nothing is sent now`. `p` on a second `active` task (tagged `also active`) pins it, which moves the pin off the first (`· page-titles unpinned`); the footer says `p unpin` only on the pin. `p` never latches the plan (§11). Your next prompt carries the pin to your agent (§7a).
+- **Your agent pins too, and Rex shows it.** You ask your agent to work, continue or pick up the plan (or a task of it); the `rex-plan` skill has it set that leaf's `status` to `active`, set any other active leaf to `pending`, and the plan's own `status` to `active` if it was `pending` or `done` (never a parent's status: a parent marked `active` is only a label), and to save that first, before any other edit, so its edits are judged against the task it is on (§9a). Rex reloads the file within a poll and shows the move: a notice that credits it (`Your agent pinned card-highlight`, §7b), one `rex ·` line on AGENT, row 1 and the list's tags; seen from AGENT, the notice waits for PLAN (§4). The skill also tells your agent that you may have moved the pin since its last turn, and to say which task it is on.
 - **How the agent knows the pinned task.** Before each prompt, Claude Code's, Codex's and Cursor's hooks and OpenCode's plugin hand it the pinned task as a short note, read from the plan file just then (Cursor: on builds that read it, and when each chat starts; OpenCode: from plugin v2, §7a). It also re-reads the plan file at the start of every turn while it works the plan (the skill says so), so the file stays the source of truth. You never copy anything from Rex into the agent.
 - **`~/.rex/state.json`** is outside the repo and never committed. It holds only the last plan opened (or attached) per repo root: the one the next start opens (§11), and the only plan whose pin the prompt hooks hand the agent (§7a). An older Rex also kept pin start times there; they are ignored and dropped on the next write. Each write re-reads the file, merges, and replaces it atomically, so two Rex instances don't lose each other's entries. Opening includes start's own landing and attach: a plan Rex opened because the agent wrote it becomes the repo's last plan too.
 - **Nothing is auto-claimed.** When you or the agent mark the pin done, Rex shows what is next up (§8); `p` pins it, or the agent starts it when you ask.
@@ -502,11 +505,11 @@ Only an explicit `--source claude`, `--source codex` or `--source cursor` hook, 
 - It writes the note first; once that write succeeds, the `user` event it records in the same run carries `meta.pin` (the task's id; none for a new plan's line), `meta.pin_plan` (the plan's repo-relative path) and `meta.pin_repo` (the repo it was looked up in), and the feed's dedupe never folds it into the same words just before it when the pin, or its repo, differs. OpenCode's request records nothing; the prompt's event, which the plugin sends right after with the reply's `pin` and `pin_plan` when it added the note, is recorded with those two fields as they came, with no second lookup (an explicit `--source opencode` only), so an edit in between changes nothing. What keeps the stamps honest: `meta.pin_repo` names the repo the note was looked up in (the folder holding `.git`, else the folder; for OpenCode, worked out from the prompt's own `cwd` as it is recorded), since a prompt from a folder above or inside a repo, or from a workspace with several roots, comes from more than one repo while its note was only one's; ingest writes the reply first and stamps the event only once that write succeeded (a harness that closed stdout gets an unstamped prompt, and the exit is still 0); a Cursor build that ignores a prompt's `additional_context` (by the payload's `cursor_version`: before 3.20, or a year-numbered CLI build before 2026.10; a version Cursor doesn't send, or Rex can't read, is taken as a current build's) still gets the reply, harmlessly, and its prompt's event carries `meta.pin_unread` (and `meta.pin_repo`) instead of the pin; a prompt that carried the note but has no text of its own (an image alone) is still recorded, as `(no text)`, so it counts; and when the payload names no folder of its own and the pin was found through `$CURSOR_PROJECT_DIR`, the event's `meta.roots` is that folder, so AGENT shows it only there. Nothing else in the feed is new. The note's text is never shown.
 
 **What you see in Rex.** It comes from the feed, the harnesses' wiring and `state.json`, so there is no state file of its own, and it never claims more than happened:
-- **The send state**, on the right of the task list's row 1 and of the pinned task's details (§4): `sent with last prompt` when the newest prompt for this repo (this repo's agent's by where it came from, §10, or one of no known origin, or any whose `meta.pin_repo` is this repo) carries `meta.pin_repo` for this repo, compared by file, `meta.pin` for this pin and `meta.pin_plan` for this plan, compared by file (with no tasks yet, `meta.pin_plan` alone: the new plan's line), and came after the last change of what the plan sends (you pinned, unpinned or marked it done, your agent's save moved the pin, or another plan opened; the first plan Rex opens only sets it, so a prompt from before Rex started counts). A prompt that came from this repo but carried another repo's pin (a folder above or inside it, a multi-root workspace) is this repo's newest and carried nothing of it. Else `not sent` when the plan sends nothing (nothing pinned, a read-only plan, a path the note can't name) or can't now (the file doesn't parse, its links lead out of `rex/plans`, or it isn't `state.json`'s last plan here: another Rex window opened another); else `not sent · ? help` when no wired harness hands the pin over (none is wired, only an OpenCode plugin from before the pin, or Rex's hook isn't on the harness's prompt event), or the newest prompt for this repo came from a build that doesn't read it (`meta.pin_unread`), and Help's `FEED` says which command fixes it (§13); else `sends with next prompt`. A Cursor install without `sessionStart` still sends it with prompts on builds that read it. The wiring and `state.json` are re-read every couple of seconds while a plan is open (and at once if the clock went back), and opening a plan updates it at once.
+- **The send state**, on the right of the task list's row 1 and of the pinned task's details (§4): `sent with last prompt` when the newest prompt for this repo (this repo's agent's by where it came from, §10, or one of no known origin, or any whose `meta.pin_repo` is this repo) carries `meta.pin_repo` for this repo, compared by file, `meta.pin` for this pin and `meta.pin_plan` for this plan, compared by file (with no tasks yet, `meta.pin_plan` alone: the new plan's line), and came after the last change of what the plan sends (you pinned, unpinned or marked it done, your agent's save moved the pin, or another plan opened; the first plan Rex opens only sets it, so a prompt from before Rex started counts). A prompt that came from this repo but carried another repo's pin (a folder above or inside it, a multi-root workspace) is this repo's newest and carried nothing of it. Else `not sent` when the plan sends nothing (nothing pinned, a read-only plan, a path the note can't name) or can't now (the file doesn't parse, its links lead out of `rex/plans`, or it isn't `state.json`'s last plan here: another Rex window opened another); else `not sent · ? help` when no wired harness hands the pin over (none is wired, only an OpenCode plugin from before the pin, or Rex's hook isn't on the harness's prompt event), or the newest prompt for this repo came from a build that doesn't read it (`meta.pin_unread`), and Help's `Feed` says which command fixes it (§13); else `sends with next prompt`. A Cursor install without `sessionStart` still sends it with prompts on builds that read it. The wiring and `state.json` are re-read every couple of seconds while a plan is open (and at once if the clock went back), and opening a plan updates it at once.
 - **`p`'s notice** says the same: `Pinned <id> · sends with your next prompt` only while it will (§7).
 - **On AGENT**, a muted `with pin <id>` (the id in the pin's yellow) under each prompt that carried it, `with plan <name>` under one that carried a new plan's line (§10). Only an event stamped with this repo (`meta.pin_repo`) has it, read from its fields, never its text: another repo's pin is never drawn as this repo's.
 - **The pin's details** say the same in their muted line under the title (§6): `Your agent got these fields with your last prompt.`, `These fields go to your agent with your next prompt.`, `Not sent: no wired agent takes the pin · ? help`, or why the plan sends nothing.
-- **Feed health** (the empty AGENT tab and Help's `FEED`, §10) says per harness whether it hands the pin over, or the one command that makes it.
+- **Feed health** (the empty AGENT tab and Help's `Feed`, §10) says per harness whether it hands the pin over, or the one command that makes it.
 
 ---
 
@@ -533,7 +536,7 @@ You and your agent both drive the plan. Rex writes **only `status` values**, plu
 3. It splices only the `status` values through `internal/jsonedit`. Every other byte stays: key order, spacing, CRLF, a BOM, unknown fields. It parses the result and checks its tree is the one intended. A result over 4 MB is refused.
 4. It writes a temp file in the same folder. Just before the rename it re-reads the plan; if the plan changed since step 2, it starts over on the new bytes (the op checks again). After three tries: `✗ The plan keeps changing · try again`.
 5. It renames (atomic), records the new bytes' hash as **Rex's own write**, and reloads from those bytes at once, with no poll's wait. A file with hard links is written in place instead, after the same re-check, so every name keeps seeing the one plan; so is one on Windows that another program holds open and can't be replaced.
-6. The rows redraw, row 1 follows, the notice shows, and AGENT gets `rex › plan · you pinned <id>` (`you unpinned`, `you marked <id> done`, `you reopened`). A change the file had made since your frame rides along with the write, and AGENT records it too.
+6. The rows redraw, row 1 follows, the notice shows, and AGENT gets `rex · you pinned <id>` (`you unpinned`, `you marked <id> done`, `you reopened`). A change the file had made since your frame rides along with the write, and AGENT records it too.
 
 Writes run only on the key, are bounded by the 4 MB plan limit, and never run while a text field is open (only Plans has one, §2).
 
@@ -543,7 +546,7 @@ Writes run only on the key, are bounded by the 4 MB plan limit, and never run wh
 - **An agent save between Rex's last re-read and its rename:** this window is one re-read and one rename, small but real, and no lock closes it, because agents don't take one. In it, the agent's save is lost. Claude Code's Edit refuses a file changed since its last read, so the agent's next edit re-reads; the skill tells the agent to re-read every turn.
 - **The agent rewrites the whole file from an older copy after Rex:** Rex's change is lost. On the next reload Rex sees everything its write changed put back (the task's status, the tasks a pin moved off, the plan's own status) in a save your agent's write claims, with the tasks it touched otherwise as they were, and says so once: `Your agent saved over your pin of agent-stream · p pins it again` (`your unpin of`, `marking <id> done · d marks it again`, `reopening <id> · d reopens it again`). It never writes it back on its own. A save that puts back only part of it (your agent pinned another task after your pin) or changes the task otherwise too (your agent finished the task you reopened, with what it did) is your agent's own move, credited as usual; one that flips a single status back and touches nothing else can't be told from an old copy, and counts as one.
 
-**Who changed it.** Every reload that changes the plan gets one notice and one `rex › plan` line on AGENT, credited:
+**Who changed it.** Every reload that changes the plan gets one notice and one `rex ·` line on AGENT, credited:
 - **you**, when the bytes hash to Rex's own last write: the key already said it, so only AGENT's line;
 - **your agent**, when a completed write of that file by this repo's agent (the events attach uses, §11) comes with the reload, or within a second of the poll that read it (a hook reports a save a moment after the file has it): `Your agent pinned page-titles` · `Your agent finished page-titles ✔ and pinned agent-stream` · `Your agent finished page-titles ✔ · next up agent-stream` · `Your agent unpinned page-titles` · `Your agent added 3 tasks` · `Your agent changed the plan · <what>`; a plan your agent writes that opens is `Your agent wrote <title> · opened <path>` (§6);
 - **the plan changed**, for anything else (an editor, `git checkout`), once that second is up: `The plan changed · <what>`, or the done news of §8 when it finishes the pin.
@@ -556,13 +559,13 @@ The rows, row 1 and drift follow the file at once; only the notice waits for its
 
 ## 8. Marking done: you or your agent
 
-**You mark a task done with `d`** on the task list or a task's details (§7b): Rex writes that task `done`, and the plan's own `status` `done` once every leaf is `done` or `skipped`, and nothing else: no completion fields, and nothing pinned in its place. The `✔` turns green, the count goes up, row 1 says `nothing pinned · next up <id>`, the notice `✔ <id> done · nothing pinned · next up <id>`, AGENT `rex › plan · you marked <id> done`, and the footer `d reopen`, which is also the undo (`<id> reopened`). Finish the pin and pin the next: `d` `↓` `p`.
+**You mark a task done with `d`** on the task list or a task's details (§7b): Rex writes that task `done`, and the plan's own `status` `done` once every leaf is `done` or `skipped`, and nothing else: no completion fields, and nothing pinned in its place. The `✔` turns green, the count goes up, row 1 says `nothing pinned · next up <id>`, the notice `✔ <id> done · nothing pinned · next up <id>`, AGENT `rex · you marked <id> done`, and the footer `d reopen`, which is also the undo (`<id> reopened`). Finish the pin and pin the next: `d` `↓` `p`.
 
 Rex has no completion form. When the agent finishes the task you asked for, the skill has it fill `accomplished` (what actually happened, a retrospective rather than a copy of `does`), `modified` (paths it actually changed), `verified_how` (how it actually checked) and `completed_notes`, then set the task's `status` to `done` (in one save if it can), then set the plan's own `status` to `done` once every leaf is `done` or `skipped`. Then it stops and reports: each task is one PR.
 
 What Rex shows when the file marks the pin done:
 - The notice row, for 4 s: `Your agent finished card-highlight ✔ · next up load-outline` when your agent's write claims it (`… ✔ and pinned load-outline` when the same save set that task `active`, §7b); else `✔ card-highlight done · next up load-outline` (`· now load-outline` when the same save set that task `active`; `· the plan is done` once every leaf is `done` or `skipped`, even before the agent's next save sets the plan's own `status`; else `· nothing else is unblocked`), while row 1 says `nothing pinned · next up load-outline · Outline view`. Narrow, the done id clips from the left so the next one stays (§4): `✔ …ghlight done · next up load-outline` at 38 cells. Agents finish in several saves, so a later save that moves no task's status and adds or removes none (only the completion fields, only the plan's own status) keeps this toast up until it expires; a save that moves a task is news of its own.
-- AGENT: one line per save, `rex › plan · card-highlight → done`, then e.g. `rex › plan · edited` or `rex › plan · plan → done`.
+- AGENT: one line per save, `rex · card-highlight → done`, then e.g. `rex · edited` or `rex · plan → done`.
 - The task list (§6): `✔` on the task, its row muted; the tag moves on to what is next (`next up`, or `pinned` when the same save started it); the cursor stays where you left it (§1).
 - Its details: `✔ Done · what your agent wrote when it finished it`, then what actually happened (`Did`, `Changed`, `Checked`, `Notes`: `accomplished`, `modified`, `verified_how`, `completed_notes`), then what it set out to do, muted (`Planned`, its `does`; `Description`, `Verify`, `Files`, `Branch`). The next task's details name it under `Builds on`.
 
@@ -606,17 +609,17 @@ If the pin lists no files, only the `scope.out` rule applies.
 **A batch that writes the plan.** When one batch of events both saves the open plan and edits files (parallel tool calls, a patch touching both), Rex re-reads the plan at the save: edits reported before it are judged against the plan they were made under, edits after it against what it wrote, so neither the finished task's last edit nor the new pin's first one is drift. A patch that touches the plan and code together counts each file at the lesser of the two. This holds for one save of the open plan per poll: with several in one poll (a catch-up after a pause), Rex can only read the last, so edits between them are judged against its pin.
 
 **Display.**
-- **The notice row** (PLAN only) shows the last hard drift not yet resolved: `off pin · README.md · outside card-highlight files`, `off pin` in the pin's yellow (it is off the pin, never an error's red), under a new-plan offer and over read-only (§4). It goes once you look at AGENT, which lists it, and drift that happens while AGENT is on screen raises none. Soft drift is AGENT's only. When the plan changes (it was widened), the notice is judged again.
-- **AGENT** gets one drift block per pin, updated in place (§10): `rex › drift · <pin>`, then a row per path or prompt, hard ones in the pin's yellow and soft ones muted. Each row is one row laid out like a failed tool call: when it doesn't fit, the path or prompt clips first and `· <why>` keeps at least half the row; a path clips from the left, so its file name stays (`…/session_handler_impl.go`, or the name alone, or, when even the name doesn't fit, `…` and its end: `…_impl.go`), and a prompt from the right:
+- **The notice row** (PLAN only) shows the last hard drift not yet resolved: `off pin · README.md · outside card-highlight files`, `off pin` in the pin's yellow (it is off the pin, never an error's red), under a new-plan offer and over read-only (§4). It goes once you look at AGENT, which tags it, and drift that happens while AGENT is on screen raises none. Soft drift is AGENT's only. When the plan changes (it was widened), the notice is judged again.
+- **AGENT** tags the row of what drifted, at its right end (§10): `off pin` in the pin's yellow for hard drift, `off pin?` muted for soft. An edit's tag goes on its step, found in the order the feed brought them, among this turn's rows from before the completion (its whole batch is on AGENT by the time it is judged): the step with its tool call, else (either names none: OpenCode's, Cursor's `afterFileEdit`) the newest edit step of one of its files that no earlier completion took; a patch's step takes the worst of its files, and that file's reason, after the file's name when it isn't the one the row shows (`edit internal/tui/plans.go (+1 more)  README.md: outside card-highlight files · off pin`; the name is part of the reason, and clips with it); a prompt's tag goes on its own first row (held prompts at their turn's end). An edit whose step AGENT doesn't show (a harness that reported only its completion) gets a step row of Rex's own, `edit <path>` with its tag; a completion reported twice (Cursor's `postToolUse`, then its `afterFileEdit`) finds the step, or Rex's row, the first took, so one edit draws one row, and so does a second edit of that file in the same turn. A tag only ever rises, from soft to hard (taking the harder judgement's reason), and never adds or takes away a row: a prompt's first row always leaves the tag's room, and a step's row clips (a path from the left, so its file name stays) to keep it. Before the tag, muted and joined to it by ` · `, is why, as the judge said it, when it fits: it takes only the cells left free between the row's own text and the tag, at least two blanks after the text (the text never gives up a cell for it, so on a prompt's first row it shows only when the prompt leaves room), clips with `…` when it doesn't fit whole, and goes when fewer than 12 cells of it would show, leaving the tag alone. A fold of steps (`… +N earlier`) keeps only its worst tag, with no reason. The tag and its reason are drawn from what Rex put on the row (`meta`, of a type no feed line can carry), never read back from text. Hard drift's PLAN notice is unchanged (`off pin · <path> · <why>`, when it happened while AGENT wasn't on screen):
 
 ```
-rex › drift · card-highlight
-  hard README.md · outside card-highlight files
-  soft internal/tui/live_view.go · next to plans.go
+  edit internal/tui/plans.go
+  edit README.md                         outside card-highlight files · off pin
+  edit internal/tui/live_view.go                    next to plans.go · off pin?
 ```
 
-- Each path or prompt is listed once per pin.
-- Changing the pin (or opening another plan) clears the notice and starts a new block, even when the pin comes back to a task that had one. An on-pin edit of the same file clears a hard notice, though not from the block.
+- Each edit or prompt that drifted is tagged, once per row; a fold of steps (`… +N earlier`, §10) takes the worst tag of the steps it hides.
+- Changing the pin (or opening another plan) clears the notice; the tags already drawn stay, as a record of the turn. An on-pin edit of the same file clears a hard notice, never a tag.
 - Your options are yours: ask the agent to get back on the task, to pin another one, or to widen the plan (it edits the JSON; Rex reloads it), or start a fresh chat that continues the plan (§9).
 
 ---
@@ -625,105 +628,128 @@ rex › drift · card-highlight
 
 The AGENT tab is what the agent is doing right now, as it happens. Its title, `Agent`, says `live`, or `↓ 12 newer` while you are scrolled up (the rows below the view), or `no events yet`; row 1 is the turn (`thinking`, `running`, `idle`, `waiting on you`, `turn error`) and the pin the agent gets (`pinned card-highlight`, §4).
 
-The stream is bottom-anchored, newest at the bottom. Each block is named by its first characters (`thinking`, `$`, `✗`, `reply`, `[ASK]`, `rex ›`, the right-aligned prompt), so it reads the same without color, and **only two blocks have a rule**: a reply (`reply ───`) and the warm-start line (`── before rex started ──`).
+The stream is bottom-anchored, newest at the bottom. It is one visual system: the 2-cell gutter carries the only marks, `›` your prompt, `✗` a failed step or the turn's own error, `?` your agent asking; everything else starts at column 2, your agent's steps muted, its reply plain `text`. Every block reads the same without color, and **nothing has a rule, a pill or a box**.
 
 | Block | Looks like | Rows | Spacing |
 |---|---|---|---|
-| prompt | your prompt in a box at most half the width, right-aligned, its text left-aligned inside (`text`); under one that carried the pin (§7a), in the box's column, `with pin <id>` (muted, the id in the pin's yellow), or `with plan <name>` for a new plan's line, from its stamps and never its text; a prompt with no text of its own that carried it reads `(no text)` | ≤ 6, then `(+N more rows)`, then that row | a blank row before and after |
-| thought run, settled | `thinking ×N  <the latest thought, clipped>`; one thought: `thinking  <text>` (muted, the label bold) | 1 | packed |
-| thought run, live | the same first row, then the rest of the latest thought, indented 2 | 2 (1 under 12 rows) | packed |
-| command run | `$ <cmd>` per command, clipped (muted); over 5: `$ … +N earlier` (muted), then the last 4, so the fold always hides at least 2 | ≤ 5 | packed |
-| failed tool call (`error` with a tool) | `✗ <cmd or path> · <reason>` (red); when it doesn't fit, the command or path clips first and the reason keeps at least half the row; a path clips from the left, at a `/` or the OS's own separator (`\` on Windows, which a path outside the repo and home keeps), so its file name stays (`✗ …/view.go · permission denied`; when even the name doesn't fit, `…` and its end) | 1 | packed |
-| turn error | `✗ error · <text>` (red), later rows indented 2 | ≤ 3 | packed |
-| reply | `reply ───` across the row (the label bold), then the Markdown indented 2: headings bold, list items (`• `, `1. `) hanging under their text, code as muted `│ ` lines | all | a blank row before |
-| ask | `[ASK] <question>`, a bold pill, wrapped under the question | all | a blank row before |
-| Rex: plan | `rex › plan · card-highlight → active`, `rex › plan · following <name>` (muted, `rex ›` bold) | 1 | packed |
-| Rex: drift | `rex › drift · <pin>`, then `  hard\|soft <path or prompt> · <why>`, each row fitted like a failed tool call, one block per pin (§9a) | 1 + a row each | packed |
-| warm start | `── before rex started ──` (muted) | 1 | no blank row after |
+| prompt | `›` (muted) in the gutter and your prompt after it in `text`, left-aligned, its later rows after the gutter, its paragraphs kept; its first row always leaves a drift tag's room, so a tag never moves a row; under one that carried the pin (§7a), after the gutter, `with pin <id>` (muted, the id in the pin's yellow), or `with plan <name>` for a new plan's line, from its stamps and never its text; a prompt with no text of its own that carried it reads `(no text)` | ≤ 6, then a muted `(+N more rows)`, then that row | a blank row before and after |
+| thought run | `thinking ×N · <the latest thought, clipped>`; one thought: `thinking · <text>` (muted, nothing bold), whatever the turn is doing | 1 | packed |
+| step run | one muted row per step: `$ <cmd>` for a shell command (or a command no tool names), `edit <path>` for any change to a file, a write, a patch or a delete (a step doesn't always say which: a Codex patch's reads `Edit`), a path clipping from the left so its file name stays, any other tool as its adapter wrote it (`WebFetch <url>`, `todo: …`); over 5: `… +N earlier`, then the last 4, so the fold always hides at least 2; a drift tag at a step's right end, why before it when it fits (§9a), and the fold takes the worst tag it hides, with no reason | ≤ 5 | packed |
+| failed tool call (`error` with a tool) | `✗` (red) in the gutter, then `<cmd or path> · <reason>` muted; when it doesn't fit, the command or path clips first and the reason keeps at least half the row; a path clips from the left, at a `/` or the OS's own separator (`\` on Windows, which a path outside the repo and home keeps), so its file name stays (`✗ …/view.go · permission denied`; when even the name doesn't fit, `…` and its end) | 1 | packed |
+| turn error | `✗ error · <text>` (red), later rows after the gutter | ≤ 3 | packed |
+| reply | each assistant `text` event its own block: its Markdown after the gutter in plain `text`, headings bold, list items (`· `, `1. `) hanging under their text, code as muted `│ ` lines; one that cleans to nothing (only an escape sequence, an empty fence) draws nothing, not even its blank row | all | a blank row before (none under 12 rows, so two replies in a row then run together) |
+| ask | `?` (bold) in the gutter, then the question in `text`, wrapped after the gutter | all | a blank row before |
+| Rex's line | `rex · card-highlight → active`, `rex · following <name>`, `rex · you pinned <id>` (muted) | 1 | packed |
+| Rex's step | `edit <path>` and its drift tag, for an edit off the pin AGENT has no step for (§9a) | 1 | packed |
+| warm start | `before Rex started` (muted) | 1 | no blank row after |
 
-Mockup at 38×24 (a 38-cell text column), the turn over, an edit next to the pin's files soft drift in its block:
-
-```
-Agent             live   plan · agent
-idle            pinned card-highlight
-
-
-rex › plan · card-highlight → active
-thinking ×4  Looking at the plans vie…
-$ … +2 earlier
-$ go vet ./...
-$ Edit internal/tui/plans_test.go
-$ Edit internal/tui/outline.go
-$ go test ./internal/tui -run PlanCar…
-✗ go test ./internal/… · exit status 1
-thinking ×2  The bar is drawn per row…
-rex › drift · card-highlight
-  soft live_view.go · next to plans.go
-
-reply ────────────────────────────────
-  The selected card is one block now.
-  • plans.go draws the card through
-    one painter
-  • live.go starts the fill at column
-    0
-
-↑↓ scroll · tab plan · ? help
-```
-
-Mid-turn at 38×12, the newest block a live thought run (the next command settles it to one row):
+Mid-turn at 80×24: a followed plan's line, a prompt that carried the pin, a run of thoughts, a shell command, an edit on the pin, one off it (hard), one next to its files (soft), a failed step:
 
 ```
-Agent             live   plan · agent
-thinking        pinned card-highlight
+Agent                                                       live   plan · agent
+running                                                   pinned card-highlight
 
-rex › plan · card-highlight → active
-thinking ×4  Looking at the plans vie…
-$ Edit internal/tui/plans.go
-$ Edit internal/tui/live.go
-$ go test ./internal/tui
-thinking ×3  The bar is drawn per row,
-  so the fill has to start at column…
+  rex · following Send-off demo
 
-↑↓ scroll · tab plan · ? help
+› Start on the pinned task: the selected card should be one block.
+  Keep the fill on all three rows.
+  with pin card-highlight
+
+  thinking ×3 · One painter for the bar and the fill, then.
+  $ go test ./internal/tui -run PlanCard
+  edit internal/tui/plans.go
+  edit internal/watch/format.go          outside card-highlight files · off pin
+  edit internal/tui/live_view.go                    next to plans.go · off pin?
+  $ go vet ./...
+✗ go vet ./... · plans.go:88: unreachable code
+  $ go test ./internal/tui
+
+
+
+
+
+
+↑↓ scroll · home oldest · end live · tab plan · ? help
 ```
 
-- **Live and settled.** A thought run is live while it is the newest block and the turn is in flight (`thinking`, or `running` after a tool call), scrolled or not. A drawn block under it (a command, a `✗`, an `[ASK]`, a reply) or the turn's end (even one that draws nothing, such as Cursor's `stop`) settles it to one row. A tool call that draws nothing (a file look) never settles it, and scrolling never changes the layout, so one ↑ moves the view one row and every row can be reached.
-- **Folding is display only.** Only each run's latest thought shows, and only the last 4 of a run of more than 5 commands. The feed (`~/.rex/session.jsonl`) keeps every event, and Help says so. No key unfolds a run.
-- **Narrow and short.** Under 30 text cells a thought run is only `thinking ×N`. Under 12 rows there are no blank rows at all, not between blocks nor inside a reply or a prompt.
-- **Scrolled.** Scrolled up, the view keeps the lines it shows: new rows arrive below it and row 0 counts the rows below the view (`↓ N newer`), and a thought or command that joins a folded run adds none (but the second row a live run takes once its latest thought no longer fits on one), nor does a one-row block that settles the live run (it takes the row the run gives back); a run that settles under the view gives its row back without moving it; and the cap of 400 events trims the oldest ones above it without moving it. A scrolled view stays scrolled: at `1↑`, where the live run's first row is the view's last, a turn's end moves the view the one row the run gives back. End (or Ctrl+E) is live again.
+After the turn, the reply under it; older rows are cut off the top, and row 2 says how many:
+
+```
+Agent                                                       live   plan · agent
+idle                                                      pinned card-highlight
+                                                                    ↑ 5 earlier
+
+  thinking ×3 · One painter for the bar and the fill, then.
+  $ go test ./internal/tui -run PlanCard
+  edit internal/tui/plans.go
+  edit internal/watch/format.go          outside card-highlight files · off pin
+  edit internal/tui/live_view.go                    next to plans.go · off pin?
+  $ go vet ./...
+✗ go vet ./... · plans.go:88: unreachable code
+  $ go test ./internal/tui
+
+  One block
+
+  The selected card is one painter now:
+  · the bar and the fill share it
+  · the fill starts at column 0
+
+  │ go test ./internal/tui
+
+  go vet and go test pass.
+
+↑↓ scroll · home oldest · end live · tab plan · ? help
+```
+
+(The goldens of `internal/tui/testdata/agent` hold these, asking, scrolled, warm-started and empty, at 80×24 and 120×32, and in color.)
+
+- **One layout.** The layout depends only on the text width and whether the screen is tall (12 rows): never on the turn, the scroll or what the turn last did. A tool call that draws nothing (a file look) changes nothing, and one ↑ moves the view one row, so every row can be reached. The view is laid out once per (revision, width, tall); a tag Rex puts on a row is a new revision of the same rows.
+- **Folding is display only.** Only each run's latest thought shows, and only the last 4 of a run of more than 5 steps. The feed (`~/.rex/session.jsonl`) keeps every event, and so does AGENT's log; Help over AGENT says so. No key unfolds a run.
+- **Narrow and short.** Under 30 text cells a thought run is only `thinking ×N`. Under 12 rows there are no blank rows at all, not between blocks nor inside a reply or a prompt: two replies in a row read as one there, the price of the rows.
+- **Scrolled.** Scrolled up, the view keeps the lines it shows: new rows arrive below it and row 0 counts the rows below the view (`↓ N newer`); a thought or step that joins a folded run adds none; a tag lands on its row in place; and the cap of 400 events trims the oldest ones above it without moving it. A scrolled view stays scrolled. End (or Ctrl+E) is live again.
+- **Earlier rows.** While rows are cut off the top, a muted `↑ N earlier` says how many: at row 2's right end from 12 rows, costing no row (as the task list's `↑ N more`, §4), and on the body's first row under 12.
 - **Hidden.** File-look commands and result echoes stay hidden, and no file body is ever shown: a write is its path.
-- **What reaches PLAN.** Only an ask or a turn's own error, as a notice on PLAN: an ask until the turn goes on past it (answered in the agent itself), a turn's error until the next prompt, either until you look at AGENT; never a reply, a thought, a command or a failed tool call (§4).
-- **Rex's own lines** (`rex ›` and the warm-start line) exist only in this process and are never appended to the feed. There are no notes: AGENT has no text field (§2).
-- **Prompt boxes.** User prompt boxes are right-aligned with left-aligned text. They are capped at 6 rows, followed by `(+N more rows)`.
+- **What reaches PLAN.** Only an ask or a turn's own error, as a notice on PLAN: an ask until the turn goes on past it (answered in the agent itself), a turn's error until the next prompt, either until you look at AGENT; never a reply, a thought, a step or a failed tool call (§4).
+- **Rex's own lines** (`rex ·`, Rex's step and `before Rex started`) exist only in this process and are never appended to the feed; a feed line that claims to be one is dropped. There are no notes: AGENT has no text field (§2).
 - **Text cleanup.** Agent text is cleaned before layout:
   - Control characters and escape/OSC sequences are removed, so agent output cannot recolor the screen, retitle the window or write the clipboard.
   - Tabs are expanded.
 - **Scope.** Paths in tool lines are shown relative to the repo; replies, thoughts and prompts are shown as written. Where an event came from (its working directory or workspace roots) decides whose it is, so another repo's agent reading a file here stays hidden. Events from other repos' agents (same machine, same feed) are hidden, and the count appears under Help. An event with no working directory or roots is judged by the file it names; with nothing to go on at all, it is shown.
-- **Starting mid-turn.** If the newest feed event is under 2 minutes old, the turn state is restored, so the dino is already typing. The last ~20 events from this repo are drawn under a muted `── before rex started ──` rule, laid out like the live stream (runs fold, replies get their rule), with no blank row under the rule.
-- **Feed health** is the empty tab: row 0 says `no events yet`, row 1 is its lead, `Rex shows your agent's work here as its hooks report it.` (`Rex shows your agent's work here.` where that doesn't fit), and its body a `FEED` header (H2, §5) and the block under it, so the page never starts mid-sentence. The empty tab is a page, not a stream: it starts at the top and, when it runs past a short screen, scrolls from there (§3): ↑↓, PgUp/PgDn and Home/End move it, `↑ more` / `↓ more` say what is past the screen, and only then does its footer offer `↑↓ scroll` (§4). Help shows the same block. The wiring is re-read every few seconds while it is on screen, so an install in another terminal shows up, and the last event follows the feed:
+- **Starting mid-turn.** If the newest feed event is under 2 minutes old, the turn state is restored, so the dino is already typing. The last ~20 events from this repo are drawn under a muted `before Rex started` line, laid out like the live stream (runs fold), with no blank row under it. History is never judged for drift.
+- **Feed health** is the empty tab: row 0 says `no events yet`, row 1 is its lead, `Your agent's prompts, steps and replies show here.` (`Your agent's work shows here.` where that doesn't fit), and its body three sections (section labels, §5): `Hooks`, a row per harness; `Skill`, the `rex-plan` row; `Feed`, the events file and the last event, and the hidden-event count; so the page never starts mid-sentence. The empty tab is a page, not a stream: it starts at the top and, when it runs past a short screen, scrolls from there (§3): ↑↓, PgUp/PgDn and Home/End move it, `↑ more` / `↓ more` say what is past the screen, and only then does its footer offer `↑↓ scroll` (§4). Help's `Feed` section has the same rows under one label (§13). The wiring is re-read every few seconds while it is on screen, so an install in another terminal shows up, and the last event follows the feed:
 
 ```
-FEED ───────────────────────────────────
-  feed     ~/.rex/session.jsonl · last
-           event 3h ago (cursor)
-  claude   wired for this repo · sends
-           the pin with each prompt
-  codex    not wired · rex ingest
-           --install codex
-  cursor   wired · rerun rex ingest
-           --install cursor
-  opencode wired · old plugin, no pin:
-           rex ingest --install opencode
-  skill    out of date · rex ingest
-           --install-skill
-  4 events from other folders hidden
+Agent                                              no events yet   plan · agent
+Your agent's prompts, steps and replies show here.
+
+  Hooks
+    claude      wired · sends the pin with each prompt
+    codex       not found
+    cursor      wired · rerun rex ingest --install cursor
+    opencode    not found
+
+  Skill
+    rex-plan    missing · rex ingest --install-skill
+
+  Feed
+    events      ~/.rex/session.jsonl · none yet
+
+
+
+
+
+
+
+
+
+tab plan · ? help
 ```
 
 Each harness's row says whether it hands your agent the pin (§7a), or the one command that makes it: `wired · sends the pin with each prompt` (Cursor's `… on 3.20+ (older: once per chat)`: older builds take it only when a chat starts; Codex's `… once trusted in Codex's /hooks`: Codex runs a new hook only once you trust it, and Rex can't see whether you did), `wired for this repo · …` (Claude Code's `--project` install, whose command says `--project`), `wired · rerun rex ingest --install <name>` (Rex's hook is there, but not on the event that hands over the pin: Claude Code's or Codex's `UserPromptSubmit`, Cursor's `beforeSubmitPrompt` and `sessionStart`; for Cursor, an install from before `sessionStart`, whose prompts still carry the pin on builds that read it while a new chat doesn't), `wired · old plugin, no pin: rex ingest --install opencode` (a plugin from before v2, which hands over nothing), `not wired · rex ingest --install <name>`, or `not found`. The words come from the harness's status (`watch.HarnessStatus`), never its name. The send state's `not sent · ? help` leads here (§4, §13).
 
-A word wider than the value column (a long flag or path, `--install-skill` at 24 text cells) goes whole on a row of its own, hung at column 4: a command is never split mid-word.
+A row's name sits in a 12-cell column at column 4, as Help's keys do; under 36 text cells it sits above its words, which start at column 6. A word wider than the value column (a long flag or path, `--install-skill` at 24 text cells) goes whole on a row of its own, hung at column 6: a command is never split mid-word.
 
-The `skill` row says how the `rex-plan` skill stands where agents read it: `rex-plan current`, `missing · rex ingest --install-skill`, or `out of date · rex ingest --install-skill` (`… --project` when the old copy is the repo's). A copy is judged by the skill version in its generated marker (`skill v3`), never by its bytes: one with an older version, or none, is out of date; one of this version (a CRLF checkout of a committed `--project` copy too) or a newer Rex's is current, and `--install-skill` never replaces a newer Rex's copy (it says so and succeeds). Plans says so only on a first run (and, for an out-of-date copy, in a toast at start), so this is where an upgrader sees it.
+The `rex-plan` row says how the skill stands where agents read it: `current`, `missing · rex ingest --install-skill`, or `out of date · rex ingest --install-skill` (`… --project` when the old copy is the repo's). A copy is judged by the skill version in its generated marker (`skill v3`), never by its bytes: one with an older version, or none, is out of date; one of this version (a CRLF checkout of a committed `--project` copy too) or a newer Rex's is current, and `--install-skill` never replaces a newer Rex's copy (it says so and succeeds). Plans says so only on a first run (and, for an out-of-date copy, in a toast at start), so this is where an upgrader sees it.
 
 - **Installs are opt-in.** Rex never installs a hook or a skill on its own. Feed health shows the command, and you run it. The install script wires Cursor and prints the opt-in commands for the other harnesses it finds. Each one is `rex ingest --install <harness>`; `--install-cursor-hook` is an alias for Cursor's. Running an install again brings Rex's entries up to date and keeps everything else (that is how an older Cursor install gains `sessionStart`, and an older OpenCode plugin becomes plugin v2, which hands over the pin, §7a). `rex ingest --install-skill` puts the `rex-plan` skill where all four agents read it: `~/.claude/skills/rex-plan` (or `$CLAUDE_CONFIG_DIR/skills`) for Claude Code and `~/.agents/skills/rex-plan` for Codex; Cursor and OpenCode read both (and may list it twice: the copies are identical). With `$CLAUDE_CONFIG_DIR` set, Rex's copy in `~/.claude/skills`, which Cursor and OpenCode still read, is updated too, and `--uninstall-skill` removes it with the others; a `SKILL.md` there that Rex didn't write is never touched. `--project` puts both copies in the repo instead.
 
@@ -779,7 +805,7 @@ enter create · tab agent · ? help
 
 When a copy there is Rex's but an older Rex wrote it (an older skill version in its marker, or none: it still teaches that Rex's workflow), the lead is `The rex-plan skill your agents read is out of date. Update it:`, over `rex ingest --install-skill`, or `… --install-skill --project` when the old copy is the repo's (the user's copies are judged first). With `$CLAUDE_CONFIG_DIR` set, Rex's copy left in `~/.claude/skills` counts like any of the user's. The command is never clipped: it wraps whole. When rows run short, the blank rows go first, then the sentence about your agent, then the lead, for a short hint (`teach it: rex ingest --install-skill`, `update: …`, the command under the word where it doesn't fit beside it); the card never goes. Outside git the card says where Rex makes the folder, and under it `Start Rex from your project's folder to keep plans next to the code they plan.` With plans off (a file named `rex`) there is no card, only `A file named rex sits where the rex/plans/ folder goes. Move it to turn plans on; Rex never deletes it.`
 
-With plans, a skill that is out of date is a toast on the notice row at start (`rex-plan skill is out of date · rex ingest --install-skill`, §4), and Help's feed block always has a `skill` row (§10, §13). A missing skill is no toast: the first run and Help say so.
+With plans, a skill that is out of date is a toast on the notice row at start (`rex-plan skill is out of date · rex ingest --install-skill`, §4), and Help's `Feed` always has the `rex-plan` row (§10, §13). A missing skill is no toast: the first run and Help say so.
 
 **Find** (typing any letter on Plans; `Plans › Find`, its meta the number of matches; row 1 `Plans whose name or title has "re".`): the field opens with that letter (`╭ find ─`, §2), and the cards give way to one flat list of matches across `rex/plans/**`, links and hidden folders included: an exact name or path first, then a name or path that starts with the text, then one that has it, then a plan whose title has it; newest first within each, and 30 at most (`+N more · keep typing`). The first match is selected. The list ends with `+ Create <text>`, a blank row above it from 12 rows, unless a plan is named exactly that: enter on it creates the plan at once and opens it, latched. `.rex.json` is never matched, so `json` finds nothing. Esc clears the text and brings the cards back. A leading `/` is a verb (§2).
 
@@ -826,7 +852,7 @@ Folders, then plans. Type to filter.
 - of an existing regular `*.rex.json` under this repo's `rex/plans/`, once the path is cleaned and its symlinks resolved: a `..` counts by where it leads, and a link out of `rex/plans/` leads nowhere (a relative path is taken from the event's working directory);
 - not the plan already open, judged by the file rather than its spelling (another case on macOS or Windows, a link inside `rex/plans/`). A write of the open plan only reloads it (§6) and never hides another plan written in the same batch or patch: that one is still opened or offered.
 
-Following, it opens the plan's task list (as opening it from Plans would: §6, §7), and the mascot, where it shows, glances once (§12). The notice row says `Your agent wrote <title> · opened <path>` (seen from AGENT, the toast waits for PLAN, §4), and AGENT gets one muted line, `rex › plan · following <name>`, so the move stays on record (Rex's own line, never the feed). The place never changes. It waits while you are finding, making or reading, in either place: text in Plans' field (Find, the filter), an open New plan, or a task's details or About hold the attach, and the notice row says `Your agent wrote <title> (<path>) · opens when the field is clear` (`· opens when the prompt closes` while New plan is open, `· opens when you're back on the list` on details or About, §4); the plan opens once they clear (Esc, an emptied field, New plan cancelled or created, back on the task list). Nothing else holds it: Plans with its field empty, the task list, AGENT and Help have no text to lose, and letters typed on the task list, AGENT or Help leave nothing behind. A newer write replaces a held one; a write of the open plan drops it (the agent is back on that plan); picking or creating a plan on Plans makes it the offer (above), unless it is the plan you picked. Keys read together with a batch of events are applied first, so a key acts on the screen you saw and a find typed with it holds the attach. The plan's first write may be a stub; the task list fills from the 500 ms reload, and the cursor moves to the pin once tasks appear (§1). A plan that doesn't parse when attach opens it shows its error at once, as any first open does; the two-poll debounce is for a plan already open (§6).
+Following, it opens the plan's task list (as opening it from Plans would: §6, §7), and the mascot, where it shows, glances once (§12). The notice row says `Your agent wrote <title> · opened <path>` (seen from AGENT, the toast waits for PLAN, §4), and AGENT gets one muted line, `rex · following <name>`, so the move stays on record (Rex's own line, never the feed). The place never changes. It waits while you are finding, making or reading, in either place: text in Plans' field (Find, the filter), an open New plan, or a task's details or About hold the attach, and the notice row says `Your agent wrote <title> (<path>) · opens when the field is clear` (`· opens when the prompt closes` while New plan is open, `· opens when you're back on the list` on details or About, §4); the plan opens once they clear (Esc, an emptied field, New plan cancelled or created, back on the task list). Nothing else holds it: Plans with its field empty, the task list, AGENT and Help have no text to lose, and letters typed on the task list, AGENT or Help leave nothing behind. A newer write replaces a held one; a write of the open plan drops it (the agent is back on that plan); picking or creating a plan on Plans makes it the offer (above), unless it is the plan you picked. Keys read together with a batch of events are applied first, so a key acts on the screen you saw and a find typed with it holds the attach. The plan's first write may be a stub; the task list fills from the 500 ms reload, and the cursor moves to the pin once tasks appear (§1). A plan that doesn't parse when attach opens it shows its error at once, as any first open does; the two-poll debounce is for a plan already open (§6).
 
 **Errors** are on the notice row (`✗ …`, §4) and clear on the next key.
 
@@ -850,8 +876,8 @@ Following, it opens the plan's task list (as opening it from Plans would: §6, �
 | text column < 40 cols | a task row is its id and its tag (§6) |
 | text column < 30 cols | row 0 has no places' label (§4); an AGENT thought run is only `thinking ×N`, without its latest thought (§10) |
 | text column < 24 cols | `widen to 24 columns` (`widen to 24 cols` under 19 columns), with no wordmark; keys other than Ctrl+C and Ctrl+L are ignored |
-| < 16 rows | Plans' text field is one row (`find  re`), not a box (§2); no blank row goes above an H2 |
-| < 12 rows | no blank row 2 and no notice row: a notice takes row 1 while it shows (§4). The task list has no group labels and no blank rows, and its `↑ N more` (a page's too) takes a row of its own (§6). At 11 rows the task list and its pages are laid out as at 12 rows, so they never shrink as the terminal grows (below). Plans has no blank row above `Recent`. AGENT has no blank rows, and a live thought run takes 1 row instead of 2 (§10) |
+| < 16 rows | Plans' text field is one row (`find  re`), not a box (§2); no blank row goes above a section label in Help or the feed's health (§5) |
+| < 12 rows | no blank row 2 and no notice row: a notice takes row 1 while it shows (§4). The task list has no group labels and no blank rows, and its `↑ N more` (a page's too) takes a row of its own (§6). At 11 rows the task list and its pages are laid out as at 12 rows, so they never shrink as the terminal grows (below). Plans has no blank row above `Recent`. AGENT has no blank rows, and its `↑ N earlier` takes the body's first row (§10) |
 | < 7 rows | Plans' text field is hidden: printable keys and pastes are ignored there, so nothing is typed blind, and enter never submits its text. Its footer says only what works, whatever row is selected: `type to find` / `type to filter` go; `enter` stays with the field empty (it still acts on the selected card or row) and goes while a hidden field has text and in New plan, which nothing can be typed into (`esc cancel` takes you out); and `? help` goes while a hidden field has text. Screens without a text field keep their keys and footers; `?` with the field empty, and on screens without one, still opens Help |
 | `TERM=dumb`, pipes, CI | the static card (`rex start --static`) |
 
@@ -884,19 +910,44 @@ Notes:
 
 ## 13. Help overlay (`?`)
 
-`?` opens it at once from any screen (§2); `/help` then enter does too on Plans. Its title is the crumbs of the page under it, then `Help` (`Send-off demo › Help`), row 1 `Keys for the task list, then everywhere.`, and it keeps its place across Tab. It keeps `THIS PAGE` and its scroll while it is open: a plan the agent writes meanwhile opens under it (§11) without changing them, and Esc shows it. The crumbs follow the page under Help, so they always name where Esc goes (§4). Its sections, each under an H2:
-1. `THIS PAGE`, with the page's name as meta (`tasks`, `no tasks`, `can't read`, `about`, `task`, `plans`, `open a plan`, `new plan`, `agent`): the keys of the page it was opened over. Two pages have a note under the keys, with no key beside it: on `agent`, that folding is display only: the feed keeps every thought (§10); on `plans`, that Continue and Open latest follow the plans your agent writes, and a plan picked anywhere else stays until you pick another (§11). Help never opens over text in a field (`?` is a letter there), so a find and a filter have no page of their own.
-2. `EVERYWHERE`: `tab` (switch plan / agent), `?`, `ctrl+l`, `ctrl+c ×2`.
-3. `MARKS`: the task list's glyphs and tags of §5 (`✔ – !`, and no mark for a task still to do; `pinned` the task you (`p`) or your agent set active, which a wired agent gets with each prompt (row 1 says whether it went), in the pin's yellow; `next up` nothing pinned: the task Rex would pin, never sent; `also active` a second active task, and `cycle` a task in a loop, in red; a group's `1/3`), the cursor `❯`, and what `following` / `latched` mean (§11; latched, another plan your agent writes shows on the notice row and in Open latest). AGENT's marks are under `AGENT TAB`.
-4. `YOUR AGENT AND THE PIN`: what the send state on row 1 says (§4, §7a): `sent` (your last prompt carried the pin), `sends` (it goes with your next one), `not sent` (nothing pinned, or this plan sends nothing: read-only, or not the plan Rex last opened here; with `? help`, no wired agent takes it, and `FEED` says what to run). It is where `not sent · ? help` sends you.
-5. `AGENT TAB`: how AGENT names its blocks (§10): `thinking` (a run of N thoughts, `×N`), `$`, `✗`, `[ASK]`, `reply ───`, `with pin` (under a prompt: the pin it carried; `with plan`, a new plan's name), `rex ›`.
-6. `PLANS`: what typing does there (§2), `a/b`, Ctrl+U / Ctrl+W, `?` or `/help`, and `/breakdance`.
-7. `REX NEVER`: runs or approves tools, writes a plan beyond the status values you set with `p` and `d` and an empty one you name on Plans (§7b), sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet, §7a), or reads transcripts; you and your agent both pin and finish tasks in the file, and Rex shows who did.
-8. `FEED`: the feed path and feed health (§10), a row per harness saying whether it hands your agent the pin or the command that makes it, with the `skill` row (whether the `rex-plan` skill is current, missing or out of date, and the command to fix it), and the hidden-event count.
+`?` opens it at once from any screen (§2); `/help` then enter does too on Plans. Its title is the crumbs of the page under it, then `Help` (`Send-off demo › Help`), row 1 `Keys for the task list, then everywhere.`, and it keeps its place across Tab. It keeps the page it was opened over (This page, Marks) and its scroll while it is open: a plan the agent writes meanwhile opens under it (§11) without changing them, and Esc shows it. The crumbs follow the page under Help, so they always name where Esc goes (§4). It has six sections, each a section label (bold, title case, no rule, §5), with a blank row above each but the first from 16 rows:
+1. `This page`: the keys of the page it was opened over (`tasks`, `no tasks`, `can't read`, `about`, `task`, `plans`, `open a plan`, `new plan`, `agent`, and `no events`, the empty AGENT tab, a page whose Home and End are its top and bottom and where nothing folds; row 1 names it). Plans, Open a plan and New plan list what their text field takes too: typing (a find, a filter, a name; `a/b` in New plan), `ctrl+u`, `ctrl+w`, `/help` and `/breakdance` (§2). Two pages have a note under the keys, with no key beside it: on `agent`, that folding is display only: the feed keeps every thought (§10); on `plans`, that Continue and Open latest follow the plans your agent writes, and a plan picked anywhere else stays until you pick another (§11). Help never opens over text in a field (`?` is a letter there), so a find and a filter have no page of their own.
+2. `Everywhere`: `tab` (switch between Plan and Agent), `?`, `ctrl+l`, `ctrl+c ×2`.
+3. `Marks`, the marks of the place Help was opened in. On PLAN, the task list's glyphs and tags of §5 (`❯` where you are; `✔ – !`, and no mark for a task still to do; `pinned` the task you (`p`) or your agent set active, which a wired agent gets with each prompt (row 1 says whether it went), in the pin's yellow; `next up` nothing pinned: the task Rex would pin, never sent; `also active` a second active task, and `cycle` a task in a loop, in red; a group's `1/3`), and what `following` / `latched` mean (§11). On AGENT, its marks (§10): `›` your prompt, `with pin` (under a prompt: the pin it carried; `with plan`, a new plan's name), `thinking` (a run of N thoughts, `×N`), `$` a shell command, `edit` a file your agent changed (written, patched or deleted), `… +N` folded steps, `✗`, `?`, `off pin` (the row was off the pin; why shows before the tag when it fits, and seen from PLAN, its notice row says it too) and `off pin?` (near the pin but not on it; why shows before the tag when it fits), `rex ·`.
+4. `Your agent and the pin`: what the send state on row 1 says (§4, §7a): `sent` (your last prompt carried the pin), `sends` (it goes with your next one), `not sent` (nothing pinned, or this plan sends nothing: read-only, or not the plan Rex last opened here; with `? help`, no wired agent takes it, and `Feed` says what to run). It is where `not sent · ? help` sends you.
+5. `Feed`: feed health's rows under one label (§10): the events file and the last event, a row per harness saying whether it hands your agent the pin or the command that makes it, the `rex-plan` row (whether the skill is current, missing or out of date, and the command to fix it), and the hidden-event count.
+6. `Rex never`, on every page's Help: runs or approves tools, writes a plan beyond the status values you set with `p` and `d` and an empty one you name on Plans (§7b), sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet, §7a), or reads transcripts. You and your agent both pin and finish tasks in the plan file, and Rex shows who did.
 
-`THIS PAGE` lists every key its page takes, and only those, not only its footer's (a plan with no list has no enter, → or task to move to: its page scrolls on a short screen): on the task list, About, task details, Plans and AGENT, `o`, on the task list `i`, and on the task list and task details `p` and `d`, in the same words (`open the plan your agent wrote, while the notice row offers it`); Home and End, with Ctrl+A and Ctrl+E (§3), wherever they move or scroll, Plans and Open a plan included. A test holds each page to the keys that act on it.
+```
+Send-off demo › Help                                               plan · agent
+Keys for the task list, then everywhere.
 
-The key column is 11 cells wide, keys in bold; under 34 cells, or for a key that fills the column, the key sits above what it does. No key is an icon (`↔`, `⏎`): keys are words.
+  This page
+    ↑↓          select a task · pgup pgdn a page
+    home end    first / last task (also ctrl+a ctrl+e)
+    enter →     open its details
+    p           pin this task, or unpin the pin; a wired agent gets the pin with
+                each prompt, and row 1 says whether it went
+    d           mark this task done, or reopen a done one
+    i           about this plan: its goal, scope and progress
+    o           open the plan your agent wrote, while the notice row offers it
+    esc ←       back to Plans
+
+  Everywhere
+    tab         switch between Plan and Agent
+    ?           this help · esc closes it
+    ctrl+l      repaint
+    ctrl+c ×2   quit
+
+  Marks
+  ↓ more
+
+↑↓ scroll · esc close · tab agent
+```
+
+`This page` lists every key its page takes, and only those, not only its footer's (a plan with no list has no enter, → or task to move to: its page scrolls on a short screen): on the task list, About, task details, Plans and AGENT (empty too), `o`, on the task list `i`, and on the task list and task details `p` and `d`, in the same words (`open the plan your agent wrote, while the notice row offers it`); Home and End, with Ctrl+A and Ctrl+E (§3), wherever they move or scroll, Plans and Open a plan included; Ctrl+U and Ctrl+W wherever the field takes them. A test (`TestHelpKeys`) holds each page to the keys that act on it.
+
+A key sits at column 4 in `text`, in a 12-cell column, what it does `muted` after it; under 36 cells, or for a key that fills the column, the key sits above what it does. A mark keeps its own color (`pinned` yellow, `off pin?` muted, `also active` red). No key is an icon (`↔`, `⏎`): keys are words.
 
 It has no text field: letters do nothing in it. ↑↓ and pages scroll it, Esc closes it, Tab leaves it open in its place.
 
@@ -992,7 +1043,7 @@ This is what the 2026-10 audit found, from four lenses: first run, daily loop, t
 | F37 | high | Pinned-task context and the send-off had to be copied from Rex into the agent by hand (2026-10-23 feedback) | The agent drives the plan: it pins, marks done and continues from the file, as the `rex-plan` skill teaches; Rex only shows it and never writes it (§7–§9) | `feature/agent_drives` |
 | F38 | high | Which page you are on isn't evident: the footer's first word and a `── rule ──` were the only names (2026-10-24 feedback) | A page title on row 2, a breadcrumb that is also the Esc ladder; the footer no longer names the screen (§4) | `feature/chrome_tabs` |
 | F39 | high | How to switch places isn't evident, and "tape" doesn't say what it is (2026-10-24 feedback) | Both tabs always on row 0, `[PLAN] AGENT`, the one on screen a pill; "tape" is AGENT; a cue says the other tab has news (§1, §4) | `feature/chrome_tabs` |
-| F40 | med | Section headers blend into the text; no visual hierarchy (2026-10-24 feedback) | H1 page title bar, H2 capitals with a rule, H3 field labels; bold as the one added attribute (§5) | `feature/chrome_tabs` |
+| F40 | med | Section headers blend into the text; no visual hierarchy (2026-10-24 feedback) | H1 page title bar, H2 capitals with a rule, H3 field labels; bold as the one added attribute (§5). *Replaced:* row 0's title, and bold section labels in title case with no rule (§5, §13) | `feature/chrome_tabs` |
 | F41 | med | Footer keys read as icons (`⏎`) in ` · `-joined lists that name the screen and miss `? help` at 80×24 (2026-10-24 feedback) | Keys only, as words (`enter`, `esc`), bold, two spaces apart, rank = display order with short forms; `? help` and Esc's target fit 38 cells (§4). *Since F53* the task list's 38-cell footer gives Esc's room to `p` (`enter details · p pin · ? help`); every other screen's still names Esc there | `feature/chrome_tabs` |
 | F42 | high | AGENT is crowded with thinking spam: a `── thinking ──` rule over every run, each thought wrapped in full, a rule on every block (2026-10-24 feedback) | A run of thoughts is one row, `thinking ×N` and its latest (two while live); command runs over 5 fold to `$ … +N earlier` and the last 4; a failed step is one `✗` row; only a reply and the warm start keep a rule, the rest are named by their first characters; blank rows only around prompts and before replies and asks, none under 12 rows; folding is display only (§10) | `feature/agent_stream` |
 | F43 | high | The plan list is confusing and crowded: four cards (Continue, Create, Open, Open latest) over a recents list, so the open plan shows twice and a plan up to three times, Browse repeats the root, and nothing groups or spaces the rows (2026-10-24 feedback) | `OPEN` / `RECENT` / `FOLDERS` under H2s, each plan once, `RECENT` leading with the plans opened earlier in the run; a blank row above each H2 from 16 rows where the accordion keeps its lines; actions without brackets; FOLDERS replaces Browse's root, and `../`, Esc and ← from a top folder go back to the list (§11). *Replaced:* #70's cards again, one row each, deduped, over a plain Recent (F52) | `feature/plan_list_groups` |
@@ -1007,6 +1058,7 @@ This is what the 2026-10 audit found, from four lenses: first run, daily loop, t
 | F52 | high | Start skipped your choices: it opened last time's plan, else the newest, else a Wait screen; the plan list's groups and accordion buried what to do; and a poll could open a plan you hadn't picked (2026-10-24 feedback: "#70 was a better UI for the start up plan selection page… invoke better visual hierarchy so that users know what they should be doing", "the user was able to create their own plans was good") | Start lands on Plans, every time: #70's cards, one row each and unmistakably the main choices (Continue selected, Create a plan, Open a plan, Open latest, each only when it does something), then a plain Recent, each plan named once; Continue and Open latest follow, any other pick latches; a letter starts Find in a titled text field, shown only while open; Open a plan lists folders then plans, with no `../`, other files or `+` rows; New plan makes `a/b` and never overwrites; the poll only refreshes the cards; the Wait screen is Plans' first run (§11) | `feature/plans_library` |
 | F53 | high | You couldn't act on the plan you were looking at: pinning or finishing a task meant asking your agent, even for the one keystroke's worth of intent (2026-10-24 feedback: "I feel like we should have more option for human control as well… the user should be able to pin a plan themselves by pressing p and the agent can also do it for them as well") | `p` pins the selected task or unpins the pin, `d` marks it done or reopens it, at once, writing only `status` values through a byte-preserving, hash-checked, atomic edit (`plan.Edit`), refused when the file moved on since; your agent can do all of it in the file, and every reload says who changed it (§7, §7b, §8) | `feature/human_pin_done` |
 | F54 | high | Rex showed no sign that a pin reached the agent, so pinning looked like it did nothing (2026-10-24 feedback: "Today, when i pin a task, it essentially does nothing as the agent does not refer to the task requirements") | The send state on the pin line and the pin's details (`sent with last prompt`, `sends with next prompt`, `not sent · ? help`, `not sent`), read from the stamps on this repo's prompts, the wiring and `state.json`, never claiming more than happened; `with pin <id>` under each prompt on AGENT that carried it; feed health says per harness whether it hands the pin over or the command that makes it (§7a, §4, §10, §13) | `feature/pin_shown` |
+| F55 | med | AGENT and Help were visual systems of their own: right-aligned prompt boxes, `reply ───` and warm-start rules, an `[ASK]` pill, `rex › drift` blocks that listed again the edits they judged, a thought run that grew a second row while the turn ran, and Help's seven sections in capitals with rules (2026-10-24 feedback: "Overall we need to tone down the UI as it is too overwhelming") | One stream: the gutter carries the only marks (`›`, `✗`, `?`), the agent's steps are muted (`$` only for a shell command, `edit <path>`), a thought run is one row, a reply is plain text, drift is an `off pin` / `off pin?` tag on the row it judges, Rex's lines are `rex · …`, the warm start a `before Rex started` line, and `↑ N earlier` says what is cut off; Help is six sections under bold labels, This page and Marks for the page it opened over, `Rex never` last (§9a, §10, §13) | `feature/agent_quiet` |
 
 Found in the same audit, outside the UI:
 

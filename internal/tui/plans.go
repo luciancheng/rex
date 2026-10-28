@@ -1198,9 +1198,9 @@ func (b *PlanBrowser) homeLines(width, rows int, short bool) []LogLine {
 	return lines
 }
 
-// labelLine is a section label on Plans (docs/ux.md §5): bold text,
-// indented to the rows it heads. It is never selected, and the window
-// never puts ↑ more on it.
+// labelLine is a section label (docs/ux.md §5): bold text in title case,
+// no rule, after the gutter: Plans' Recent, Help's and the feed's
+// sections. It is never selected, and the window never puts ↑ more on it.
 func labelLine(label string) LogLine {
 	return LogLine{Kind: "h2", Text: "  " + label, Spans: []Span{{Text: "  "}, {Text: label, Role: "text", Bold: true}}}
 }

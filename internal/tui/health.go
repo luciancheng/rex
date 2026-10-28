@@ -58,27 +58,44 @@ func (h *feedHealth) saw(ev watch.Event) {
 	}
 }
 
-// lines is the health block under its FEED header (docs/ux.md §10); sk is
-// how the rex-plan skill stands.
-func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time) []LogLine {
+// lines is the feed's health (docs/ux.md §10): on the empty AGENT tab
+// (grouped) three sections, Hooks (a row per harness), Skill (the
+// rex-plan skill, sk) and Feed (the events file and what Rex hid); in
+// Help one Feed section with the same rows. tall puts a blank row above
+// each section but the first.
+func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time, grouped, tall bool) []LogLine {
 	var lines []LogLine
-	// A row's words wrap in the value column. One wider than the column (a
-	// flag, a path) gets a row of its own, hung at column 4, whole: a
-	// command split mid-word can't be copied.
+	section := func(label string) {
+		if tall && len(lines) > 0 {
+			lines = append(lines, LogLine{Kind: "gap"})
+		}
+		lines = append(lines, labelLine(label))
+	}
+	// A row's name sits in a 12-cell column at column 4 and its words wrap
+	// in the value column, as Help's keys do; under helpStackBelow cells
+	// the name sits above them, at column 6. A word wider than the value
+	// column (a flag, a path) gets a row of its own, hung at column 6,
+	// whole: a command split mid-word can't be copied.
 	row := func(kind, name, what string) {
-		col, line := max(8, width-11), ""
+		const indent, hung = "    ", "      "
+		col, lead := max(8, width-len(indent)-helpKeyCol), indent+padRight(name, helpKeyCol)
+		if width < helpStackBelow {
+			lines = append(lines, LogLine{Kind: kind, Text: indent + name})
+			col, lead = max(8, width-len(hung)), hung
+		}
+		line := ""
 		flush := func() {
-			lines = append(lines, LogLine{Kind: kind, Text: strings.TrimRight("  "+padRight(name, 9)+line, " ")})
-			name, line = "", ""
+			lines = append(lines, LogLine{Kind: kind, Text: strings.TrimRight(lead+line, " ")})
+			lead, line = padRight("", cellLen(lead)), ""
 		}
 		for _, w := range strings.Fields(what) {
 			switch {
 			case cellLen(w) > col:
-				if line != "" || name != "" {
+				if line != "" || strings.TrimSpace(lead) != "" {
 					flush()
 				}
-				for _, part := range hardWrap(w, max(1, width-4)) { // split only when wider than the row
-					lines = append(lines, LogLine{Kind: kind, Text: "    " + part})
+				for _, part := range hardWrap(w, max(1, width-len(hung))) { // split only when wider than the row
+					lines = append(lines, LogLine{Kind: kind, Text: hung + part})
 				}
 			case line == "":
 				line = w
@@ -89,40 +106,67 @@ func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time) [
 				line = w
 			}
 		}
-		if line != "" || name != "" {
+		if line != "" || strings.TrimSpace(lead) != "" {
 			flush()
 		}
 	}
-	lines = append(lines, h2Line("FEED", "", width))
-	last := "no events yet"
-	if h.last != nil {
-		last = "last event " + ago(now.Sub(time.Unix(0, int64(h.last.TS*1e9)))) + " (" + h.last.Source + ")"
-	}
-	row("text", "feed", watch.ShortPath(h.path)+" · "+last)
-	for _, s := range h.statuses {
-		row(pinRow(s))
+	events := func() {
+		last := "none yet"
+		if h.last != nil {
+			last = "last event " + ago(now.Sub(time.Unix(0, int64(h.last.TS*1e9)))) + " (" + h.last.Source + ")"
+		}
+		if p := watch.ShortPath(h.path); p != "" {
+			last = p + " · " + last
+		}
+		row("text", "events", last)
 	}
 	// The agent drives the plan only once it has the skill: shown wherever
 	// the wiring is, since Plans says so only on a first run.
-	switch sk {
-	case skill.Current:
-		row("text", "skill", "rex-plan current")
-	case skill.Missing:
-		row("text", "skill", "missing · rex ingest --install-skill")
-	case skill.Stale:
-		row("text", "skill", "out of date · rex ingest --install-skill")
-	case skill.StaleProject:
-		row("text", "skill", "out of date · rex ingest --install-skill --project")
+	skillRow := func() {
+		switch sk {
+		case skill.Current:
+			row("text", "rex-plan", "current")
+		case skill.Missing:
+			row("text", "rex-plan", "missing · rex ingest --install-skill")
+		case skill.Stale:
+			row("text", "rex-plan", "out of date · rex ingest --install-skill")
+		case skill.StaleProject:
+			row("text", "rex-plan", "out of date · rex ingest --install-skill --project")
+		}
 	}
-	if hidden > 0 {
+	hiddenRows := func() {
+		if hidden == 0 {
+			return
+		}
 		noun := "events"
 		if hidden == 1 {
 			noun = "event"
 		}
-		for _, w := range wrap(fmt.Sprintf("%d %s from other folders hidden", hidden, noun), max(8, width-2)) {
-			lines = append(lines, LogLine{Kind: "idle", Text: "  " + w})
+		for _, w := range wrap(fmt.Sprintf("%d %s from other folders hidden", hidden, noun), max(8, width-4)) {
+			lines = append(lines, LogLine{Kind: "idle", Text: "    " + w})
 		}
 	}
+	if !grouped {
+		section("Feed")
+		events()
+		for _, s := range h.statuses {
+			row(pinRow(s))
+		}
+		skillRow()
+		hiddenRows()
+		return lines
+	}
+	if len(h.statuses) > 0 {
+		section("Hooks")
+		for _, s := range h.statuses {
+			row(pinRow(s))
+		}
+	}
+	section("Skill")
+	skillRow()
+	section("Feed")
+	events()
+	hiddenRows()
 	return lines
 }
 
@@ -157,15 +201,15 @@ func pinRow(s watch.HarnessStatus) (kind, name, what string) {
 // feedLead is the empty AGENT tab's row 1 (docs/ux.md §4, §10); narrow,
 // feedShort.
 const (
-	feedLead  = "Rex shows your agent's work here as its hooks report it."
-	feedShort = "Rex shows your agent's work here."
+	feedLead  = "Your agent's prompts, steps and replies show here."
+	feedShort = "Your agent's work shows here."
 )
 
-// emptyAgent is AGENT before any event: the feed's health (docs/ux.md
-// §10). Its lead, what the tab is for, is row 1 (§4).
+// emptyAgent is AGENT before any event: the feed's health, in its three
+// sections (docs/ux.md §10). Its lead, what the tab is for, is row 1 (§4).
 func (a *app) emptyAgent(width int) []LogLine {
 	a.health.refresh(a.now())
-	return a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now())
+	return a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), true, a.lines >= 16)
 }
 
 func ago(d time.Duration) string {

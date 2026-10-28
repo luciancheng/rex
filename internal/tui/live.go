@@ -27,7 +27,6 @@ const (
 var kindColor = map[string]string{
 	"before":   "muted",
 	"plan":     "muted",
-	"drift":    "muted", // its rows carry hard's or soft's color
 	"thought":  "muted",
 	"command":  "muted",
 	"question": "text",
@@ -139,70 +138,6 @@ func wrapPath(text string, width int) []string {
 		}
 	}
 	return append(lines, cur)
-}
-
-func rule(label string, width int) string {
-	label = strings.ReplaceAll(watch.CleanText(label), "\n", " ")
-	prefix := "── " + label + " "
-	if cellLen(prefix) >= width {
-		return clip(label, width)
-	}
-	return prefix + strings.Repeat("─", width-cellLen(prefix))
-}
-
-// userRows is a prompt (docs/ux.md §10): a box at most half the row wide,
-// right-aligned, its text left-aligned inside, capped at maxPromptRows.
-// Short screens (not tall) drop its blank rows. The box is at least minW
-// cells wide (as far as half the row allows), for a row drawn under it;
-// left is the box's first column.
-func userRows(text string, width int, tall bool, minW int) (rows []string, left int) {
-	boxW := max(8, width/2)
-	chunks := watch.MarkdownLines(text)
-	var wrapped []string
-	for _, chunk := range chunks {
-		if strings.TrimSpace(chunk) == "" {
-			if tall {
-				wrapped = append(wrapped, "")
-			}
-			continue
-		}
-		var lines []string
-		if strings.HasPrefix(chunk, "│ ") {
-			lines = hardWrap(chunk, boxW)
-		} else {
-			lines = wrap(chunk, boxW)
-		}
-		if len(lines) == 0 {
-			lines = []string{""}
-		}
-		wrapped = append(wrapped, lines...)
-	}
-	if len(wrapped) == 0 {
-		wrapped = []string{""}
-	}
-	if len(wrapped) > maxPromptRows {
-		more := len(wrapped) - maxPromptRows
-		wrapped = append(wrapped[:maxPromptRows], fmt.Sprintf("(+%d more rows)", more))
-	}
-	contentW := 0
-	for _, line := range wrapped {
-		if n := cellLen(line); n > contentW {
-			contentW = n
-		}
-	}
-	contentW = min(max(contentW, minW), boxW)
-	pad := max(0, width-contentW)
-	for _, line := range wrapped {
-		if strings.TrimSpace(line) == "" {
-			rows = append(rows, strings.Repeat(" ", width))
-			continue
-		}
-		rows = append(rows, strings.Repeat(" ", pad)+padRight(line, contentW))
-	}
-	if len(rows) == 0 {
-		return []string{strings.Repeat(" ", width)}, pad
-	}
-	return rows, pad
 }
 
 type LogLine struct {
@@ -376,7 +311,8 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	bodyH := max(0, bodyBottom-bodyTop)
 	var body, pinned []LogLine
 	scroll := opt.Scroll
-	fromTop, list := false, false
+	fromTop, list, stream := false, false, false
+	more := opt.More
 	if opt.Overlay != nil {
 		body = opt.Overlay.Lines
 		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
@@ -408,10 +344,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	} else {
 		body = opt.LogView
 		if body == nil {
-			// app.viewOpt's rule, read from the turn's word: a run is live
-			// while the turn is in flight, scrolled or not.
-			live := opt.Status == "thinking" || opt.Status == "running"
-			body = BuildLogView(opt.Log, width, viewOpt{live: live, tall: height >= blankFrom})
+			body = BuildLogView(opt.Log, width, viewOpt{tall: height >= blankFrom}) // app.viewOpt's rule
 		}
 		if len(opt.Log) == 0 {
 			// The empty tab is a page, not a stream: it starts at its top
@@ -420,6 +353,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 			fromTop = true
 		} else {
 			scroll = ClampScroll(len(body), bodyH, scroll)
+			stream = true
 		}
 	}
 	var visible []LogLine
@@ -450,6 +384,12 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 			if end < len(body) && !visible[len(visible)-1].Selected {
 				visible[len(visible)-1] = LogLine{Kind: "idle", Text: "  ↓ more"}
 			}
+		case stream && start > 0 && l.blank > 0:
+			// The stream's older rows are cut off the top: row 2 says how
+			// many, costing no row (docs/ux.md §10).
+			more = fmt.Sprintf("↑ %d earlier", start)
+		case stream && start > 0 && len(visible) > 2:
+			visible[0] = LogLine{Kind: "idle", Text: fmt.Sprintf("  ↑ %d earlier", start+1)}
 		}
 	}
 	enabled := opt.Enabled
@@ -473,10 +413,11 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 	}
 	if l.blank > 0 {
 		// Blank, but for ↑ N more at its right end while the open plan's
-		// list or page is scrolled (docs/ux.md §4).
+		// list or page is scrolled (docs/ux.md §4), or ↑ N earlier while
+		// AGENT's older rows are cut off (§10).
 		rows[2] = strings.Repeat(" ", width)
-		if more := cellLen(opt.More); more > 0 && more < width {
-			rows[2] = strings.Repeat(" ", width-1-more) + paintSpans([]Span{{Text: opt.More}}, "muted", more, enabled) + " "
+		if n := cellLen(more); n > 0 && n < width {
+			rows[2] = strings.Repeat(" ", width-1-n) + paintSpans([]Span{{Text: more}}, "muted", n, enabled) + " "
 		}
 	}
 	for offset, line := range pinned {

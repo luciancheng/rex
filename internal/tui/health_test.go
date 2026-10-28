@@ -21,33 +21,66 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 		},
 		read: time.Now(), // fresh: the test's statuses stand
 	}
-	text := viewText(h.lines(78, 4, skill.Missing, now))
-	for _, want := range []string{"FEED ──", "last event 3h ago (cursor)", "cursor   wired", "claude   not wired · rex ingest --install claude", "skill    missing · rex ingest --install-skill", "4 events from other folders hidden"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("missing %q\n%s", want, text)
+	// Help's Feed: one section, the events file, a row per harness, the
+	// skill's and what Rex hid.
+	text := viewText(h.lines(78, 4, skill.Missing, now, false, true))
+	want := strings.Join([]string{
+		"  Feed",
+		"    events      /home/me/.rex/session.jsonl · last event 3h ago (cursor)",
+		"    claude      not wired · rex ingest --install claude",
+		"    cursor      wired · rerun rex ingest --install cursor",
+		"    rex-plan    missing · rex ingest --install-skill",
+		"    4 events from other folders hidden",
+	}, "\n") + "\n"
+	if text != want {
+		t.Fatalf("got\n%s\nwant\n%s", text, want)
+	}
+	// The empty AGENT tab: the same rows in three sections (docs/ux.md §10).
+	text = viewText(h.lines(78, 4, skill.Missing, now, true, true))
+	want = strings.Join([]string{
+		"  Hooks",
+		"    claude      not wired · rex ingest --install claude",
+		"    cursor      wired · rerun rex ingest --install cursor",
+		"",
+		"  Skill",
+		"    rex-plan    missing · rex ingest --install-skill",
+		"",
+		"  Feed",
+		"    events      /home/me/.rex/session.jsonl · last event 3h ago (cursor)",
+		"    4 events from other folders hidden",
+	}, "\n") + "\n"
+	if text != want {
+		t.Fatalf("got\n%s\nwant\n%s", text, want)
+	}
+	for _, l := range h.lines(78, 4, skill.Missing, now, true, false) {
+		if l.Kind == "gap" {
+			t.Fatal("no blank rows under 16 rows")
+		}
+		if l.Kind == "h2" && (l.Spans[1].Role != "text" || !l.Spans[1].Bold || strings.Contains(l.Text, "─")) {
+			t.Fatalf("a section label is bold text with no rule: %+v", l)
 		}
 	}
 	a := testApp(t)
 	a.health = h
 	press(a, "\t")
 	rows := a.frameRows().Rows
-	if f := a.frame(); !strings.HasPrefix(textOf(rows[0], a.columns), "Agent ") || !strings.Contains(textOf(rows[0], a.columns), "no events yet") || !strings.Contains(f, "FEED ──") || strings.Contains(f, "Ready. Watching") {
+	if f := a.frame(); !strings.HasPrefix(textOf(rows[0], a.columns), "Agent ") || !strings.Contains(textOf(rows[0], a.columns), "no events yet") || !strings.Contains(f, "  Hooks") || strings.Contains(f, "Ready. Watching") {
 		t.Fatalf("the empty AGENT tab shows feed health, and says it waits in its title (docs/ux.md §4)\n%s", f)
 	}
 	// Its lead sentence is row 1 (docs/ux.md §4, §10); the body is the
-	// feed's health, from FEED.
+	// feed's health, from Hooks.
 	if got := textOf(rows[1], a.columns); got != feedLead {
 		t.Fatalf("row 1 is the lead: %q", got)
 	}
 	for _, w := range []int{38, 78} {
-		if body := viewText(a.emptyAgent(w)); !strings.HasPrefix(body, "FEED ─") || strings.Contains(body, "your agent's work here") {
-			t.Fatalf("%d cells: the body starts at FEED, with no lead\n%s", w, body)
+		if body := viewText(a.emptyAgent(w)); !strings.HasPrefix(body, "  Hooks\n") || strings.Contains(body, feedShort) {
+			t.Fatalf("%d cells: the body starts at Hooks, with no lead\n%s", w, body)
 		}
 	}
-	if a.settle(120, 11); !strings.Contains(a.frame(), "FEED ─") || strings.Contains(a.frame(), "waiting for agent events") || textOf(a.frameRows().Rows[1], a.columns) != feedLead || !strings.Contains(textOf(a.frameRows().Rows[0], a.columns), "no events yet") {
+	if a.settle(120, 11); !strings.Contains(a.frame(), "  Hooks") || textOf(a.frameRows().Rows[1], a.columns) != feedLead || !strings.Contains(textOf(a.frameRows().Rows[0], a.columns), "no events yet") {
 		t.Fatalf("under 12 rows the title still says it waits, and row 1 is the lead\n%s", a.frame())
 	}
-	if strings.Contains(viewText(a.helpBody(78)), "your agent's work here") {
+	if strings.Contains(viewText(a.helpBody(78)), feedShort) {
 		t.Fatal("Help's feed block has no lead")
 	}
 	a.settle(120, 32)
@@ -59,9 +92,9 @@ func TestFeedHealthOnTheEmptyAgentTab(t *testing.T) {
 }
 
 // The empty AGENT tab is a page (docs/ux.md §10): it starts at its top,
-// FEED, and its lead is row 1 (§4), so the page never starts mid-sentence.
+// Hooks, and its lead is row 1 (§4), so the page never starts mid-sentence.
 // With every harness found but not wired and the skill missing, the first
-// body row is FEED at every size, and the lead is never in the body.
+// body row is Hooks at every size, and the lead is never in the body.
 func TestEmptyAgentNeverStartsMidSentence(t *testing.T) {
 	for _, size := range [][2]int{{80, 12}, {80, 16}, {80, 20}, {50, 12}, {80, 24}, {30, 8}, {24, 7}} {
 		a := testApp(t)
@@ -71,7 +104,7 @@ func TestEmptyAgentNeverStartsMidSentence(t *testing.T) {
 		a.settle(size[0], size[1])
 		body := agentBody(a)
 		name := fmt.Sprintf("%d×%d", size[0], size[1])
-		if !strings.HasPrefix(body[0], "FEED ─") || strings.Contains(strings.Join(body, "\n"), "your agent's work") {
+		if body[0] != "  Hooks" || strings.Contains(strings.Join(body, "\n"), feedShort) {
 			t.Errorf("%s: the page starts mid-block, or the lead is in it: %q\n%s", name, body[0], strings.Join(body, "\n"))
 		}
 		if row, want := textOf(a.frameRows().Rows[1], a.columns), feedLead; row != want && (cellLen(feedLead) < PaneTextWidth(a.columns, a.lines) || row != feedShort && !strings.HasSuffix(row, "…")) {
@@ -99,7 +132,7 @@ func TestEmptyAgentScrollsLikeWait(t *testing.T) {
 		t.Fatalf("the block fits %d rows: %d", l.bodyH, len(all))
 	}
 	body := agentBody(a)
-	if body[len(body)-1] != "  ↓ more" || !strings.HasPrefix(body[0], "FEED ─") || footer() != "↑↓ scroll · tab plan · ? help" {
+	if body[len(body)-1] != "  ↓ more" || body[0] != "  Hooks" || footer() != "↑↓ scroll · tab plan · ? help" {
 		t.Fatalf("the top, with ↓ more\n%s\n%s", strings.Join(body, "\n"), footer())
 	}
 	seen := map[string]bool{}
@@ -173,7 +206,7 @@ func TestFeedHealthWrapsAndSaysWhatIsWiredHere(t *testing.T) {
 		},
 		read: now,
 	}
-	text := viewText(h.lines(38, 0, skill.Current, now))
+	text := viewText(h.lines(38, 0, skill.Current, now, false, false))
 	if !strings.Contains(strings.Join(strings.Fields(text), " "), "claude wired for this repo · sends the pin with each prompt") {
 		t.Fatalf("a --project install is wired here\n%s", text)
 	}
@@ -227,12 +260,12 @@ func TestAskClearsOnceTheToolRuns(t *testing.T) {
 func TestFeedHealthSaysHowTheSkillStands(t *testing.T) {
 	h := feedHealth{path: "/x/session.jsonl", read: time.Now()}
 	for c, want := range map[skill.Copy]string{
-		skill.Current:      "skill    rex-plan current",
-		skill.Missing:      "skill    missing · rex ingest --install-skill",
-		skill.Stale:        "skill    out of date · rex ingest --install-skill",
-		skill.StaleProject: "skill    out of date · rex ingest --install-skill --project",
+		skill.Current:      "rex-plan current",
+		skill.Missing:      "rex-plan missing · rex ingest --install-skill",
+		skill.Stale:        "rex-plan out of date · rex ingest --install-skill",
+		skill.StaleProject: "rex-plan out of date · rex ingest --install-skill --project",
 	} {
-		if text := strings.Join(strings.Fields(viewText(h.lines(78, 0, c, time.Now()))), " "); !strings.Contains(text, strings.Join(strings.Fields(want), " ")) {
+		if text := strings.Join(strings.Fields(viewText(h.lines(78, 0, c, time.Now(), false, false))), " "); !strings.Contains(text, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("%v: want %q\n%s", c, want, text)
 		}
 	}
@@ -245,7 +278,7 @@ func TestFeedHealthNeverSplitsAWord(t *testing.T) {
 	h := feedHealth{path: "/x/session.jsonl", statuses: []watch.HarnessStatus{{Name: "codex", Present: true}}, read: time.Now()}
 	for _, width := range []int{24, 25, 38} {
 		for _, c := range []skill.Copy{skill.Missing, skill.StaleProject} {
-			lines := strings.Split(viewText(h.lines(width, 0, c, time.Now())), "\n")
+			lines := strings.Split(viewText(h.lines(width, 0, c, time.Now(), false, false)), "\n")
 			words := map[string]bool{}
 			for _, line := range lines {
 				if cellLen(line) > width {
@@ -265,8 +298,9 @@ func TestFeedHealthNeverSplitsAWord(t *testing.T) {
 			}
 		}
 	}
-	text := viewText(h.lines(24, 0, skill.Missing, time.Now()))
-	if want := "  skill    missing · rex\n           ingest\n    --install-skill"; !strings.Contains(text, want) {
+	// Under 36 cells a row's name sits above its words, at column 6.
+	text := viewText(h.lines(24, 0, skill.Missing, time.Now(), false, false))
+	if want := "    rex-plan\n      missing · rex\n      ingest\n      --install-skill"; !strings.Contains(text, want) {
 		t.Fatalf("want\n%s\n%s", want, text)
 	}
 	for _, cols := range []int{24, 25} {

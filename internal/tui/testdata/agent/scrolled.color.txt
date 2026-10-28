@@ -1,0 +1,24 @@
+\e[38;2;240;244;250m\e[1mAgent\e[0m                                                  \e[38;2;132;148;172m↓ 6 newer\e[0m   \e[38;2;132;148;172mplan\e[0m\e[38;2;132;148;172m · \e[0m\e[38;2;226;232;240magent\e[0m
+\e[38;2;132;148;172midle\e[0m                                                      \e[38;2;132;148;172mpinned \e[0m\e[38;2;244;196;66mcard-highlight\e[0m
+                                                                   \e[38;2;132;148;172m↑ 38 earlier\e[0m
+  \e[38;2;226;232;240mEarlier reply 19.\e[0m
+\e[38;2;132;148;172m  rex · following Send-off demo\e[0m
+
+\e[38;2;132;148;172m› \e[0m\e[38;2;226;232;240mStart on the pinned task: the selected card should be one block.\e[0m
+\e[38;2;226;232;240m  Keep the fill on all three rows.\e[0m
+  \e[38;2;132;148;172mwith pin \e[0m\e[38;2;244;196;66mcard-highlight\e[0m
+
+\e[38;2;132;148;172m  thinking ×3 · One painter for the bar and the fill, then.\e[0m
+\e[38;2;132;148;172m  $ go test ./internal/tui -run PlanCard\e[0m
+\e[38;2;132;148;172m  edit internal/tui/plans.go\e[0m
+\e[38;2;132;148;172m  edit internal/watch/format.go\e[0m          \e[38;2;132;148;172moutside card-highlight files · \e[0m\e[38;2;244;196;66moff pin\e[0m
+\e[38;2;132;148;172m  edit internal/tui/live_view.go\e[0m                    \e[38;2;132;148;172mnext to plans.go · \e[0m\e[38;2;132;148;172moff pin?\e[0m
+\e[38;2;132;148;172m  $ go vet ./...\e[0m
+\e[38;2;232;78;78m✗\e[0m\e[38;2;132;148;172m go vet ./... · plans.go:88: unreachable code\e[0m
+\e[38;2;132;148;172m  $ go test ./internal/tui\e[0m
+
+  \e[38;2;226;232;240m\e[1mOne block\e[0m
+
+  \e[38;2;226;232;240mThe selected card is one painter now:\e[0m
+
+\e[38;2;132;148;172m↑↓ scroll · home oldest · end live · tab plan · ? help\e[0m

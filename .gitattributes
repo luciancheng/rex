@@ -7,3 +7,5 @@ internal/skill/rex-plan/SKILL.md text eol=lf
 *.sh text eol=lf
 # The generated OpenCode plugin's golden: the same bytes on every OS.
 internal/watch/testdata/*.js text eol=lf
+# The Agent tab's goldens: the frames are compared byte for byte.
+internal/tui/testdata/agent/*.txt text eol=lf

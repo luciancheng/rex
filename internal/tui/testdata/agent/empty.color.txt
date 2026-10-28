@@ -1,0 +1,24 @@
+\e[38;2;240;244;250m\e[1mAgent\e[0m                                              \e[38;2;132;148;172mno events yet\e[0m   \e[38;2;132;148;172mplan\e[0m\e[38;2;132;148;172m · \e[0m\e[38;2;226;232;240magent\e[0m
+\e[38;2;132;148;172mYour agent's prompts, steps and replies show here.\e[0m
+
+  \e[38;2;226;232;240m\e[1mHooks\e[0m
+\e[38;2;226;232;240m    claude      wired · sends the pin with each prompt\e[0m
+\e[38;2;132;148;172m    codex       not found\e[0m
+\e[38;2;226;232;240m    cursor      wired · rerun rex ingest --install cursor\e[0m
+\e[38;2;132;148;172m    opencode    not found\e[0m
+
+  \e[38;2;226;232;240m\e[1mSkill\e[0m
+\e[38;2;226;232;240m    rex-plan    missing · rex ingest --install-skill\e[0m
+
+  \e[38;2;226;232;240m\e[1mFeed\e[0m
+\e[38;2;226;232;240m    events      ~/.rex/session.jsonl · none yet\e[0m
+
+
+
+
+
+
+
+
+
+\e[38;2;132;148;172mtab plan · ? help\e[0m

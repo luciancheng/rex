@@ -11,69 +11,29 @@ import (
 	"github.com/luciancheng/rex/internal/watch"
 )
 
-func TestMarkdownUserPromptAlignment(t *testing.T) {
+// docs/ux.md §10: a prompt has no YOU rule and no box: › in the gutter
+// and its text left-aligned after it, its later rows after the gutter.
+func TestUserPromptIsLeftAligned(t *testing.T) {
 	view := BuildLogView([]watch.Event{{Source: "cursor", Kind: "user", Text: "format this please"}}, 36, viewOpt{tall: true})
-	if view[0].Kind != "user" {
-		t.Fatalf("kind %s", view[0].Kind)
+	if len(view) != 1 || view[0].Kind != "user" || view[0].Text != "› format this please" {
+		t.Fatalf("%+v", view)
 	}
-	for _, line := range view {
+	prompt := "one two three four five six seven eight nine ten eleven"
+	width := 40
+	var body []string
+	for _, line := range BuildLogView([]watch.Event{{Source: "cursor", Kind: "user", Text: prompt}}, width, viewOpt{tall: true}) {
 		if strings.Contains(line.Text, "──") || strings.TrimSpace(strings.ToLower(line.Text)) == "you" {
 			t.Fatalf("unexpected label %q", line.Text)
 		}
+		body = append(body, line.Text)
 	}
-	var body []string
-	for _, line := range view {
-		if line.Kind == "user" && strings.Contains(line.Text, "format this please") {
-			body = append(body, line.Text)
+	if len(body) <= 1 || !strings.HasPrefix(body[0], "› one") {
+		t.Fatalf("expected a wrap from the gutter, got %#v", body)
+	}
+	for _, line := range body[1:] {
+		if !strings.HasPrefix(line, "  ") || line[2] == ' ' || cellLen(line) > width {
+			t.Fatalf("not left-aligned after the gutter: %q", line)
 		}
-	}
-	if len(body) == 0 {
-		t.Fatal("missing body")
-	}
-	if !strings.HasSuffix(strings.TrimRight(body[0], " "), "format this please") {
-		t.Fatalf("%q", body[0])
-	}
-	if !strings.HasPrefix(body[0], " ") {
-		t.Fatal("not right aligned")
-	}
-}
-
-func TestUserPromptBoxIsLeftAlignedInside(t *testing.T) {
-	prompt := "one two three four five six seven eight nine ten eleven"
-	width := 40
-	view := BuildLogView([]watch.Event{{Source: "cursor", Kind: "user", Text: prompt}}, width, viewOpt{tall: true})
-	var body []string
-	for _, line := range view {
-		if line.Kind == "user" && strings.TrimSpace(line.Text) != "" {
-			body = append(body, line.Text)
-		}
-	}
-	if len(body) <= 1 {
-		t.Fatalf("expected wrap, got %#v", body)
-	}
-	half := width / 2
-	starts := map[int]bool{}
-	var start int
-	for _, line := range body {
-		n := len(line) - len(strings.TrimLeft(line, " "))
-		starts[n] = true
-		start = n
-		if line[start] == ' ' {
-			t.Fatalf("interior not left aligned %q", line)
-		}
-		trimmed := strings.TrimRight(line, " ")
-		if len([]rune(trimmed))-start > half {
-			t.Fatalf("wider than half %q", line)
-		}
-		if len([]rune(strings.TrimRight(line, " "))) > width {
-			t.Fatalf("wider than pane")
-		}
-	}
-	if len(starts) != 1 {
-		t.Fatalf("ragged box %v", starts)
-	}
-	if start < width-half {
-		t.Fatalf("not right aligned start=%d", start)
 	}
 }
 
@@ -195,7 +155,7 @@ func TestBuildLogViewKeepsRunReplyHidesDone(t *testing.T) {
 		{Source: "cursor", Kind: "text", Text: "Second reply."},
 	}, 48, viewOpt{tall: true})
 	text := viewText(view)
-	for _, needle := range []string{"thinking  Checking the sprite.", "$ Write /tmp/a.go", "reply ───", "First reply", "Second reply"} {
+	for _, needle := range []string{"  thinking · Checking the sprite.", "  edit /tmp/a.go", "\n  First reply.\n\n  Second reply."} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("missing %q in\n%s", needle, text)
 		}
@@ -206,9 +166,8 @@ func TestBuildLogViewKeepsRunReplyHidesDone(t *testing.T) {
 	if strings.Contains(text, "Read /tmp") {
 		t.Fatalf("file look still in\n%s", text)
 	}
-	replies := strings.Count(text, "reply ───")
-	if replies != 2 {
-		t.Fatalf("want two reply blocks, got %d\n%s", replies, text)
+	if strings.Contains(text, "reply ───") {
+		t.Fatalf("a reply has no rule\n%s", text)
 	}
 }
 
@@ -363,7 +322,7 @@ func TestAppendOnlyFeedShowsOneGrowingReply(t *testing.T) {
 		ExtendLog(&log, tail.Poll())
 	}
 	view := viewText(BuildLogView(log, 48, viewOpt{tall: true}))
-	if strings.Count(view, "reply ───") != 1 || !strings.Contains(view, "all three rows") {
+	if strings.Count(view, "The bar") != 1 || !strings.Contains(view, "all three rows") {
 		t.Fatalf("want one merged reply\n%s", view)
 	}
 }

@@ -185,13 +185,6 @@ func paintRun(text string, s Span, kind string, enabled bool) string {
 	return mascot.PaintStyle(text, roleRGB(role), s.Bold, enabled)
 }
 
-// pill is a mark in brackets, "[WORD]", the word bold, all of it in role;
-// the brackets show in color too, so the characters never change
-// (docs/ux.md §5).
-func pill(word, role string) []Span {
-	return []Span{{Text: "[", Role: role}, {Text: word, Role: role, Bold: true}, {Text: "]", Role: role}}
-}
-
 // selMark is the selection's gutter (docs/ux.md §5): ❯ and a blank, on
 // one row of a screen.
 const selMark = "❯ "
@@ -209,25 +202,6 @@ func picked(spans []Span) []Span {
 		out[i] = s
 	}
 	return out
-}
-
-// h2Line is a section header (docs/ux.md §5): the label in bold capitals
-// at column 0, a slate rule to the edge, then optional muted meta.
-func h2Line(label, meta string, width int) LogLine {
-	label, meta = flat(label), flat(meta)
-	rule := width - cellLen(label) - 1
-	if meta != "" {
-		if rule-cellLen(meta)-1 < 3 {
-			meta = ""
-		} else {
-			rule -= cellLen(meta) + 1
-		}
-	}
-	spans := []Span{{Text: label, Role: "text", Bold: true}, {Text: " " + strings.Repeat("─", max(3, rule)), Role: "border"}}
-	if meta != "" {
-		spans = append(spans, Span{Text: " " + meta, Role: "muted"})
-	}
-	return spanLine("text", spans...)
 }
 
 // paraRows is a value wrapped to width cells, each line of it starting a

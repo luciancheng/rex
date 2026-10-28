@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +69,37 @@ func listRepo(t *testing.T) *app {
 	return a
 }
 
+// olderThan moves every plan under root but newest to before it, in the
+// order they had: writePlan stamps them on the real clock, and Rex's may
+// read any time.
+func olderThan(t *testing.T, root, newest string) {
+	t.Helper()
+	info, err := os.Stat(newest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plans []string
+	var last time.Time
+	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && plan.IsFile(d.Name()) && p != newest {
+			if fi, err := os.Stat(p); err == nil {
+				plans = append(plans, p)
+				if fi.ModTime().After(last) {
+					last = fi.ModTime()
+				}
+			}
+		}
+		return nil
+	})
+	shift := info.ModTime().Add(-time.Minute).Sub(last)
+	for _, p := range plans {
+		if fi, err := os.Stat(p); err == nil {
+			when := fi.ModTime().Add(shift)
+			os.Chtimes(p, when, when)
+		}
+	}
+}
+
 // body is the text column's rows from the body down, trimmed: under the
 // title row and row 1, and under row 2's blank from blankFrom rows
 // (docs/ux.md §4).
@@ -89,6 +121,7 @@ func TestPlansMockups(t *testing.T) {
 	latest := writePlan(t, a.plans.Repo, "auth/login.rex.json", `{"version": 1, "title": "Login flow", "tasks": [{"id": "a", "status": "done"}, {"id": "b"}, {"id": "c"}]}`)
 	when := a.now().Add(-8 * time.Minute) // newer than the rest, on Rex's clock
 	os.Chtimes(latest, when, when)
+	olderThan(t, a.plans.Root, latest)
 	a.plans.walk = planWalk{}
 	press(a, "esc")
 	a.settle(80, 24)

@@ -153,11 +153,13 @@ func notWired() feedHealth {
 		path: "/home/me/.rex/session.jsonl",
 		// Half an hour off the hour, so the float stamp never rounds to 2h.
 		last: &watch.Event{Source: "cursor", TS: float64(now.Add(-3*time.Hour-30*time.Minute).UnixNano()) / 1e9},
-		read: now.Add(time.Hour), // never refreshed from the temp HOME mid-test
+		read: now,
 	}
 	for _, name := range []string{"claude", "codex", "cursor", "opencode"} {
 		h.statuses = append(h.statuses, watch.HarnessStatus{Name: name, Present: true})
 	}
+	// Never read from the temp HOME mid-test.
+	h.statusesFor = func(string) []watch.HarnessStatus { return h.statuses }
 	return h
 }
 
@@ -166,13 +168,13 @@ func TestFeedHealthWrapsAndSaysWhatIsWiredHere(t *testing.T) {
 	h := feedHealth{
 		path: "/home/me/.rex/session.jsonl",
 		statuses: []watch.HarnessStatus{
-			{Name: "claude", Present: true, Here: true},
+			{Name: "claude", Present: true, Here: true, Prompts: true},
 			{Name: "codex", Present: true},
 		},
 		read: now,
 	}
 	text := viewText(h.lines(38, 0, skill.Current, now))
-	if !strings.Contains(text, "wired (this repo)") {
+	if !strings.Contains(strings.Join(strings.Fields(text), " "), "claude wired for this repo · sends the pin with each prompt") {
 		t.Fatalf("a --project install is wired here\n%s", text)
 	}
 	if strings.Contains(text, "waiting") {

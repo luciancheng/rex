@@ -19,6 +19,7 @@ import (
 // no tasks yet (Task is nil).
 type Pinned struct {
 	Rel  string // the plan file from the repo root, slash-separated
+	Repo string // the repo it was looked up in (PinFor): the folder holding .git, else the folder itself
 	Plan *Plan
 	Task *Task
 }
@@ -58,22 +59,45 @@ func PinFor(cwd, statePath string) *Pinned {
 		return nil
 	}
 	p, err := Load(last)
-	if err != nil || p.ReadOnly != "" {
+	if err != nil {
+		return nil
+	}
+	rel, err := filepath.Rel(repo, last)
+	if err != nil {
+		return nil
+	}
+	pin := Sends(filepath.ToSlash(rel), p)
+	if pin != nil {
+		pin.Repo = repo
+	}
+	return pin
+}
+
+// Sends is what the prompt hooks hand the agent from p, the plan at rel
+// (from its repo, slash-separated), while it is the plan Rex last opened
+// there: its explicit pin, or, with no tasks yet, the plan alone. nil
+// sends nothing: a read-only plan, tasks with nothing pinned, or a path
+// the note can't name as it is. PinFor asks it of the file, and Rex's pin
+// line of the copy it shows, so the send state says what a prompt would
+// carry (docs/ux.md §7a).
+func Sends(rel string, p *Plan) *Pinned {
+	if p == nil || p.ReadOnly != "" {
 		return nil
 	}
 	t := activePin(p)
 	if t == nil && len(p.Tasks) > 0 {
 		return nil // tasks, and nothing pinned
 	}
-	rel, err := filepath.Rel(repo, last)
-	if err != nil {
-		return nil
-	}
-	rel = filepath.ToSlash(rel)
-	if noteText(rel, noteItem) != rel {
+	if !Nameable(rel) {
 		return nil // the note would fold or cut it and name no file
 	}
 	return &Pinned{Rel: rel, Plan: p, Task: t}
+}
+
+// Nameable reports whether the note can name a plan at rel as it is: a
+// path it would fold or cut names no file, so such a plan sends nothing.
+func Nameable(rel string) bool {
+	return noteText(rel, noteItem) == rel
 }
 
 // activePin is p's explicit pin: its first active leaf, the one Rex shows

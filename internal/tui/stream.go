@@ -125,11 +125,7 @@ func (b block) lines(width int, opt viewOpt, newest bool) []LogLine {
 	case "question":
 		return askLines(ev.Text, width)
 	case "user":
-		var lines []LogLine
-		for _, row := range userRows(watch.CleanText(ev.Text), width, opt.tall) {
-			lines = append(lines, LogLine{Kind: "user", Text: row})
-		}
-		return lines
+		return promptLines(ev, width, opt.tall)
 	case "plan":
 		return []LogLine{rexLine("plan", "plan · "+squash(ev.Text), width)}
 	case "drift":
@@ -138,6 +134,30 @@ func (b block) lines(width int, opt viewOpt, newest bool) []LogLine {
 		return []LogLine{{Kind: "before", Text: rule(ev.Text, width)}}
 	}
 	return []LogLine{{Kind: b.kind, Text: ellipsis(squash(ev.Text), width)}}
+}
+
+// promptLines is a prompt (docs/ux.md §10): its box, and under it, in the
+// box's column, what it carried to your agent (carriedTag): "with pin
+// <id>" muted with the id in the pin's yellow, or "with plan <name>". Only
+// a prompt rex ingest stamped has that row, so it never claims more than
+// happened (§7a).
+func promptLines(ev watch.Event, width int, tall bool) []LogLine {
+	lead, what := carriedTag(ev)
+	tag := lead + what
+	rows, left := userRows(watch.CleanText(ev.Text), width, tall, cellLen(tag))
+	var lines []LogLine
+	for _, row := range rows {
+		lines = append(lines, LogLine{Kind: "user", Text: row})
+	}
+	if what == "" {
+		return lines
+	}
+	shown := ellipsis(tag, max(1, width-left))
+	spans := []Span{{Text: strings.Repeat(" ", left)}, {Text: shown, Role: "muted"}}
+	if id, ok := strings.CutPrefix(shown, lead); ok && lead == "with pin " {
+		spans = []Span{spans[0], {Text: lead, Role: "muted"}, {Text: id, Role: "accent"}}
+	}
+	return append(lines, spanLine("user", spans...))
 }
 
 // squash is agent text as one clean line, its whitespace collapsed.

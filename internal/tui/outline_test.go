@@ -215,8 +215,8 @@ func TestTaskListAtAGlance(t *testing.T) {
 	if got := textOf(rows[0], 80); got != sides("Rex visual redesign", "2/8 done   plan · agent", 80) {
 		t.Errorf("row 0: %q", got)
 	}
-	if got := textOf(rows[1], 80); got != "pinned  page-titles · Page titles and footer keys" {
-		t.Errorf("row 1, the pin line: %q", got)
+	if got := textOf(rows[1], 80); got != sides("pinned  page-titles · Page titles and footer keys", "not sent · ? help", 80) {
+		t.Errorf("row 1, the pin line, and that no wired agent takes the pin: %q", got)
 	}
 	want := `  ✔ tab-bar       Tab bar on row 0
 ❯   page-titles   Page titles and footer keys                            pinned
@@ -634,7 +634,7 @@ func TestDetailsMirrorThePinNote(t *testing.T) {
 		}
 		pin := p.Graph().Pin()
 		note := plan.PinNote(&plan.Pinned{Rel: rel, Plan: p, Task: pin}, false)
-		page := taskPage(&planDoc{plan: p}, rel, pin.ID, 400)
+		page := taskPage(&planDoc{plan: p}, rel, pin.ID, 400, "")
 		lines := strings.Split(note, "\n")
 		var sent, dropped []string
 		for _, f := range pageFields(page) {
@@ -665,7 +665,7 @@ func TestDetailsMirrorThePinNote(t *testing.T) {
 		}
 	}
 	p, _ := plan.Parse([]byte(rich))
-	text := viewText(taskPage(&planDoc{plan: p}, rel, "pin", 100))
+	text := viewText(taskPage(&planDoc{plan: p}, rel, "pin", 100, ""))
 	for _, want := range []string{"  Also active   other\n", "  Waits on      dep (not done)\n", "  Builds on     base (done): laid it\n", "  Out of scope  plan out\n                task out\n", "  Branch        feature/pin, stacked on feature/base\n"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the rich pin's details have %q\n%s", want, text)
@@ -682,11 +682,11 @@ func TestTaskDetails(t *testing.T) {
 	a, _, _ := openDemo(t, specPlan, 80, 24)
 	rows := func() (string, string) { r := a.frameRows().Rows; return textOf(r[0], 80), textOf(r[1], 80) }
 	press(a, "\r")
-	if r0, r1 := rows(); r0 != sides("Rex visual redesign › page-titles", "pinned   plan · agent", 80) || r1 != "task 2 of 8" {
+	if r0, r1 := rows(); r0 != sides("Rex visual redesign › page-titles", "pinned   plan · agent", 80) || r1 != sides("task 2 of 8", "not sent · ? help", 80) {
 		t.Errorf("the pin's rows 0 and 1: %q / %q", r0, r1)
 	}
 	want := `  Page titles and footer keys
-  Your agent gets these fields with every prompt.
+  Not sent: no wired agent takes the pin · ? help
   Does          Every screen opens with a title row that says where you are
                 The footer lists keys only, in words
   Needs         the tab bar on row 0
@@ -710,7 +710,7 @@ func TestTaskDetails(t *testing.T) {
 	if r0, r1 := rows(); r0 != sides("Rex visual redesign › agent-stream", "pending   plan · agent", 80) || r1 != "task 3 of 8" {
 		t.Errorf("a pending task's rows 0 and 1: %q / %q", r0, r1)
 	}
-	if body := planBody(a); !strings.Contains(body, "  Pin it (p) and your agent gets these fields with every prompt.\n  Does          One row per run of thoughts on the Agent tab\n  Waits on      page-titles (not done)\n") {
+	if body := planBody(a); !strings.Contains(body, "  Pin it (p) to send these fields; no wired agent takes them now · ? help\n  Does          One row per run of thoughts on the Agent tab\n  Waits on      page-titles (not done)\n") {
 		t.Errorf("a pending task's details\n%s", body)
 	}
 	press(a, "esc", "home", "\r")
@@ -731,7 +731,7 @@ func TestTaskDetails(t *testing.T) {
 	if got := trimmed(planBody(a)); got != want {
 		t.Errorf("a done task's details:\n%s\nwant\n%s", got, want)
 	}
-	for _, line := range taskPage(a.doc, a.plans.CurrentRel(), "tab-bar", 80) {
+	for _, line := range taskPage(a.doc, a.plans.CurrentRel(), "tab-bar", 80, "") {
 		if strings.Contains(line.Text, "Planned") && line.Spans[1].Role != "muted" {
 			t.Errorf("what was planned is muted: %+v", line)
 		}
@@ -748,18 +748,18 @@ func TestTaskDetails(t *testing.T) {
 	// A done task with no notes yet; a read-only plan sends nothing; under
 	// 50 body cells labels sit above their values.
 	n, _, _ := openDemo(t, `{"version": 2, "tasks": [{"id": "a", "title": "A", "status": "done", "does": ["the work"]}, {"id": "b", "title": "B", "status": "active", "does": ["more work"]}]}`, 80, 24)
-	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "a", 80)); !strings.HasPrefix(got, "  A\n  ✔ Done · no notes yet\n  Planned       the work") {
+	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "a", 80, "")); !strings.HasPrefix(got, "  A\n  ✔ Done · no notes yet\n  Planned       the work") {
 		t.Errorf("done with no notes\n%s", got)
 	}
-	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "b", 80)); !strings.Contains(got, "  A read-only plan sends your agent nothing.\n") {
+	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "b", 80, n.detailNote("b"))); !strings.Contains(got, "  A read-only plan sends your agent nothing.\n") {
 		t.Errorf("read-only\n%s", got)
 	}
-	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "b", 40)); !strings.Contains(got, "\n  Does\n    more work") {
+	if got := viewText(taskPage(n.doc, n.plans.CurrentRel(), "b", 40, "")); !strings.Contains(got, "\n  Does\n    more work") {
 		t.Errorf("40 cells: the label above its value\n%s", got)
 	}
 	// The line under the title wraps, as the title does, never cut.
 	var intro []string
-	for _, l := range taskPage(a.doc, a.plans.CurrentRel(), "agent-stream", 40) {
+	for _, l := range taskPage(a.doc, a.plans.CurrentRel(), "agent-stream", 40, a.detailNote("agent-stream")) {
 		if l.Text == "  Does" { // the first field's label, over its value under 50 cells
 			break
 		}
@@ -770,7 +770,7 @@ func TestTaskDetails(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Join(intro, " "); got != "Pin it (p) and your agent gets these fields with every prompt." {
+	if got := strings.Join(intro, " "); got != "Pin it (p) to send these fields; no wired agent takes them now · ? help" {
 		t.Errorf("40 cells: the line under the title, wrapped: %q", intro)
 	}
 }
@@ -1052,7 +1052,7 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
 	if a.at != atTaskDetail || a.outline.sel != "card-highlight" {
 		t.Fatalf("at=%d sel=%q", a.at, a.outline.sel)
 	}
-	detail := viewText(taskPage(a.doc, a.plans.CurrentRel(), a.outline.sel, 78))
+	detail := viewText(taskPage(a.doc, a.plans.CurrentRel(), a.outline.sel, 78, ""))
 	for _, want := range []string{"  ✔ Done · what your agent wrote when it finished it", "  Did           the bar spans all three card rows", "  Checked       go test ./internal/tui/", "  Notes         the pick colors were already there", "  Planned       Bar, border, and fill cover the whole selected card"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("the details show %q\n%s", want, detail)
@@ -1506,10 +1506,10 @@ func TestDetailShowsTheStackFields(t *testing.T) {
 	if got := trimmed(viewText(aboutPage(d, 60))); !strings.Contains(got, "\n  Stack         lands on dev · 1 branch") {
 		t.Fatal(got)
 	}
-	if got := trimmed(viewText(taskPage(d, "rex/plans/x.rex.json", "a", 60))); !strings.Contains(got, "\n  Branch        feature/a, stacked on dev") {
+	if got := "\n" + trimmed(viewText(taskPage(d, "rex/plans/x.rex.json", "a", 60, ""))); !strings.Contains(got, "\n  Branch        feature/a, stacked on dev") {
 		t.Fatal(got)
 	}
-	if got := trimmed(viewText(taskPage(d, "rex/plans/x.rex.json", "b", 60))); !strings.Contains(got, "\n  Branch        not named yet, stacked on dev") {
+	if got := "\n" + trimmed(viewText(taskPage(d, "rex/plans/x.rex.json", "b", 60, ""))); !strings.Contains(got, "\n  Branch        not named yet, stacked on dev") {
 		t.Fatal(got)
 	}
 }
@@ -1526,13 +1526,13 @@ func TestDetailsKeepLineBreaks(t *testing.T) {
 	}
 	d := &planDoc{path: "rex/plans/x.rex.json", plan: p}
 	text := func(lines []LogLine) string { return trimmed(viewText(lines)) + "\n" }
-	a := text(taskPage(d, "rex/plans/x.rex.json", "a", 60))
+	a := text(taskPage(d, "rex/plans/x.rex.json", "a", 60, ""))
 	for _, want := range []string{"\n  Description   para one. - item - item two\n", "\n  Needs         one two three four five six seven eight\n                nine ten eleven twelve\n"} {
 		if !strings.Contains(a, want) {
 			t.Errorf("details have %q\n%s", want, a)
 		}
 	}
-	if b := text(taskPage(d, "rex/plans/x.rex.json", "b", 60)); !strings.Contains(b, "\n  Notes         note one.\n                note two.\n") {
+	if b := text(taskPage(d, "rex/plans/x.rex.json", "b", 60, "")); !strings.Contains(b, "\n  Notes         note one.\n                note two.\n") {
 		t.Errorf("notes keep their paragraphs\n%s", b)
 	}
 	if about := text(aboutPage(d, 60)); !strings.HasPrefix(about, "  Goal          Goal line one.\n                Goal line two.\n") {
@@ -1775,7 +1775,7 @@ func TestTallerNeverShowsLessOfThePlan(t *testing.T) {
 func TestParentLoopIsListed(t *testing.T) {
 	a, _, _ := openDemo(t, `{"version":1,"title":"Loop","tasks":[{"id":"a","title":"A","parent":"b"},{"id":"b","title":"B","parent":"a"}]}`, 80, 24)
 	r := a.frameRows().Rows
-	if got := textOf(r[0], 80); got != sides("Loop", "0/2 done   plan · agent", 80) || textOf(r[1], 80) != "nothing pinned · nothing unblocked" {
+	if got := textOf(r[0], 80); got != sides("Loop", "0/2 done   plan · agent", 80) || textOf(r[1], 80) != sides("nothing pinned · nothing unblocked", "not sent", 80) {
 		t.Fatalf("rows 0 and 1: %q / %q", got, textOf(r[1], 80))
 	}
 	want := "❯   a       A" + strings.Repeat(" ", 61) + "cycle\n    b       B" + strings.Repeat(" ", 61) + "cycle"

@@ -209,9 +209,10 @@ func sameOrigin(a, b Event) bool {
 }
 
 // samePin is false when two prompts handed the agent different pins
-// (docs/ux.md §7a): the second one's event says what it carried.
+// (docs/ux.md §7a), or the same one from different repos: the second
+// one's event says what it carried.
 func samePin(a, b Event) bool {
-	for _, k := range []string{"pin", "pin_plan"} {
+	for _, k := range []string{"pin", "pin_plan", "pin_repo"} {
 		va, _ := a.Meta[k].(string)
 		vb, _ := b.Meta[k].(string)
 		if va != vb {

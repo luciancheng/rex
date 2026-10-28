@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -64,6 +65,90 @@ func ContextEvent(payload map[string]any, source string) string {
 func IsSessionStart(event string) bool {
 	return event == "SessionStart" || event == "sessionStart"
 }
+
+// NoteRead reports whether the harness behind payload takes the note a
+// reply to event (one of ContextEvent's) carries, as far as Rex can tell:
+// every one does but a Cursor build older than 3.20 on a prompt, whose
+// beforeSubmitPrompt ignores additional_context (3.2 did; 3.20 and its CLI
+// 2026.10 read it; the CLI's versions are years, and one before 2026.10
+// is taken as not reading it). The reply is still printed there,
+// harmlessly, but the prompt's event says the note went unread
+// (pin_unread), never that it carried the pin (docs/ux.md §7a): the send
+// state would claim more than happened. A version Cursor doesn't send, or
+// Rex can't read, is taken as a current build's.
+func NoteRead(payload map[string]any, source, event string) bool {
+	if source != "cursor" || event != "beforeSubmitPrompt" {
+		return true
+	}
+	major, minor, ok := majorMinor(strField(payload, "cursor_version"))
+	switch {
+	case !ok:
+		return true
+	case major >= 2000: // the CLI's year.month
+		return major > 2026 || major == 2026 && minor >= 10
+	}
+	return major > 3 || major == 3 && minor >= 20
+}
+
+// majorMinor reads the first two numbers of a version, "3.20.17" as 3, 20.
+func majorMinor(v string) (major, minor int, ok bool) {
+	parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".", 3)
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	digits := strings.IndexFunc(parts[1], func(r rune) bool { return r < '0' || r > '9' })
+	if digits < 0 {
+		digits = len(parts[1])
+	}
+	minor, err = strconv.Atoi(parts[1][:digits])
+	return major, minor, err == nil
+}
+
+// PinOrigin is where the event that carries a pin note came from, when
+// its payload names no folder of its own: dir, the folder the note was
+// looked up from (Cursor's $CURSOR_PROJECT_DIR), as a workspace root. So
+// the event is judged by the repo its note came from, as every other
+// prompt that carried one is, and never shows (or counts as sent) in
+// another repo's Rex (docs/ux.md §7a, §10). nil when the payload names its
+// own folder, or dir is no absolute path.
+func PinOrigin(payload map[string]any, dir string) map[string]any {
+	if !filepath.IsAbs(dir) {
+		return nil
+	}
+	probe := Event{Meta: map[string]any{}}
+	stampOrigin(&probe, payload)
+	if cwd, _ := probe.Meta["cwd"].(string); filepath.IsAbs(cwd) {
+		return nil
+	}
+	roots, _ := probe.Meta["roots"].([]any)
+	for _, r := range roots {
+		if s, _ := r.(string); filepath.IsAbs(s) {
+			return nil
+		}
+	}
+	return map[string]any{"roots": []any{dir}}
+}
+
+// promptHook reports whether payload is a prompt the person sent, of
+// those that can carry the pin note: Claude Code's and Codex's
+// UserPromptSubmit, Cursor's beforeSubmitPrompt, and the OpenCode
+// plugin's chat.message; never a session's start or the plugin's request.
+func promptHook(payload map[string]any, source string) bool {
+	switch ContextEvent(payload, source) {
+	case "UserPromptSubmit", "beforeSubmitPrompt":
+		return true
+	}
+	return source == "opencode" && strField(payload, "type") == "chat.message"
+}
+
+// NoText is the text of a prompt that carried the pin note but has no
+// text of its own (an image or a file alone): it is recorded, so the send
+// state counts it (docs/ux.md §7a), and AGENT draws it as a prompt.
+const NoText = "(no text)"
 
 // ContextFolders are the folders the agent behind payload works in, best
 // first, to look its pin up from; never the hook's own folder. Claude Code,

@@ -283,8 +283,8 @@ func TestIngestFailsOpenOnBadFlagsAndSource(t *testing.T) {
 }
 
 func TestIngestSwallowsACrash(t *testing.T) {
-	defer func(old func(io.Reader, string, string) ([]byte, error)) { ingestFn = old }(ingestFn)
-	ingestFn = func(io.Reader, string, string) ([]byte, error) { panic("boom") }
+	defer func(old func(io.Reader, string, string, io.Writer) error) { ingestFn = old }(ingestFn)
+	ingestFn = func(io.Reader, string, string, io.Writer) error { panic("boom") }
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"ingest", "--source", "cursor"}, strings.NewReader("{}"), &stdout, &stderr); code != 0 || stdout.Len() != 0 {
 		t.Fatalf("a panic must still exit 0 with no stdout: %d %q", code, stdout.String())
@@ -300,8 +300,8 @@ func (brokenPipe) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 // A note the harness never reads costs the note, never the exit code.
 func TestIngestUnwritableStdoutExitsZero(t *testing.T) {
-	defer func(old func(io.Reader, string, string) ([]byte, error)) { ingestFn = old }(ingestFn)
-	ingestFn = func(io.Reader, string, string) ([]byte, error) { return []byte("note\n"), nil }
+	defer func(old func(io.Reader, string, string, io.Writer) error) { ingestFn = old }(ingestFn)
+	ingestFn = func(_ io.Reader, _, _ string, out io.Writer) error { _, err := out.Write([]byte("note\n")); return err }
 	var stderr bytes.Buffer
 	if code := Main([]string{"ingest", "--source", "codex"}, strings.NewReader("{}"), brokenPipe{}, &stderr); code != 0 {
 		t.Fatalf("a failed write must still exit 0: %d %q", code, stderr.String())

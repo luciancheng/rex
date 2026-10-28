@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/luciancheng/rex/internal/jsonedit"
@@ -116,7 +117,7 @@ func uninstallCodex(path string, out io.Writer) error {
 	return nil
 }
 
-func codexWired(path string) bool {
+func codexWired(path string, events ...string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -129,7 +130,10 @@ func codexWired(path string) bool {
 		return false
 	}
 	ours := codexHandler(rexExecutable(), runtimeGOOS)
-	for _, groups := range file.Hooks {
+	for event, groups := range file.Hooks {
+		if len(events) > 0 && !slices.Contains(events, event) {
+			continue
+		}
 		list, _ := groups.([]any)
 		for _, g := range list {
 			handlers, _ := asDict(g)["hooks"].([]any)
@@ -351,6 +355,10 @@ func init() {
 		Config:  hooksFile,
 		Present: func(home string) bool { return dirExists(codexDir(home)) },
 		Wired:   func(home string) bool { return codexWired(hooksFile(home)) },
+		Prompts: func(home, _ string) bool { return codexWired(hooksFile(home), "UserPromptSubmit") },
+		// Codex runs a hook only once the person trusts it in /hooks, and
+		// Rex can't see whether they did.
+		Caveat: "once trusted in Codex's /hooks",
 		Install: func(home string, out io.Writer) error {
 			if !dirExists(codexDir(home)) {
 				fmt.Fprintf(out, "codex: Codex isn't set up here (no %s); nothing changed\n", codexDir(home))

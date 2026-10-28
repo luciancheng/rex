@@ -152,8 +152,10 @@ func rule(label string, width int) string {
 
 // userRows is a prompt (docs/ux.md §10): a box at most half the row wide,
 // right-aligned, its text left-aligned inside, capped at maxPromptRows.
-// Short screens (not tall) drop its blank rows.
-func userRows(text string, width int, tall bool) []string {
+// Short screens (not tall) drop its blank rows. The box is at least minW
+// cells wide (as far as half the row allows), for a row drawn under it;
+// left is the box's first column.
+func userRows(text string, width int, tall bool, minW int) (rows []string, left int) {
 	boxW := max(8, width/2)
 	chunks := watch.MarkdownLines(text)
 	var wrapped []string
@@ -188,11 +190,8 @@ func userRows(text string, width int, tall bool) []string {
 			contentW = n
 		}
 	}
-	if contentW > boxW {
-		contentW = boxW
-	}
+	contentW = min(max(contentW, minW), boxW)
 	pad := max(0, width-contentW)
-	var rows []string
 	for _, line := range wrapped {
 		if strings.TrimSpace(line) == "" {
 			rows = append(rows, strings.Repeat(" ", width))
@@ -201,9 +200,9 @@ func userRows(text string, width int, tall bool) []string {
 		rows = append(rows, strings.Repeat(" ", pad)+padRight(line, contentW))
 	}
 	if len(rows) == 0 {
-		return []string{strings.Repeat(" ", width)}
+		return []string{strings.Repeat(" ", width)}, pad
 	}
-	return rows
+	return rows, pad
 }
 
 type LogLine struct {
@@ -521,8 +520,13 @@ type StatusLine struct {
 	// a ✗. Nil draws it all in Kind.
 	Spans func(text string) []Span
 	// Right sits at the row's right end while the left keeps every word
-	// it shows without it, two cells from it: AGENT's pin.
+	// it shows without it, two cells from it: AGENT's pin, the pin's send
+	// state.
 	Right []Span
+	// Keep, when set, is the fewest cells the left may be fitted to (by
+	// Fit) to keep Right beside it: the pin line's title clips before the
+	// send state goes (docs/ux.md §4).
+	Keep int
 }
 
 // statusMin is the fewest cells row 1's left keeps beside its right side.
@@ -530,7 +534,8 @@ const statusMin = 12
 
 // statusRow draws a StatusLine one cell short of the edge, fitted to the
 // room: its Fit or Short where its Text doesn't fit. The right side goes
-// before the left loses a word.
+// before the left loses a word; with Keep, before the left is fitted
+// under Keep cells.
 func statusRow(s StatusLine, width int, enabled bool) string {
 	if strings.TrimSpace(s.Text) == "" {
 		return strings.Repeat(" ", width)
@@ -550,13 +555,17 @@ func statusRow(s StatusLine, width int, enabled bool) string {
 		return s.Text
 	}
 	room := width - 1
-	text := fit(room)
 	var right []Span
 	if r := spansLen(s.Right); r > 0 {
-		if left := room - r - 2; left >= statusMin && cellLen(s.Text) <= left {
+		need := cellLen(s.Text)
+		if s.Keep > 0 && s.Fit != nil {
+			need = min(need, s.Keep)
+		}
+		if left := room - r - 2; left >= statusMin && need <= left {
 			room, right = left, s.Right
 		}
 	}
+	text := fit(room)
 	var spans []Span
 	if s.Spans != nil {
 		spans = s.Spans(text)

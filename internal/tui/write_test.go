@@ -109,6 +109,7 @@ func screenText(a *app) string {
 // cursor stays; AGENT records it. p again unpins it, and nothing is sent.
 func TestPinKey(t *testing.T) {
 	a, _, path := openDemo(t, specPlan, 80, 24)
+	wire(a, wired("claude"))
 	press(a, "down")
 	press(a, "p")
 	want := strings.NewReplacer(
@@ -119,7 +120,7 @@ func TestPinKey(t *testing.T) {
 		t.Fatalf("p writes the two statuses and nothing else:\n%s", got)
 	}
 	frame := `Rex visual redesign                                     2/8 done   plan · agent
-pinned  agent-stream · Fold runs of thoughts
+pinned  agent-stream · Fold runs of thoughts             sends with next prompt
 
   ✔ tab-bar       Tab bar on row 0
     page-titles   Page titles and footer keys
@@ -158,8 +159,8 @@ Pinned agent-stream · sends with your next prompt · waits on page-titles
 	if got := a.notice().Text; got != "Unpinned agent-stream · nothing is sent now" {
 		t.Fatalf("p on the pin unpins it: %q", got)
 	}
-	if got := a.context().Text; got != "nothing pinned · next up page-titles · Page titles and footer keys" {
-		t.Fatalf("row 1: %q", got)
+	if got := a.context().Text; got != "nothing pinned · next up page-titles · Page titles and footer keys" || a.sendState() != notSent {
+		t.Fatalf("row 1: %q, %q", got, a.sendState())
 	}
 	if got, _ := os.ReadFile(path); string(got) != strings.Replace(want, `"branch": "feature/agent_stream", "status": "active"}`, `"branch": "feature/agent_stream", "status": "pending"}`, 1) {
 		t.Fatalf("unpin writes one status:\n%s", got)
@@ -193,7 +194,7 @@ func TestDoneKey(t *testing.T) {
 		t.Fatalf("d writes one status:\n%s", got)
 	}
 	frame := `Rex visual redesign                                     3/8 done   plan · agent
-nothing pinned · next up agent-stream · Fold runs of thoughts
+nothing pinned · next up agent-stream · Fold runs of thoughts          not sent
 
   ✔ tab-bar       Tab bar on row 0
 ❯ ✔ page-titles   Page titles and footer keys
@@ -237,7 +238,8 @@ nothing pinned · next up agent-stream · Fold runs of thoughts
 	if p, _ := plan.Load(path); p.Task("card-highlight").Status != plan.Done || p.Task("load-outline").Status != plan.Active {
 		t.Fatal("d ↓ p")
 	}
-	if got := b.notice().Text; got != "Pinned load-outline · sends with your next prompt" {
+	// Nothing is wired in the test's HOME: the notice never claims it goes.
+	if got := b.notice().Text; got != "Pinned load-outline · not sent · ? help" {
 		t.Fatalf("%q", got)
 	}
 	// The last leaf finishes the plan, and the file says so.
@@ -298,7 +300,7 @@ func TestStaleStatusRefused(t *testing.T) {
 		t.Fatalf("nothing written:\n%s", got)
 	}
 	frame := `Rex visual redesign                                     3/8 done   plan · agent
-nothing pinned · next up agent-stream · Fold runs of thoughts
+nothing pinned · next up agent-stream · Fold runs of thoughts          not sent
 
   ✔ tab-bar       Tab bar on row 0
 ❯ ✔ page-titles   Page titles and footer keys
@@ -509,7 +511,7 @@ func TestYourAgentSavedOverYourPin(t *testing.T) {
 	os.WriteFile(path, []byte(specPlan), 0o644) // the agent's older copy
 	a.ingest([]watch.Event{at(c, 0, wrote(a.plans.Repo, path))})
 	frame := `Rex visual redesign                                     2/8 done   plan · agent
-pinned  page-titles · Page titles and footer keys
+pinned  page-titles · Page titles and footer keys             not sent · ? help
 
   ✔ tab-bar       Tab bar on row 0
     page-titles   Page titles and footer keys                            pinned
@@ -734,6 +736,7 @@ func TestALinkOutOfPlansIsNeverWritten(t *testing.T) {
 func TestPOnASecondActiveTaskPinsIt(t *testing.T) {
 	src := `{"version": 1, "status": "active", "tasks": [{"id": "a", "title": "A", "status": "active"}, {"id": "b", "title": "B", "status": "active"}]}`
 	a, _, path := openDemo(t, src, 80, 24)
+	wire(a, wired("codex"))
 	press(a, "down")
 	if a.outline.sel != "b" || !strings.HasSuffix(rowWith(a.frameRows(), "❯   b"), "also active") {
 		t.Fatalf("setup: the cursor on the second active task\n%s", screenText(a))

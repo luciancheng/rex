@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/luciancheng/rex/internal/jsonedit"
@@ -261,7 +262,7 @@ func uninstallClaude(path string, out io.Writer) error {
 	return nil
 }
 
-func claudeWired(path string) bool {
+func claudeWired(path string, events ...string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -274,7 +275,10 @@ func claudeWired(path string) bool {
 		return false
 	}
 	ours := claudeHandler(rexExecutable(), runtimeGOOS)
-	for _, groups := range settings.Hooks {
+	for event, groups := range settings.Hooks {
+		if len(events) > 0 && !slices.Contains(events, event) {
+			continue
+		}
 		list, _ := groups.([]any)
 		for _, g := range list {
 			handlers, _ := asDict(g)["hooks"].([]any)
@@ -394,6 +398,15 @@ func init() {
 		Present:   func(home string) bool { return dirExists(claudeDir(home)) },
 		Wired:     func(home string) bool { return claudeWired(filepath.Join(claudeDir(home), "settings.json")) },
 		WiredHere: ClaudeProjectWired,
+		// The pin goes on UserPromptSubmit; SessionStart only repeats it
+		// after a compaction.
+		Prompts: func(home, repo string) bool {
+			files := []string{filepath.Join(claudeDir(home), "settings.json")}
+			if repo != "" {
+				files = append(files, ClaudeProjectSettings(repo), filepath.Join(repo, ".claude", "settings.json"))
+			}
+			return slices.ContainsFunc(files, func(f string) bool { return claudeWired(f, "UserPromptSubmit") })
+		},
 		Install: func(home string, out io.Writer) error {
 			if !dirExists(claudeDir(home)) {
 				fmt.Fprintf(out, "claude: Claude Code isn't set up here (no %s); nothing changed\n", claudeDir(home))

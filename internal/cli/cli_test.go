@@ -118,18 +118,19 @@ func TestComposeFrameShowsAgentEvents(t *testing.T) {
 		Status:  "thinking",
 		Context: tui.StatusLine{Text: "thinking"},
 	})
-	// Each block is named by its first characters, with no rule (docs/ux.md §10).
+	// Each block is named by the gutter's mark or its first characters,
+	// with no rule (docs/ux.md §10).
 	for _, needle := range []string{
-		"thinking  I should inspect sprites.py",
-		"$ pytest -q",
-		"[ASK] run tests?",
+		"  thinking · I should inspect sprites.py",
+		"  $ pytest -q",
+		"? run tests?",
 	} {
 		if !strings.Contains(frame, needle) {
 			t.Fatalf("missing %q", needle)
 		}
 	}
-	if strings.Contains(frame, "── ") {
-		t.Fatalf("a rule on a block that has none\n%s", frame)
+	if strings.Contains(frame, "─") || strings.Contains(frame, "[ASK]") {
+		t.Fatalf("a rule or a pill on a block\n%s", frame)
 	}
 	// The turn is row 1, AGENT's context (docs/ux.md §4).
 	if row1 := ansi.ReplaceAllString(strings.Split(frame, "\n")[1], ""); !strings.Contains(row1, "thinking") {
@@ -155,15 +156,16 @@ func TestComposeFrameFormatsMarkdownAndUserPrompt(t *testing.T) {
 	if strings.Contains(plain, "you ──") {
 		t.Fatal("unexpected YOU rule")
 	}
-	if !strings.Contains(plain, "Summary") || !strings.Contains(plain, "• first item") || !strings.Contains(plain, "second item") {
+	if !strings.Contains(plain, "Summary") || !strings.Contains(plain, "· first item") || !strings.Contains(plain, "second item") {
 		t.Fatalf("markdown not formatted: %s", plain)
 	}
 	if strings.Contains(plain, "##") || strings.Contains(plain, "**") {
 		t.Fatal("raw markdown leaked")
 	}
+	// The prompt is left-aligned after the gutter's › (docs/ux.md §10).
 	for _, line := range strings.Split(plain, "\n") {
-		if strings.Contains(line, "can we format this") && !strings.HasSuffix(strings.TrimRight(line, "\r"), "can we format this") {
-			t.Fatalf("user prompt not right aligned: %q", line)
+		if strings.Contains(line, "can we format this") && !strings.HasPrefix(line, "› can we format this") {
+			t.Fatalf("user prompt not after ›: %q", line)
 		}
 	}
 }

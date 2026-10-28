@@ -1403,7 +1403,7 @@ func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 		t.Fatalf("38 cells: %q", row)
 	}
 	press(a, "?")
-	if help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " "); !strings.Contains(help, "skill out of date · rex ingest --install-skill") {
+	if help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " "); !strings.Contains(help, "rex-plan out of date · rex ingest --install-skill") {
 		t.Fatalf("Help keeps the skill row\n%s", help)
 	}
 
@@ -1435,7 +1435,7 @@ func TestStartSaysTheSkillIsOutOfDate(t *testing.T) {
 	if got := a.statusLine().Text; strings.Contains(got, "skill") {
 		t.Fatalf("every copy current: %q", got)
 	}
-	if help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " "); !strings.Contains(help, "skill rex-plan current") {
+	if help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " "); !strings.Contains(help, "rex-plan current") {
 		t.Fatalf("Help says it is current\n%s", help)
 	}
 }

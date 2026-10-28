@@ -283,23 +283,25 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	// F. Tab to AGENT and back.
 	k.press("\t")
 	k.spent(t, 1, "watch the agent")
-	// AGENT names each block by its first characters (docs/ux.md §10).
+	// AGENT names each block by the gutter's mark or its first characters
+	// (docs/ux.md §10); the edit off the pin is tagged at its row's end.
 	tape := viewText(BuildLogView(a.log, 78, a.viewOpt()))
 	for _, want := range []string{
-		"thinking  The card rows are painted separately.",
-		"$ Edit internal/tui/plans.go",
-		"reply ───",
-		"  Done: one block now.",
-		"rex › plan · card-highlight → active",
-		"rex › plan · card-highlight → done",
-		"rex › drift · card-highlight\n  hard README.md · outside card-highlight files",
+		"› work the plan: continue rex/plans/cuj/sendoff-demo.rex.json",
+		"  thinking · The card rows are painted separately.",
+		"  edit internal/tui/plans.go\n",
+		"\n  Done: one block now.",
+		"  rex · card-highlight → active",
+		"  rex · card-highlight → done",
+		"  edit README.md" + strings.Repeat(" ", 78-1-len("  edit README.md")-len("off pin")) + "off pin",
 	} {
-		if !strings.Contains(tape, want) || !strings.Contains(frame(), strings.SplitN(want, "\n", 2)[0]) {
+		lead, _, _ := strings.Cut(strings.Trim(want, "\n"), "   ") // the row as the frame starts it
+		if !strings.Contains(tape, want) || !strings.Contains(frame(), lead) {
 			t.Errorf("F. AGENT missing %q\n%s", want, frame())
 		}
 	}
-	if strings.Contains(tape, "wrote ") || strings.Contains(tape, "── ") || strings.Contains(tape, "note") {
-		t.Errorf("F. no wrote/done spam, no notes, and no rule but the reply's\n%s", tape)
+	if strings.Contains(tape, "wrote ") || strings.Contains(tape, "─") || strings.Contains(tape, "note") || strings.Contains(tape, "rex ›") {
+		t.Errorf("F. no wrote/done spam, no notes, and no rules\n%s", tape)
 	}
 	logged := len(a.log)
 	k.press("p", "d", "s", "b", "x", "\r")
@@ -666,11 +668,11 @@ func matrixScreens(t *testing.T) []matrixScreen {
 		{"agent, thinking live", false, func(a *app) {
 			press(a, "\t")
 			a.ingest(agentTurn(a)[:7])
-		}, func(a *app) bool { return a.pane == PaneChat && a.viewOpt().live && a.lastKind == "thought" }},
+		}, func(a *app) bool { return a.pane == PaneChat && a.turn == TurnThinking && a.lastKind == "thought" }},
 		{"agent, a whole turn", false, func(a *app) {
 			press(a, "\t")
 			a.ingest(agentTurn(a))
-		}, func(a *app) bool { return a.pane == PaneChat && a.turn == TurnIdle && len(a.drift.items) > 0 }},
+		}, func(a *app) bool { return a.pane == PaneChat && a.turn == TurnIdle && len(drifted(a.log)) > 0 }},
 		{"agent, asks", false, func(a *app) {
 			press(a, "\t")
 			a.ingest(agentTurn(a)[:len(agentTurn(a))-1])
@@ -685,7 +687,7 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			press(a, "up", "up", "up")
 		}, func(a *app) bool { return a.pane == PaneChat && a.scroll > 0 }},
 		{"agent, warm start", false, func(a *app) {
-			// Short enough that the rule is on screen at every size, so
+			// Short enough that its line is on screen at every size, so
 			// the frame checks cover it.
 			evs := agentTurn(a)
 			a.warmStart([]watch.Event{evs[5], evs[6], evs[13], evs[14]}, time.Now())
@@ -695,7 +697,7 @@ func matrixScreens(t *testing.T) []matrixScreen {
 				return false
 			}
 			for _, r := range a.frameRows().Rows {
-				if strings.Contains(textOf(r, a.columns), "── before rex started") {
+				if strings.Contains(textOf(r, a.columns), "before Rex started") {
 					return true
 				}
 			}
@@ -750,7 +752,7 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			bare := carried(a, watch.NoText)
 			a.ingest([]watch.Event{carried(a, "carry on with the plan, and keep the footer to keys only"), {Source: "claude", Kind: "text", Text: "On it."}, bare})
 		}, func(a *app) bool { return a.pane == PaneChat && a.sendState() == sentLast }},
-		// Help's FEED: a row per harness, each saying whether it hands over
+		// Help's Feed: a row per harness, each saying whether it hands over
 		// the pin or the command that makes it (docs/ux.md §10).
 		{"help, the feed's pin rows", false, func(a *app) {
 			wire(a, wired("claude"), watch.HarnessStatus{Name: "codex", Present: true}, watch.HarnessStatus{Name: "cursor", Present: true, Wired: true, Prompts: true, Partial: true, Caveat: "on 3.20+ (older: once per chat)"}, oldPlugin())
@@ -955,9 +957,10 @@ func TestFrameMatrix(t *testing.T) {
 	}
 }
 
-// moreUp is row 2 while the open plan's list or page is scrolled: blank
-// but for ↑ N more at its right end, a cell short of the edge.
-var moreUp = regexp.MustCompile(`^ +↑ [0-9]+ more$`)
+// moreUp is row 2 while the open plan's list or page is scrolled, or
+// AGENT's older rows are cut off: blank but for ↑ N more (↑ N earlier) at
+// its right end, a cell short of the edge.
+var moreUp = regexp.MustCompile(`^ +↑ [0-9]+ (more|earlier)$`)
 
 // docs/ux.md §5, rule 4: color never changes the characters. Every
 // screen's text column in color, stripped of its SGR, is its NO_COLOR

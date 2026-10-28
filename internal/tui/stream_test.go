@@ -1,17 +1,20 @@
 package tui
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/luciancheng/rex/internal/mascot"
 	"github.com/luciancheng/rex/internal/plan"
 	"github.com/luciancheng/rex/internal/watch"
 )
+
+var update = flag.Bool("update", false, "rewrite the golden files in testdata")
 
 func thoughts(texts ...string) []watch.Event {
 	var evs []watch.Event
@@ -29,85 +32,68 @@ func commands(texts ...string) []watch.Event {
 	return evs
 }
 
-// driftEvent is Rex's drift block as noteDrift writes it: its rows in
-// meta, and the same rows as text.
-func driftEvent(pin string, rows ...driftNote) watch.Event {
-	var text []string
-	for _, n := range rows {
-		text = append(text, fmt.Sprintf("%s %s · %s", n.d.Level, n.d.Subject, n.d.Reason))
+// edits are file edits as Claude Code's PreToolUse reports them: "Edit
+// <path>", the tool and the path in meta.
+func edits(paths ...string) []watch.Event {
+	var evs []watch.Event
+	for _, p := range paths {
+		evs = append(evs, watch.Event{Source: "claude", Kind: "command", Text: "Edit " + p, Meta: map[string]any{"tool": "Edit", "path": p}})
 	}
-	return watch.NewEvent("rex", "drift", strings.Join(text, "\n"), map[string]any{"pin": pin, "rows": rows})
-}
-
-// pathDrift and promptDrift are one row of a drift block.
-func pathDrift(level plan.DriftLevel, rel, why string) driftNote {
-	return driftNote{d: plan.Drift{Level: level, Subject: rel, Reason: why}, rel: rel}
-}
-
-func promptDrift(level plan.DriftLevel, prompt, why string) driftNote {
-	return driftNote{d: plan.Drift{Level: level, Subject: prompt, Reason: why}, prompt: prompt}
+	return evs
 }
 
 func viewRows(log []watch.Event, width int, opt viewOpt) []string {
 	return strings.Split(strings.TrimSuffix(viewText(BuildLogView(log, width, opt)), "\n"), "\n")
 }
 
-// docs/ux.md §10: a run of thoughts is one row, "thinking ×N" and the
-// latest; live (newest, the turn in flight) it goes on over a second
-// row from 12 rows; one thought has no ×1; under 30 cells only the label.
+// docs/ux.md §10: a run of thoughts is one muted row, "thinking ×N ·" and
+// the latest, whatever the turn is doing; one thought has no ×1; under 30
+// cells only the label. Nothing in it is bold.
 func TestThoughtRunFolds(t *testing.T) {
 	run := thoughts("one", "two", "three", "four", "Looking at the plans view first; the card border is drawn apart.")
-	settled := viewRows(run, 38, viewOpt{tall: true})
-	if len(settled) != 1 || settled[0] != "thinking ×5  Looking at the plans vie…" {
-		t.Fatalf("settled: %q", settled)
+	rows := viewRows(run, 38, viewOpt{tall: true})
+	if len(rows) != 1 || rows[0] != "  thinking ×5 · Looking at the plans…" {
+		t.Fatalf("%q", rows)
 	}
-	// The label is bold (docs/ux.md §5), the latest thought beside it not.
 	for _, w := range []int{38, 24} {
-		sp := BuildLogView(run, w, viewOpt{tall: true})[0].Spans
-		if len(sp) == 0 || sp[0] != (Span{Text: "thinking ×5", Bold: true}) || len(sp) > 1 && sp[1].Bold {
-			t.Fatalf("%d cells: the label is bold: %+v", w, sp)
+		if l := BuildLogView(run, w, viewOpt{tall: true})[0]; l.Kind != "thought" || len(l.Spans) > 0 {
+			t.Fatalf("%d cells: one muted run, nothing bold: %+v", w, l)
 		}
 	}
-	live := viewRows(run, 38, viewOpt{live: true, tall: true})
-	if len(live) != 2 || live[0] != "thinking ×5  Looking at the plans view" || live[1] != "  first; the card border is drawn apa…" {
-		t.Fatalf("live: %q", live)
-	}
-	if short := viewRows(run, 38, viewOpt{live: true}); len(short) != 1 || short[0] != settled[0] {
-		t.Fatalf("live under 12 rows is one row: %q", short)
-	}
-	if one := viewRows(thoughts("Checking the sprite."), 38, viewOpt{tall: true}); one[0] != "thinking  Checking the sprite." {
+	if one := viewRows(thoughts("Checking the sprite."), 38, viewOpt{tall: true}); one[0] != "  thinking · Checking the sprite." {
 		t.Fatalf("one thought: %q", one)
 	}
 	for _, w := range []int{24, 29} {
-		if narrow := viewRows(run, w, viewOpt{live: true, tall: true}); len(narrow) != 1 || narrow[0] != "thinking ×5" {
+		if narrow := viewRows(run, w, viewOpt{tall: true}); len(narrow) != 1 || narrow[0] != "  thinking ×5" {
 			t.Fatalf("%d cells: %q", w, narrow)
 		}
-		if one := viewRows(thoughts("hmm"), w, viewOpt{tall: true}); one[0] != "thinking" {
+		if one := viewRows(thoughts("hmm"), w, viewOpt{tall: true}); one[0] != "  thinking" {
 			t.Fatalf("%d cells, one thought: %q", w, one)
 		}
 	}
-	// The latest is shown as prose: Markdown stripped, on one line.
-	md := viewRows(thoughts("**Plan:**\n- read `live.go`\n- fix it"), 60, viewOpt{tall: true})
-	if md[0] != "thinking  Plan: • read live.go • fix it" {
+	// The latest is shown as prose: Markdown stripped, on one line, its
+	// list items the stream's bullet.
+	if md := viewRows(thoughts("**Plan:**\n- read `live.go`\n- fix it"), 60, viewOpt{tall: true}); md[0] != "  thinking · Plan: · read live.go · fix it" {
 		t.Fatalf("markdown: %q", md)
 	}
-	// A short latest thought takes one row even live.
-	if fits := viewRows(thoughts("a", "short"), 38, viewOpt{live: true, tall: true}); len(fits) != 1 || fits[0] != "thinking ×2  short" {
-		t.Fatalf("fits: %q", fits)
-	}
-	// Only the newest block is live: a command after the run settles it.
-	mixed := viewRows(append(run, commands("go test ./...")...), 38, viewOpt{live: true, tall: true})
-	if len(mixed) != 2 || mixed[0] != settled[0] {
-		t.Fatalf("a run under a command is settled: %q", mixed)
+	// A long latest thought still takes one row; a command after the run
+	// starts a block of its own.
+	long := thoughts("a", "The bar is drawn per row, so the fill has to start at column 0 to cover the gutter.")
+	if mixed := viewRows(append(long, commands("go test ./...")...), 38, viewOpt{tall: true}); len(mixed) != 2 || mixed[1] != "  $ go test ./..." {
+		t.Fatalf("%q", mixed)
 	}
 }
 
-// docs/ux.md §10: one clipped row per command; over 5, all but the last 4
-// fold into "$ … +N earlier", so a fold hides at least two and saves a row.
-func TestCommandRunCap(t *testing.T) {
-	six := commands("Edit a.go", "Edit b.go", "go vet ./...", "Edit c.go", "Edit d.go", "go test ./internal/tui -run PlanCardSelection -count=1 -v")
+// docs/ux.md §10: one muted row per step after the gutter: "$" only for a
+// shell command, "edit <path>" for a file edit, any other tool as its
+// adapter wrote it; over 5 in a row, all but the last 4 fold into "… +N
+// earlier", so a fold hides at least two and saves a row.
+func TestStepRun(t *testing.T) {
+	six := append(edits("a.go", "b.go"), commands("go vet ./...")...)
+	six = append(six, edits("c.go", "d.go")...)
+	six = append(six, commands("go test ./internal/tui -run PlanCardSelection -count=1 -v")...)
 	got := viewRows(six, 38, viewOpt{tall: true})
-	want := []string{"$ … +2 earlier", "$ go vet ./...", "$ Edit c.go", "$ Edit d.go", "$ go test ./internal/tui -run PlanCar…"}
+	want := []string{"  … +2 earlier", "  $ go vet ./...", "  edit c.go", "  edit d.go", "  $ go test ./internal/tui -run PlanC…"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
@@ -115,24 +101,119 @@ func TestCommandRunCap(t *testing.T) {
 		t.Fatalf("four fit: %q", four)
 	}
 	// Five show whole: "+1 earlier" would hide one and save no row.
-	if five := viewRows(six[:5], 38, viewOpt{tall: true}); len(five) != 5 || five[0] != "$ Edit a.go" || strings.Contains(strings.Join(five, ""), "earlier") {
+	if five := viewRows(six[:5], 38, viewOpt{tall: true}); len(five) != 5 || five[0] != "  edit a.go" || strings.Contains(strings.Join(five, ""), "earlier") {
 		t.Fatalf("five: %q", five)
 	}
 	for n := 1; n <= 12; n++ {
 		run := viewRows(commands(strings.Split(strings.Repeat("x,", n), ",")[:n]...), 38, viewOpt{tall: true})
-		if len(run) > 5 || strings.Contains(run[0], "+1 earlier") || n > 5 && run[0] != fmt.Sprintf("$ … +%d earlier", n-4) {
+		if len(run) > 5 || strings.Contains(run[0], "+1 earlier") || n > 5 && run[0] != fmt.Sprintf("  … +%d earlier", n-4) {
 			t.Fatalf("%d commands: %q", n, run)
 		}
 	}
-	fold := BuildLogView(six, 38, viewOpt{})[0]
-	if len(fold.Spans) != 1 || fold.Spans[0].Role != "muted" {
-		t.Fatalf("the fold line is muted: %+v", fold)
+	for _, l := range BuildLogView(six, 38, viewOpt{}) {
+		if l.Kind != "command" || len(l.Spans) != 1 || l.Spans[0].Role != "" {
+			t.Fatalf("a step is one muted run: %+v", l)
+		}
+	}
+	// Each tool reads as its own step: a delete, an edit with no path (a
+	// todo list), a fetch, a command no tool names; a path keeps its file
+	// name as it clips.
+	for _, tc := range []struct {
+		ev   watch.Event
+		want string
+	}{
+		// A delete is a change to a file like any other: a step doesn't
+		// always say which (a Codex patch's reads Edit).
+		{watch.Event{Kind: "command", Text: "delete_file internal/tui/old.go", Meta: map[string]any{"tool": "delete_file", "path": "/r/internal/tui/old.go"}}, "  edit internal/tui/old.go"},
+		{watch.Event{Kind: "command", Text: "todo: ship the card", Meta: map[string]any{"tool": "TodoWrite"}}, "  todo: ship the card"},
+		{watch.Event{Kind: "command", Text: "WebFetch https://x.dev/a", Meta: map[string]any{"tool": "WebFetch"}}, "  WebFetch https://x.dev/a"},
+		{watch.Event{Kind: "command", Text: "pytest -q"}, "  $ pytest -q"},
+		{watch.Event{Kind: "command", Text: "Write internal/tui/very/deep/folder/view.go", Meta: map[string]any{"tool": "Write", "path": "/r/internal/tui/very/deep/folder/view.go"}}, "  edit …/deep/folder/view.go"},
+		{watch.Event{Kind: "command", Text: "Edit internal/x.go (+2 more)", Meta: map[string]any{"tool": "apply_patch", "path": "/r/internal/x.go", "paths": []any{"/r/internal/x.go"}}}, "  edit internal/x.go (+2 more)"},
+	} {
+		if got := viewRows([]watch.Event{tc.ev}, 30, viewOpt{}); len(got) != 1 || got[0] != tc.want {
+			t.Errorf("%q: %q, want %q", tc.ev.Text, got, tc.want)
+		}
 	}
 }
 
-// docs/ux.md §10: a failed tool call is one row, "✗ <what> · <why>"; when
-// it doesn't fit, the command clips first and the reason keeps at least
-// half the row. The turn's own error takes up to 3 rows.
+// docs/ux.md §10: folding is display only. A run of thoughts is one row and
+// a long run of steps shows its last 4, but the feed keeps every line the
+// hooks wrote, AGENT's log every event, and Help over AGENT says so; no
+// key unfolds a run.
+func TestFoldIsDisplayOnly(t *testing.T) {
+	feed := filepath.Join(t.TempDir(), "session.jsonl")
+	var evs []watch.Event
+	evs = append(evs, thoughts("one", "two", "three", "four", "five")...)
+	evs = append(evs, commands("a", "b", "c", "d", "e", "f", "g")...)
+	for _, ev := range evs {
+		if _, err := watch.AppendEvent(feed, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := testApp(t)
+	press(a, "\t")
+	a.ingest(watch.NewEventTail(feed, false).Poll())
+	if rows := viewRows(a.log, 78, viewOpt{tall: true}); len(rows) != 6 || rows[0] != "  thinking ×5 · five" || rows[1] != "  … +3 earlier" {
+		t.Fatalf("folded on screen: %q", rows)
+	}
+	if len(a.log) != len(evs) {
+		t.Fatalf("AGENT keeps every event: %d of %d", len(a.log), len(evs))
+	}
+	if kept := watch.LastEvents(feed, 100); len(kept) != len(evs) || kept[0].Text != "one" {
+		t.Fatalf("the feed keeps every line: %d", len(kept))
+	}
+	for _, key := range []string{"\r", "right", " ", "o"} {
+		before := viewText(a.logView(78))
+		if press(a, key); viewText(a.logView(78)) != before {
+			t.Fatalf("%q unfolded a run", key)
+		}
+	}
+	press(a, "?")
+	if help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " "); !strings.Contains(help, "folding is display only: the feed keeps every thought") {
+		t.Fatalf("Help says so\n%s", help)
+	}
+}
+
+// docs/ux.md §9a, §10: a drift tag sits at its row's end, a cell short of
+// the edge: the row clips first, keeping an edit's file name, and the tag
+// stays. A fold that hides a tagged step takes its worst tag.
+func TestDriftTagsSitAtTheRowsEnd(t *testing.T) {
+	tag := func(ev watch.Event, level plan.DriftLevel) watch.Event {
+		ev.Meta = withMeta(ev.Meta, driftKey, driftTag(level))
+		return ev
+	}
+	deep := edits("server/a/very/deep/path/to/some/session_handler_impl.go")[0]
+	for _, tc := range []struct {
+		level plan.DriftLevel
+		width int
+		want  string
+	}{
+		{plan.Hard, 38, "  edit …ion_handler_impl.go   off pin "},
+		{plan.Soft, 38, "  edit …ion_handler_impl.go  off pin? "},
+		{plan.Hard, 78, "  edit server/a/very/deep/path/to/some/session_handler_impl.go        off pin "},
+		{plan.Hard, 100, "  edit server/a/very/deep/path/to/some/session_handler_impl.go" + strings.Repeat(" ", 100-1-62-7) + "off pin "},
+		{plan.Soft, 24, "  edit …pl.go  off pin? "},
+	} {
+		if row := paintLine(BuildLogView([]watch.Event{tag(deep, tc.level)}, tc.width, viewOpt{})[0], tc.width, false); row != tc.want {
+			t.Errorf("%s at %d:\n got %q\nwant %q", tc.level, tc.width, row, tc.want)
+		}
+	}
+	run := append(edits("a.go", "b.go"), commands("c", "d", "e", "f")...)
+	run[0], run[1] = tag(run[0], plan.Soft), tag(run[1], plan.Hard)
+	if fold := viewRows(run, 38, viewOpt{})[0]; !strings.HasPrefix(fold, "  … +2 earlier") || !strings.HasSuffix(fold, " off pin") {
+		t.Fatalf("the fold keeps the worst tag it hides: %q", fold)
+	}
+	run[1] = tag(edits("b.go")[0], plan.OnPin)
+	if fold := viewRows(run, 38, viewOpt{})[0]; !strings.HasSuffix(fold, " off pin?") {
+		t.Fatalf("%q", fold)
+	}
+}
+
+// docs/ux.md §10: a failed tool call is one row, ✗ in the gutter and
+// "<what> · <why>" muted after it; when it doesn't fit, the command clips
+// first and the reason keeps at least half the row. The turn's own error
+// is red over up to 3 rows.
 func TestFailedToolKeepsReason(t *testing.T) {
 	fail := func(text string, meta map[string]any) watch.Event {
 		return watch.Event{Source: "claude", Kind: "error", Text: text, Meta: meta}
@@ -152,11 +233,18 @@ func TestFailedToolKeepsReason(t *testing.T) {
 		{fail("Bash failed", map[string]any{"tool": "Bash"}), 38, "✗ Bash"},
 		// A long reason keeps half the row; the command clips first.
 		{fail("Bash failed · make all: error: the build broke in a way that takes many words", map[string]any{"tool": "Bash", "command": "make all"}), 38, "✗ make all · error: the build broke i…"},
-		{fail("Bash failed · "+cmd+": panic: runtime error: index out of range [3] with length 3", map[string]any{"tool": "Bash", "command": cmd}), 38, "✗ go test ./int… · panic: runtime err…"},
+		{fail("Bash failed · "+cmd+": panic: runtime error: index out of range [3] with length 3", map[string]any{"tool": "Bash", "command": cmd}), 38, "✗ go test ./inte… · panic: runtime er…"},
+		// A failed write names its file from the left, as a path reads.
+		{fail("Write failed · internal/tui/very/deep/view.go: permission denied", map[string]any{"tool": "Write", "path": "/r/internal/tui/very/deep/view.go"}), 38, "✗ …/deep/view.go · permission denied"},
+		{fail("apply_patch failed · internal/tui/session_handler_impl.go: Failed to find expected lines", map[string]any{"tool": "apply_patch", "path": "/r/internal/tui/session_handler_impl.go"}), 38, "✗ …andler_impl.go · Failed to find ex…"},
 	} {
+		view := BuildLogView([]watch.Event{tc.ev}, tc.width, viewOpt{tall: true})
 		got := viewRows([]watch.Event{tc.ev}, tc.width, viewOpt{tall: true})
 		if len(got) != 1 || got[0] != tc.want || cellLen(got[0]) > tc.width {
 			t.Errorf("%q at %d:\n got %q\nwant %q", tc.ev.Text, tc.width, got, tc.want)
+		}
+		if sp := view[0].Spans; len(sp) != 2 || sp[0] != (Span{Text: "✗", Role: "error"}) || sp[1].Role != "muted" {
+			t.Errorf("only the ✗ is red: %+v", sp)
 		}
 	}
 	// The adapter's own lead ("turn failed: ", "session error: ") goes:
@@ -172,48 +260,12 @@ func TestFailedToolKeepsReason(t *testing.T) {
 		"turn failed":                 "✗ error · turn failed",
 		"session error":               "✗ error · session error",
 	} {
-		if short := viewRows([]watch.Event{fail(text, nil)}, 38, viewOpt{}); len(short) != 1 || short[0] != want {
-			t.Errorf("%q: %q, want %q", text, short, want)
+		if short := BuildLogView([]watch.Event{fail(text, nil)}, 38, viewOpt{}); len(short) != 1 || short[0].Text != want || short[0].Kind != "error" || len(short[0].Spans) > 0 {
+			t.Errorf("%q: %+v, want %q in red", text, short, want)
 		}
 	}
-}
-
-// docs/ux.md §9a, §10: a drift row is laid out like a failed tool call,
-// "<level> <subject> · <why>": the subject clips first and the reason
-// keeps at least half the row. A path clips from the left, so the end of
-// its file name stays; a prompt and a shell command clip from the right.
-func TestDriftRowsKeepTheirReason(t *testing.T) {
-	deep := "server/a/very/deep/path/to/some/session_handler_impl.go"
-	log := []watch.Event{driftEvent("login-form",
-		pathDrift(plan.Hard, deep, "outside login-form files"),
-		promptDrift(plan.Soft, "before the form, sketch session-store and tell me how cookies work", "names session-store, not the pin"),
-		pathDrift(plan.Soft, "internal/tui/live_view.go", "next to live.go"),
-	)}
-	want := []string{
-		"rex › drift · login-form",
-		"  hard …_impl.go · outside login-form…",
-		"  soft before t… · names session-stor…",
-		"  soft live_view.go · next to live.go",
-	}
-	if got := viewRows(log, 38, viewOpt{tall: true}); strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("38 cells:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
-	// With room, a path keeps as many of its last folders as fit.
-	if got := viewRows(log, 78, viewOpt{tall: true})[1]; got != "  hard …/deep/path/to/some/session_handler_impl.go · outside login-form files" {
-		t.Fatalf("78 cells: %q", got)
-	}
-	// A failed write names its file the same way; a command clips from the
-	// right, as it reads.
-	write := watch.Event{Source: "claude", Kind: "error", Text: "Write failed · internal/tui/very/deep/view.go: permission denied", Meta: map[string]any{"tool": "Write", "path": "/r/internal/tui/very/deep/view.go"}}
-	if got := viewRows([]watch.Event{write}, 38, viewOpt{tall: true}); len(got) != 1 || got[0] != "✗ …/deep/view.go · permission denied" {
-		t.Fatalf("a failed write: %q", got)
-	}
-	patch := watch.Event{Source: "codex", Kind: "error", Text: "apply_patch failed · internal/tui/session_handler_impl.go: Failed to find expected lines", Meta: map[string]any{"tool": "apply_patch", "path": "/r/internal/tui/session_handler_impl.go"}}
-	if got := viewRows([]watch.Event{patch}, 38, viewOpt{tall: true}); len(got) != 1 || got[0] != "✗ …ndler_impl.go · Failed to find exp…" {
-		t.Fatalf("a failed patch: %q", got)
-	}
 	for _, w := range []int{24, 30, 38, 50} {
-		for _, row := range viewRows(append(log, write, patch), w, viewOpt{tall: true}) {
+		for _, row := range viewRows([]watch.Event{fail("Bash failed · "+cmd+": exit status 1", map[string]any{"tool": "Bash"})}, w, viewOpt{tall: true}) {
 			if cellLen(row) > w {
 				t.Fatalf("%d cells: %q is %d", w, row, cellLen(row))
 			}
@@ -243,7 +295,7 @@ func TestPathEllipsisCutsAtTheOSSeparator(t *testing.T) {
 }
 
 // docs/ux.md §10, the spacing column: a blank row before a reply and an
-// ask and around a prompt; thoughts, commands and both ✗ lines pack.
+// ask and around a prompt; thoughts, steps and both ✗ lines pack.
 func TestBlockSpacing(t *testing.T) {
 	log := []watch.Event{
 		{Source: "claude", Kind: "text", Text: "Done."},
@@ -258,17 +310,16 @@ func TestBlockSpacing(t *testing.T) {
 		watch.Event{Source: "claude", Kind: "error", Text: "turn ended with an error"},
 	)
 	want := []string{
-		"reply ────────────────────────────────",
 		"  Done.",
 		"",
-		"                      now fix the test",
+		"› now fix the test",
 		"",
-		"thinking  The test still fails.",
-		"$ go test ./...",
+		"  thinking · The test still fails.",
+		"  $ go test ./...",
 		"✗ go test ./... · exit status 1",
 		"✗ error · rate limited",
 		"",
-		"                                 go on",
+		"› go on",
 		"",
 		"✗ error · turn ended with an error",
 	}
@@ -277,9 +328,9 @@ func TestBlockSpacing(t *testing.T) {
 	}
 }
 
-// docs/ux.md §10: each reply is its own block under "reply ───", its
-// Markdown indented 2: list items hang under their text, headings bold,
-// code muted.
+// docs/ux.md §10: each reply is its own block of plain text after the
+// gutter, no rule: list items hang under their text (the bullet a middle
+// dot), headings bold, code muted "│ " lines.
 func TestReplyBlocks(t *testing.T) {
 	log := []watch.Event{
 		{Source: "claude", Kind: "text", Text: "The selected card is one block now.\n- plans.go draws the card through one painter\n- live.go starts the fill at column 0"},
@@ -287,14 +338,12 @@ func TestReplyBlocks(t *testing.T) {
 	}
 	view := BuildLogView(log, 38, viewOpt{tall: true})
 	want := []string{
-		"reply ────────────────────────────────",
 		"  The selected card is one block now.",
-		"  • plans.go draws the card through",
+		"  · plans.go draws the card through",
 		"    one painter",
-		"  • live.go starts the fill at column",
+		"  · live.go starts the fill at column",
 		"    0",
 		"",
-		"reply ────────────────────────────────",
 		"  Next",
 		"",
 		"  Run it:",
@@ -314,14 +363,11 @@ func TestReplyBlocks(t *testing.T) {
 			if l.Spans[0].Role != "muted" {
 				t.Errorf("code is muted: %+v", l)
 			}
-		case "Run it:":
-			if l.Spans[1].Bold {
-				t.Errorf("prose is not bold: %+v", l)
+		case "Run it:", "The selected card is one block now.":
+			if l.Kind != "text" || l.Spans[1].Bold || l.Spans[1].Role != "" {
+				t.Errorf("prose is plain text: %+v", l)
 			}
 		}
-	}
-	if head := view[0]; !head.Spans[0].Bold || head.Spans[1].Role != "border" {
-		t.Fatalf("the reply head: %+v", head.Spans)
 	}
 	// Short screens drop the blank rows, inside a reply too.
 	if short := viewText(BuildLogView(log, 38, viewOpt{})); strings.Contains(short, "\n\n") {
@@ -329,45 +375,28 @@ func TestReplyBlocks(t *testing.T) {
 	}
 }
 
-// docs/ux.md §10, §9a: Rex's own lines start with "rex ›": a plan reload
-// is one row, with no "(file)"; drift is "rex › drift · <pin>" and a row
-// per path, hard ones the pin's yellow and soft ones muted.
+// docs/ux.md §10: Rex's own lines are muted "rex · …" after the gutter,
+// nothing bold: a plan reload is one row, with no "(file)".
 func TestRexLines(t *testing.T) {
-	log := []watch.Event{
-		watch.NewEvent("rex", "plan", "card-highlight → active · plan → active", nil),
-		driftEvent("card-highlight", pathDrift(plan.Hard, "README.md", "outside card-highlight files"), pathDrift(plan.Soft, "internal/tui/live_view.go", "next to live.go")),
-	}
+	log := []watch.Event{watch.NewEvent("rex", "plan", "card-highlight → active · plan → active", nil)}
 	view := BuildLogView(log, 38, viewOpt{tall: true})
-	want := []string{
-		"rex › plan · card-highlight → active…",
-		"rex › drift · card-highlight",
-		"  hard README.md · outside card-highl…",
-		"  soft live_view.go · next to live.go",
-	}
-	if got := strings.TrimSuffix(viewText(view), "\n"); got != strings.Join(want, "\n") {
-		t.Fatalf("got\n%s\nwant\n%s", got, strings.Join(want, "\n"))
-	}
-	if !view[0].Spans[0].Bold || view[0].Spans[0].Text != "rex ›" || view[0].Spans[1].Role != "muted" {
-		t.Fatalf("rex › is bold, the line muted: %+v", view[0].Spans)
-	}
-	// Drift is never an error's red: hard is off the pin, in its yellow,
-	// and soft is muted (docs/ux.md §5).
-	if view[2].Spans[0].Role != "accent" || view[3].Spans[0].Role != "muted" {
-		t.Fatalf("hard yellow, soft muted: %+v %+v", view[2].Spans, view[3].Spans)
+	if got := viewText(view); got != "  rex · card-highlight → active · pla…\n" || view[0].Kind != "plan" || len(view[0].Spans) > 0 {
+		t.Fatalf("%q %+v", got, view[0])
 	}
 	// From the app: a reload's line and an attach's.
 	a, c, path := openDemo(t, demoPlan, 120, 32)
 	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"status": "pending"`, `"status": "skipped"`, 1)), 0o644)
 	settled(a, c)
 	tape := viewText(a.logView(78))
-	if !strings.Contains(tape, "rex › plan · ") || strings.Contains(tape, "(file)") {
+	if !strings.Contains(tape, "  rex · ") || strings.Contains(tape, "(file)") || strings.Contains(tape, "rex ›") {
 		t.Fatalf("a reload's line\n%s", tape)
 	}
 }
 
-// docs/ux.md §10: only a reply and the before-rex-started line have a
-// rule; every other block is named by its first characters.
-func TestOnlyTwoRules(t *testing.T) {
+// docs/ux.md §10: the stream has no rules, pills or old labels: every block
+// is named by the gutter's mark or its first characters, and the warm
+// start is a muted line with no blank row under it.
+func TestNoRules(t *testing.T) {
 	log := []watch.Event{watch.NewEvent("rex", "before", "before rex started", nil)}
 	log = append(log, watch.Event{Source: "claude", Kind: "user", Text: "make it one block"})
 	log = append(log, thoughts("hmm", "ok")...)
@@ -378,40 +407,41 @@ func TestOnlyTwoRules(t *testing.T) {
 		watch.Event{Source: "claude", Kind: "text", Text: "Done."},
 		watch.Event{Source: "claude", Kind: "error", Text: "turn failed"},
 		watch.NewEvent("rex", "plan", "card-highlight → done", nil),
-		driftEvent("x", pathDrift(plan.Soft, "a.go", "next to b.go")),
+		watch.NewEvent("rex", "drift", "", map[string]any{driftKey: driftTag(plan.Soft), "rel": "a.go", "verb": "edit"}),
 	)
-	old := regexp.MustCompile(`^── (thinking|run|plan|drift|ask|reply|error)`)
-	rules := 0
 	for _, w := range []int{24, 38, 78} {
-		for _, l := range BuildLogView(log, w, viewOpt{tall: true}) {
-			if old.MatchString(l.Text) {
-				t.Errorf("%d: an old rule: %q", w, l.Text)
-			}
-			if strings.Contains(l.Text, "──") {
-				rules++
-				if !strings.HasPrefix(l.Text, "reply ─") && !strings.HasPrefix(l.Text, "── before rex started ─") {
-					t.Errorf("%d: a rule that isn't the reply's or the warm start's: %q", w, l.Text)
+		v := BuildLogView(log, w, viewOpt{tall: true})
+		for _, l := range v {
+			for _, never := range []string{"──", "[ASK]", "reply", "rex ›", "▌", "•"} {
+				if strings.Contains(l.Text, never) {
+					t.Errorf("%d: %q in %q", w, never, l.Text)
 				}
+			}
+			if cellLen(l.Text) > w {
+				t.Errorf("%d: %q is %d cells", w, l.Text, cellLen(l.Text))
+			}
+		}
+		if v[0].Text != "  before Rex started" || v[0].Kind != "before" || v[1].Kind == "gap" {
+			t.Fatalf("%d: the warm start's line, no gap under it: %q", w, viewText(v))
+		}
+		// The gutter holds only the marks.
+		for _, l := range v {
+			if g := []rune(l.Text + "  ")[0]; g != ' ' && !strings.ContainsRune("›✗?", g) {
+				t.Errorf("%d: %q in the gutter: %q", w, g, l.Text)
 			}
 		}
 	}
-	if rules != 6 {
-		t.Fatalf("%d rules, want 2 per width", rules)
-	}
-	// No blank row right under the warm-start line.
-	if v := BuildLogView(log, 78, viewOpt{tall: true}); v[1].Kind == "gap" {
-		t.Fatalf("a gap under the warm start: %q", viewText(v))
-	}
 }
 
-// docs/ux.md §10: an ask is an [ASK] pill and the question, wrapped under
-// the question, with a blank row before it only on tall screens.
+// docs/ux.md §10: an ask is a bold ? in the gutter and the question,
+// wrapped after the gutter, with a blank row before it only on tall
+// screens.
 func TestAskBlock(t *testing.T) {
 	log := append(thoughts("a"), watch.Event{Source: "claude", Kind: "question", Text: "Allow Bash(go test ./internal/tui ./internal/watch ./internal/cli -count=1)?"})
 	tall := viewRows(log, 38, viewOpt{tall: true})
 	at := -1
 	for i, row := range tall {
-		if strings.HasPrefix(row, "[ASK] Allow") {
+		if strings.HasPrefix(row, "? Allow") {
 			at = i
 		}
 	}
@@ -422,8 +452,8 @@ func TestAskBlock(t *testing.T) {
 		t.Fatalf("the question should wrap: %q", tall)
 	}
 	for _, row := range tall[at+1:] {
-		if !strings.HasPrefix(row, "      ") || strings.HasPrefix(row, "       ") || cellLen(row) > 38 {
-			t.Fatalf("not hung under the question: %q", tall)
+		if !strings.HasPrefix(row, "  ") || strings.HasPrefix(row, "   ") || cellLen(row) > 38 {
+			t.Fatalf("not hung after the gutter: %q", tall)
 		}
 	}
 	for _, row := range viewRows(log, 38, viewOpt{}) {
@@ -432,28 +462,49 @@ func TestAskBlock(t *testing.T) {
 		}
 	}
 	v := BuildLogView(log, 38, viewOpt{tall: true})
-	if sp := v[at].Spans; len(sp) < 2 || sp[1].Text != "ASK" || !sp[1].Bold {
-		t.Fatalf("no bold ASK pill: %+v", sp)
+	if sp := v[at].Spans; len(sp) != 2 || sp[0] != (Span{Text: "? ", Role: "text", Bold: true}) || sp[1].Role != "text" || sp[1].Bold {
+		t.Fatalf("a bold ? and the question in text: %+v", sp)
 	}
 }
 
-// docs/ux.md §10: a prompt keeps its blank rows only on tall screens.
-func TestPromptBlankRows(t *testing.T) {
-	log := []watch.Event{{Source: "claude", Kind: "user", Text: "make it one block\n\nbar and fill"}}
+// docs/ux.md §10: a prompt is › in the gutter and its text left-aligned
+// after it, its later rows after the gutter; its paragraphs keep their
+// blank rows only on tall screens; capped at 6 rows.
+func TestPromptRows(t *testing.T) {
+	text := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen"
+	rows := viewRows([]watch.Event{{Source: "cursor", Kind: "user", Text: text}}, 40, viewOpt{tall: true})
+	if len(rows) < 3 || !strings.HasPrefix(rows[0], "› one two") {
+		t.Fatalf("%q", rows)
+	}
+	for _, row := range rows[1:] {
+		if !strings.HasPrefix(row, "  ") || strings.HasPrefix(row, "   ") || cellLen(row) > 40 {
+			t.Fatalf("later rows start after the gutter: %q", rows)
+		}
+	}
+	// The first row leaves a drift tag's room, so a tag never moves a row.
+	if cellLen(rows[0]) > 40-tagRoom || cellLen(rows[1]) <= 40-tagRoom {
+		t.Fatalf("the first row leaves the tag's room, the rest take the width: %q", rows)
+	}
+	v := BuildLogView([]watch.Event{{Source: "cursor", Kind: "user", Text: text}}, 40, viewOpt{tall: true})
+	if sp := v[0].Spans; sp[0] != (Span{Text: "› ", Role: "muted"}) || sp[1].Role != "" || v[0].Kind != "user" {
+		t.Fatalf("› muted, the prompt in text: %+v", sp)
+	}
 	blanks := func(opt viewOpt) int {
 		n := 0
-		for _, row := range viewRows(log, 38, opt) {
+		for _, row := range viewRows([]watch.Event{{Source: "claude", Kind: "user", Text: "make it one block\n\nbar and fill"}}, 38, opt) {
 			if strings.TrimSpace(row) == "" {
 				n++
 			}
 		}
 		return n
 	}
-	if n := blanks(viewOpt{}); n != 0 {
-		t.Fatalf("short: %d blank rows in %q", n, viewRows(log, 38, viewOpt{}))
+	if blanks(viewOpt{}) != 0 || blanks(viewOpt{tall: true}) != 1 {
+		t.Fatalf("blank rows: short %d, tall %d", blanks(viewOpt{}), blanks(viewOpt{tall: true}))
 	}
-	if n := blanks(viewOpt{tall: true}); n != 1 {
-		t.Fatalf("tall: %d blank rows in %q", n, viewRows(log, 38, viewOpt{tall: true}))
+	long := strings.Repeat("a line of a pasted wall of text\n", 12)
+	capped := viewRows([]watch.Event{{Source: "claude", Kind: "user", Text: long}}, 38, viewOpt{})
+	if len(capped) != maxPromptRows+1 || capped[maxPromptRows] != "  (+7 more rows)" {
+		t.Fatalf("capped: %q", capped)
 	}
 }
 
@@ -498,15 +549,18 @@ func TestNoBlankRowsWhenShort(t *testing.T) {
 	}
 }
 
-// turnApp is on AGENT after a whole turn: a prompt, thoughts, commands,
-// a failed step, an ask and a reply.
+// turnApp is on AGENT after a whole turn: a prompt, thoughts, steps, a
+// failed step, an ask and a reply.
 func turnApp(t *testing.T) *app {
 	t.Helper()
 	a, _, _ := cujApp(t)
 	press(a, "\t")
 	log := []watch.Event{{Source: "claude", Kind: "user", Text: "make the selected card one block\n\nbar and fill on all three rows"}}
 	log = append(log, thoughts("Looking at the plans view.", "The fill is per row.")...)
-	log = append(log, commands("Edit internal/tui/plans.go", "Edit internal/tui/live.go", "go vet ./...", "Edit internal/tui/plans_test.go", "go test ./internal/tui")...)
+	log = append(log, edits("internal/tui/plans.go", "internal/tui/live.go")...)
+	log = append(log, commands("go vet ./...")...)
+	log = append(log, edits("internal/tui/plans_test.go")...)
+	log = append(log, commands("go test ./internal/tui")...)
 	log = append(log,
 		watch.Event{Source: "claude", Kind: "error", Text: "Bash failed · go test ./internal/tui: exit status 1", Meta: map[string]any{"tool": "Bash", "command": "go test ./internal/tui"}},
 		watch.Event{Source: "claude", Kind: "question", Text: "Allow Bash(go test ./...)?"},
@@ -519,28 +573,31 @@ func turnApp(t *testing.T) *app {
 	return a
 }
 
-// docs/ux.md §10: the view is cached per (revision, width, live, tall), so
-// a turn that ends with nothing drawn (Cursor's stop) settles the live run.
-func TestLogViewRebuildsOnTurn(t *testing.T) {
-	a := testApp(t)
+// docs/ux.md §10: the view is cached per (revision, width, tall): the
+// turn's word never changes the layout, so a turn that ends drawing
+// nothing (Cursor's stop) costs no layout, and a tag Rex puts on a row is
+// a new revision.
+func TestLogViewCache(t *testing.T) {
+	a, c, _ := openDemo(t, driftDemo, 120, 32)
 	press(a, "\t")
 	a.ingest([]watch.Event{{Source: "cursor", Kind: "user", Text: "go", TS: 1}})
 	a.ingest(thoughts("one", "The bar is drawn per row, so the fill has to start at column 0 to cover the gutter and the border cell, which the card painter skips today."))
 	if a.turn != TurnThinking {
 		t.Fatalf("turn %v", a.turn)
 	}
-	live, rev := a.logLines(), a.logRev
-	if v := viewText(a.logView(PaneTextWidth(a.columns, a.lines))); !strings.Contains(v, "thinking ×2") || live < 2 {
-		t.Fatalf("live\n%s", v)
-	}
+	w := PaneTextWidth(a.columns, a.lines)
+	view, rev := a.logView(w), a.logRev
 	if !a.ingest([]watch.Event{{Source: "cursor", Kind: "idle", Text: "turn completed", TS: 5}}) {
-		t.Fatal("a turn end repaints")
+		t.Fatal("a turn end repaints (row 1's word)")
 	}
-	if a.logRev != rev || a.turn != TurnIdle || a.logLines() != live-1 {
-		t.Fatalf("settled with no new line: rev %d→%d, %d→%d lines", rev, a.logRev, live, a.logLines())
+	if a.logRev != rev || a.turn != TurnIdle || &a.logView(w)[0] != &view[0] {
+		t.Fatalf("the turn's end lays nothing out again: rev %d→%d", rev, a.logRev)
 	}
-	if strings.Contains(a.frame(), "  so the fill") {
-		t.Fatalf("the second row is gone\n%s", a.frame())
+	a.ingest([]watch.Event{at(c, time.Second, edits(filepath.Join(a.plans.Repo, "README.md"))[0])})
+	rows, rev := len(a.logView(w)), a.logRev
+	a.ingest([]watch.Event{edit(a, c, 2*time.Second, "README.md")})
+	if a.logRev == rev || len(a.logView(w)) != rows || !strings.HasSuffix(strings.TrimRight(viewText(a.logView(w)), "\n"), " off pin") {
+		t.Fatalf("a tag is a new revision of the same rows: rev %d→%d, %d→%d rows\n%s", rev, a.logRev, rows, len(a.logView(w)), viewText(a.logView(w)))
 	}
 }
 
@@ -550,9 +607,8 @@ func TestTrimmedRows(t *testing.T) {
 	kinds := []watch.Event{
 		thoughts("one")[0],
 		thoughts("The bar is drawn per row, so the fill has to start at column 0 to cover the gutter and the border cell.")[0],
-		// 28 cells: one row after "thinking  " at 38, two after "thinking ×2  ".
-		thoughts("abcdefghij abcdefghij abcdef")[0],
 		commands("go test ./...")[0],
+		edits("internal/tui/plans.go")[0],
 		{Source: "claude", Kind: "command", Text: "Read internal/tui/live.go", Meta: map[string]any{"tool": "Read", "path": "internal/tui/live.go"}},
 		{Source: "claude", Kind: "result", Text: "wrote README.md", Meta: map[string]any{"tool": "Write", "path": "README.md", "ok": true}},
 		{Source: "claude", Kind: "user", Text: "make the selected card one block, with the bar and the fill on all three rows of it"},
@@ -560,26 +616,28 @@ func TestTrimmedRows(t *testing.T) {
 		{Source: "claude", Kind: "question", Text: "Allow Bash(go test ./...)?"},
 		{Source: "claude", Kind: "error", Text: "Bash failed · go vet: exit status 1", Meta: map[string]any{"tool": "Bash"}},
 		{Source: "claude", Kind: "error", Text: "turn failed: the model hit its context limit"},
-		watch.NewEvent("rex", "before", "before rex started", nil),
+		watch.NewEvent("rex", "before", "before Rex started", nil),
 		watch.NewEvent("rex", "plan", "following sendoff-demo", nil),
+		watch.NewEvent("rex", "drift", "", map[string]any{driftKey: driftTag(plan.Hard), "rel": "README.md"}),
+		{Source: "claude", Kind: "text", Text: "\x1b]0;title\x07"},
+		{Source: "claude", Kind: "text", Text: "```\n```"},
 		{Source: "claude", Kind: "idle", Text: "turn completed"},
 	}
-	// One filter with the feed's (watch.KeepInPane): a file look, a result
-	// and a turn end draw nothing.
-	if !hiddenInStream(kinds[4]) || !hiddenInStream(kinds[5]) || !hiddenInStream(kinds[len(kinds)-1]) {
-		t.Fatal("the file look, the result and the turn end should draw nothing")
+	// One filter with the feed's (watch.KeepInPane): a file look, a result,
+	// a turn end and a reply that cleans to nothing draw nothing.
+	for _, i := range []int{4, 5, len(kinds) - 3, len(kinds) - 2, len(kinds) - 1} {
+		if !hiddenInStream(kinds[i]) {
+			t.Fatalf("%q should draw nothing", kinds[i].Text)
+		}
 	}
 	seed := uint32(1)
 	next := func(n int) int { // a fixed sequence, so a failure replays
 		seed = seed*1664525 + 1013904223
 		return int(seed>>8) % n
 	}
-	// A run trimmed from ×10 to ×9 narrows its label, so the newest live
-	// run takes one row fewer: the head must reach past the whole run.
-	run := thoughts("abcdefghij abcdefghij abc") // 25 cells
-	for len(run) < 10 {
-		run = append(run, run[0])
-	}
+	// A run of seven steps trimmed to five unfolds: the head must reach
+	// past the whole run.
+	run := commands("a", "b", "c", "d", "e", "f", "g")
 	for round := 0; round <= 300; round++ {
 		log := run
 		if round > 0 {
@@ -589,7 +647,7 @@ func TestTrimmedRows(t *testing.T) {
 			}
 		}
 		for _, width := range []int{20, 38, 80} {
-			for _, opt := range []viewOpt{{}, {live: true}, {tall: true}, {live: true, tall: true}} {
+			for _, opt := range []viewOpt{{}, {tall: true}} {
 				for n := 0; n <= len(log)+1; n++ {
 					want := len(BuildLogView(log, width, opt)) - len(BuildLogView(log[min(n, len(log)):], width, opt))
 					if got := trimmedRows(log, n, width, opt); got != want {
@@ -610,7 +668,7 @@ func agentBody(a *app) []string {
 	rows := a.frameRows().Rows
 	top, bottom := 2, len(rows)-1
 	if a.lines >= blankFrom {
-		top, bottom = 3, len(rows)-2 // row 2 is blank, and the notice row is the footer's
+		top, bottom = 3, len(rows)-2 // row 2 is ↑ N earlier's, and the notice row the footer's
 	}
 	var out []string
 	for _, r := range rows[top:bottom] {
@@ -619,8 +677,8 @@ func agentBody(a *app) []string {
 	return out
 }
 
-// liveApp is on AGENT with a reply every 3 rows above a prompt and a live
-// 2-row thought run, so one row of movement shows.
+// liveApp is on AGENT with a reply every 3 rows above a prompt and a run
+// of thoughts, the turn in flight.
 func liveApp(t *testing.T) *app {
 	t.Helper()
 	a := testApp(t)
@@ -635,70 +693,46 @@ func liveApp(t *testing.T) *app {
 }
 
 // docs/ux.md §10: scrolling never changes the layout, and a scrolled view
-// keeps its first visible line while a run grows, settles (the turn's end,
-// or a drawn block under it) or the log trims; End is live again.
+// keeps its lines while the run grows, the turn ends, a block lands under
+// it or the log trims; row 0 counts the rows under it and row 2 those
+// above; End is live again.
 func TestScrolledViewStable(t *testing.T) {
-	a := liveApp(t)
-	livePlain := a.logLines()
-	press(a, "up", "up", "up")
-	if a.scroll != 3 || a.logLines() != livePlain || !a.viewOpt().live {
-		t.Fatalf("scrolled up, the run stays live: scroll %d, %d→%d lines", a.scroll, livePlain, a.logLines())
-	}
-	top := func() string { return strings.Join(agentBody(a), "\n") }
-	first := top()
-	steps := []struct {
-		what string
-		evs  []watch.Event
-	}{
-		{"a thought joins the run", thoughts("and another")},
-		{"the turn ends", []watch.Event{{Source: "claude", Kind: "idle", Text: "turn completed", TS: 50}}},
-		{"a command", commands("go test ./...")},
-	}
-	for _, s := range steps {
-		a.ingest(s.evs)
-		if got := top(); got != first {
-			t.Fatalf("%s moved the view: %q → %q", s.what, first, got)
-		}
-		if got := textOf(a.frameRows().Rows[0], a.columns); !strings.Contains(got, fmt.Sprintf("↓ %d newer", a.scroll)) {
-			t.Fatalf("%s: row 0 says what is below: %q (scroll %d)", s.what, got, a.scroll)
-		}
-	}
-	// The live run just under the view, or further down, settles without
-	// moving it: by the turn's end, which draws nothing, or by a command,
-	// which draws a block under it.
 	for _, up := range []int{1, 2, 3} {
-		for _, end := range []struct {
+		a := liveApp(t)
+		plain := a.logLines()
+		for i := 0; i < up; i++ {
+			press(a, "up")
+		}
+		if a.scroll != up || a.logLines() != plain {
+			t.Fatalf("scrolled up, the layout stays: scroll %d, %d→%d lines", a.scroll, plain, a.logLines())
+		}
+		first := strings.Join(agentBody(a), "\n")
+		for _, s := range []struct {
 			what string
 			evs  []watch.Event
 		}{
+			{"a thought joins the run", thoughts("and another")},
 			{"the turn ends", []watch.Event{{Source: "claude", Kind: "idle", Text: "turn completed", TS: 50}}},
-			{"a command", commands("go vet ./...")},
+			{"a command", commands("go test ./...")},
+			{"a reply", []watch.Event{{Source: "claude", Kind: "text", Text: "Done.", TS: 60}}},
 		} {
-			a := liveApp(t)
-			for i := 0; i < up; i++ {
-				press(a, "up")
+			a.ingest(s.evs)
+			if got := strings.Join(agentBody(a), "\n"); got != first {
+				t.Fatalf("%d↑, %s moved the view:\n%s\n→\n%s", up, s.what, first, got)
 			}
-			body := agentBody(a)
-			a.ingest(end.evs)
-			if a.viewOpt().live && end.what == "the turn ends" || a.scroll < 1 {
-				t.Fatalf("%d↑, %s: live %v, scroll %d", up, end.what, a.viewOpt().live, a.scroll)
+			rows := a.frameRows().Rows
+			if got := textOf(rows[0], a.columns); !strings.Contains(got, fmt.Sprintf("↓ %d newer", a.scroll)) {
+				t.Fatalf("%s: row 0 says what is below: %q (scroll %d)", s.what, got, a.scroll)
 			}
-			// At 1↑ the run's first row is the view's last, and it settles
-			// in place; when the turn's end gives that row back, the view
-			// stays scrolled (never under 1) and so moves the one row.
-			got := agentBody(a)
-			if up == 1 {
-				if end.what == "the turn ends" {
-					continue
-				}
-				body, got = body[:len(body)-1], got[:len(got)-1]
-			}
-			if strings.Join(got, "\n") != strings.Join(body, "\n") {
-				t.Fatalf("%d↑, %s moved the view:\n%s\n→\n%s", up, end.what, strings.Join(body, "\n"), strings.Join(got, "\n"))
+			above := a.logLines() - PaneBodyHeight(a.lines) - a.scroll
+			if got := strings.TrimSpace(textOf(rows[2], a.columns)); got != fmt.Sprintf("↑ %d earlier", above) {
+				t.Fatalf("%s: row 2 says what is above: %q, want %d", s.what, got, above)
 			}
 		}
 	}
 	// The cap drops the oldest events off the top: the view stays.
+	a := liveApp(t)
+	top := func() string { return strings.Join(agentBody(a), "\n") }
 	var more []watch.Event
 	for i := 0; i < MaxLog; i++ {
 		more = append(more, watch.Event{Source: "claude", Kind: "text", Text: fmt.Sprintf("later %d", i), TS: float64(100 + i)})
@@ -708,7 +742,7 @@ func TestScrolledViewStable(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		press(a, "up")
 	}
-	first = top()
+	first := top()
 	a.ingest(more[MaxLog-30:])
 	if got := top(); got != first || a.scroll == 0 {
 		t.Fatalf("a trim moved the view: %q → %q (scroll %d)", first, got, a.scroll)
@@ -719,9 +753,39 @@ func TestScrolledViewStable(t *testing.T) {
 	}
 }
 
-// docs/ux.md §10: a run is live while the turn is in flight, so a tool call
-// that draws nothing (a file look between thoughts) leaves the stream
-// still: it doesn't settle the run only for the next thought to grow it.
+// docs/ux.md §10, §12: a reply that cleans to nothing (only an escape
+// sequence, an empty fence) draws no block, so no blank row either: under
+// 12 rows there are still none.
+func TestEmptyReplyDrawsNothing(t *testing.T) {
+	empty := []watch.Event{{Source: "claude", Kind: "text", Text: "\x1b]0;x\x07"}, {Source: "claude", Kind: "text", Text: "```\n```"}}
+	if v := BuildLogView(empty, 38, viewOpt{tall: true}); len(v) != 0 {
+		t.Fatalf("%q", viewText(v))
+	}
+	log := []watch.Event{{Source: "claude", Kind: "user", Text: "go", TS: 1}, empty[0]}
+	log = append(log, thoughts("ok")...)
+	log = append(log, empty[1])
+	log = append(log, commands("x")...)
+	if got := strings.Join(viewRows(log, 38, viewOpt{tall: true}), "\n"); got != "› go\n\n  thinking · ok\n  $ x" {
+		t.Fatalf("%q", got)
+	}
+	a := testApp(t)
+	press(a, "\t")
+	for i := range log {
+		log[i].TS = float64(i + 1)
+	}
+	a.ingest(log)
+	a.settle(80, 10)
+	body := agentBody(a)
+	for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
+		body = body[:len(body)-1]
+	}
+	if strings.Join(body, "\n") != "› go\n  thinking · ok\n  $ x" {
+		t.Fatalf("no blank rows under 12 rows\n%s", strings.Join(body, "\n"))
+	}
+}
+
+// docs/ux.md §10: a tool call that draws nothing (a file look between
+// thoughts) leaves the stream still.
 func TestHiddenReadKeepsTheStream(t *testing.T) {
 	a := testApp(t)
 	press(a, "\t")
@@ -747,11 +811,11 @@ func TestHiddenReadKeepsTheStream(t *testing.T) {
 			t.Fatalf("read %d moved the stream (%d→%d rows):\n%s\n→\n%s", i, lines, a.logLines(), body, got)
 		}
 	}
-	// The next drawn block settles it.
-	live := a.logLines()
+	// The next drawn block is a row of its own.
+	rows := a.logLines()
 	a.ingest(commands("go vet ./..."))
-	if a.logLines() != live {
-		t.Fatalf("a command under the run: %d→%d rows, want the run's row given back", live, a.logLines())
+	if a.logLines() != rows+1 {
+		t.Fatalf("a command under the run: %d→%d rows", rows, a.logLines())
 	}
 }
 
@@ -759,9 +823,6 @@ func TestHiddenReadKeepsTheStream(t *testing.T) {
 // bottom moves the view one row, and ↓ moves it back.
 func TestUpFromLiveMovesOneRow(t *testing.T) {
 	a := liveApp(t)
-	if a.turn != TurnThinking {
-		t.Fatalf("turn %v", a.turn)
-	}
 	before := agentBody(a)
 	press(a, "up")
 	after := agentBody(a)
@@ -775,151 +836,214 @@ func TestUpFromLiveMovesOneRow(t *testing.T) {
 	}
 }
 
-// docs/ux.md §10: when the live run's second row is all that overflows,
-// ↑, Home and PgUp still reach the oldest row.
-func TestOldestRowReachableWhileLive(t *testing.T) {
-	a := testApp(t)
-	press(a, "\t")
-	bodyH := PaneBodyHeight(a.lines)
-	var log []watch.Event
-	for i := 0; i < bodyH-1; i++ {
-		cmd := fmt.Sprintf("x%02d", i)
-		log = append(log,
-			watch.Event{Source: "claude", Kind: "command", Text: cmd, Meta: map[string]any{"tool": "Bash"}, TS: float64(i)},
-			watch.Event{Source: "claude", Kind: "error", Text: "Bash failed · " + cmd + ": boom", Meta: map[string]any{"tool": "Bash", "command": cmd}, TS: float64(i)})
-	}
-	a.ingest(log)
-	a.ingest(thoughts("The bar is drawn per row, so the fill has to start at column 0 to cover the gutter and the border cell."))
-	for a.logLines() > bodyH+1 {
-		a.log = a.log[1:]
-		a.logRev++
-	}
-	a.settle(a.columns, a.lines)
-	if a.logLines() != bodyH+1 || !a.viewOpt().live {
-		t.Fatalf("setup: %d rows, body %d", a.logLines(), bodyH)
-	}
-	oldest := strings.SplitN(viewText(a.logView(PaneTextWidth(a.columns, a.lines))), "\n", 2)[0]
-	for _, k := range []string{"up", "home", "pageup"} {
-		press(a, "end", k)
-		if body := strings.Join(agentBody(a), "\n"); a.scroll != 1 || !strings.Contains(body, oldest) {
-			t.Errorf("%s: the oldest row %q never shows (scroll %d)\n%s", k, oldest, a.scroll, body)
+// docs/ux.md §10: when one row is all that overflows, ↑, Home and PgUp
+// reach the oldest row, and ↑ N earlier says what is cut off the top:
+// on row 2 from 12 rows, on the body's first row under 12.
+func TestOldestRowReachable(t *testing.T) {
+	for _, lines := range []int{32, 10} {
+		a := testApp(t)
+		press(a, "\t")
+		a.settle(a.columns, lines)
+		bodyH := PaneBodyHeight(a.lines)
+		var log []watch.Event
+		for i := 0; i <= bodyH; i++ {
+			cmd := fmt.Sprintf("x%02d", i)
+			log = append(log,
+				watch.Event{Source: "claude", Kind: "command", Text: cmd, Meta: map[string]any{"tool": "Bash"}, TS: float64(i)},
+				watch.Event{Source: "claude", Kind: "error", Text: "Bash failed · " + cmd + ": boom", Meta: map[string]any{"tool": "Bash", "command": cmd}, TS: float64(i)})
+		}
+		a.ingest(log)
+		for a.logLines() > bodyH+1 {
+			a.log = a.log[1:]
+			a.logRev++
+		}
+		a.settle(a.columns, a.lines)
+		oldest := strings.SplitN(viewText(a.logView(PaneTextWidth(a.columns, a.lines))), "\n", 2)[0]
+		// Row 2 from 12 rows; under 12 it is the body's first row, which the
+		// marker takes, so it counts that row too.
+		want := "↑ 1 earlier"
+		if lines < blankFrom {
+			want = "↑ 2 earlier"
+		}
+		if got := strings.TrimSpace(textOf(a.frameRows().Rows[2], a.columns)); got != want || strings.Contains(strings.Join(agentBody(a), "\n"), oldest) {
+			t.Errorf("%d rows, live: %q, want %q", lines, got, want)
+		}
+		for _, k := range []string{"up", "home", "pageup"} {
+			press(a, "end", k)
+			if body := strings.Join(agentBody(a), "\n"); a.scroll != 1 || !strings.Contains(body, oldest) || strings.Contains(body, "earlier") {
+				t.Errorf("%d rows, %s: the oldest row %q never shows (scroll %d)\n%s", lines, k, oldest, a.scroll, body)
+			}
 		}
 	}
 }
 
-// docs/ux.md §10, §12: AGENT at 80×12, 24×12, 80×24 and 80×7 (its
-// mockups and the layout tiers), NO_COLOR, footers as shipped.
-func TestAgentMockups(t *testing.T) {
-	frame := func(a *app, cols, lines int) string {
-		a.settle(cols, lines)
-		var out []string
-		for _, row := range a.frameRows().Rows {
-			out = append(out, textOf(row, cols))
+// docs/ux.md §10: the scenes of the AGENT goldens, on the CUJ plan
+// (card-highlight pinned, its files plans.go, live.go and plans_test.go):
+// a followed plan's line, a prompt that carried the pin, a run of
+// thoughts, a shell command, an edit on the pin, one off it (hard), one
+// next to it (soft), a failed step and the next command.
+func agentScene(t *testing.T, scene string) *app {
+	t.Helper()
+	a, c, _ := cujApp(t)
+	repo := a.plans.Repo
+	wire(a, wired("claude"))
+	press(a, "\t")
+	n := 0
+	ev := func(e watch.Event) watch.Event {
+		n++
+		if e.Meta == nil {
+			e.Meta = map[string]any{}
 		}
-		return strings.Join(out, "\n")
+		e.Meta["cwd"] = repo
+		return at(c, time.Duration(n)*time.Second, e)
 	}
-	turn := func(t *testing.T, last ...watch.Event) *app {
-		a, c, _ := cujApp(t)
-		press(a, "\t")
-		ev := func(d int, e watch.Event) watch.Event { return at(c, time.Duration(d)*time.Second, e) }
-		a.ingest([]watch.Event{ev(1, watch.Event{Source: "claude", Kind: "user", Text: "make the selected card one block"})})
-		a.tapeLine("plan", "card-highlight → active")
-		var evs []watch.Event
-		run := append(thoughts("a", "b", "c", "Looking at the plans view first; the card border is drawn apart."),
-			commands("Edit internal/tui/plans.go", "Edit internal/tui/live.go", "go test ./internal/tui")...)
-		for i, e := range append(run, last...) {
-			evs = append(evs, ev(2+i, e))
+	step := func(id, rel string) []watch.Event {
+		p := filepath.Join(repo, rel)
+		return []watch.Event{
+			ev(watch.Event{Source: "claude", Kind: "command", Text: "Edit " + p, Meta: map[string]any{"tool": "Edit", "path": p, "tool_use_id": id}}),
+			ev(watch.Event{Source: "claude", Kind: "result", Text: "wrote " + p, Meta: map[string]any{"tool": "Edit", "path": p, "tool_use_id": id, "ok": true}}),
 		}
-		a.ingest(evs)
-		return a
 	}
-	live := turn(t, thoughts("x", "y", "The bar is drawn per row, so the fill has to start at column 0 to cover the gutter.")...)
-	if got, want := frame(live, 38, 12), strings.Join([]string{
-		"Agent             live   plan · agent",
-		"thinking        pinned card-highlight",
-		"",
-		"rex › plan · card-highlight → active",
-		"thinking ×4  Looking at the plans vie…",
-		"$ Edit internal/tui/plans.go",
-		"$ Edit internal/tui/live.go",
-		"$ go test ./internal/tui",
-		"thinking ×3  The bar is drawn per row,",
-		"  so the fill has to start at column…",
-		"",
-		"↑↓ scroll · tab plan · ? help",
-	}, "\n"); got != want {
-		t.Errorf("38×12, live:\n%s\nwant\n%s", got, want)
+	bash := func(cmd string) watch.Event {
+		return ev(watch.Event{Source: "claude", Kind: "command", Text: cmd, Meta: map[string]any{"tool": "Bash", "command": cmd}})
 	}
-	if got, want := frame(live, 24, 12), strings.Join([]string{
-		"Agent              live",
-		"thinking",
-		"",
-		"",
-		"rex › plan · card-highl…",
-		"thinking ×4",
-		"$ Edit internal/tui/pla…",
-		"$ Edit internal/tui/liv…",
-		"$ go test ./internal/tui",
-		"thinking ×3",
-		"",
-		"tab plan · ? help",
-	}, "\n"); got != want {
-		t.Errorf("24×12:\n%s\nwant\n%s", got, want)
+	prompt := carried(a, "Start on the pinned task: the selected card should be one block. Keep the fill on all three rows.")
+	prompt.Meta["cwd"] = repo
+	turn := []watch.Event{at(c, 0, prompt)}
+	for _, s := range []string{"Looking at the card painter.", "The fill is drawn per row.", "One painter for the bar and the fill, then."} {
+		turn = append(turn, ev(watch.Event{Source: "claude", Kind: "thought", Text: s}))
 	}
-	// The §10 mockup at 38×24: the turn over, an edit next to the pin's
-	// files soft drift, which only AGENT's drift block lists (§4).
-	over, c, _ := cujApp(t)
-	press(over, "\t")
-	over.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "claude", Kind: "user", Text: "make the selected card one block"})})
-	over.tapeLine("plan", "card-highlight → active")
-	var evs []watch.Event
-	evs = append(evs, thoughts("a", "b", "c", "Looking at the plans view first; the card border is drawn apart.")...)
-	evs = append(evs, commands("Edit internal/tui/plans.go", "Edit internal/tui/live.go", "go vet ./...", "Edit internal/tui/plans_test.go", "Edit internal/tui/outline.go", "go test ./internal/tui -run PlanCardSelection")...)
-	evs = append(evs, watch.Event{Source: "claude", Kind: "error", Text: "Bash failed · go test ./internal/tui -run PlanCardSelection: exit status 1", Meta: map[string]any{"tool": "Bash", "command": "go test ./internal/tui -run PlanCardSelection"}})
-	evs = append(evs, thoughts("Two painters.", "The bar is drawn per row, so the fill has to start at column 0 to cover the gutter.")...)
-	for i := range evs {
-		evs[i] = at(c, time.Duration(2+i)*time.Second, evs[i])
+	turn = append(turn, bash("go test ./internal/tui -run PlanCard"))
+	turn = append(turn, step("e1", "internal/tui/plans.go")...)
+	turn = append(turn, step("e2", "internal/watch/format.go")...)
+	turn = append(turn, step("e3", "internal/tui/live_view.go")...)
+	if scene == "asking" {
+		turn = append(turn, ev(watch.Event{Source: "claude", Kind: "question", Text: "Keep the old card style too, or drop it?"}))
+	} else {
+		turn = append(turn, bash("go vet ./..."), ev(watch.Event{Source: "claude", Kind: "error", Text: "Bash failed · go vet ./...: plans.go:88: unreachable code", Meta: map[string]any{"tool": "Bash", "command": "go vet ./..."}}), bash("go test ./internal/tui"))
 	}
-	over.ingest(append(evs, edit(over, c, 30*time.Second, "internal/tui/live_view.go")))
-	over.ingest([]watch.Event{at(c, 31*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "The selected card is one block now.\n- plans.go draws the card through one painter\n- live.go starts the fill at column 0"})})
-	if got, want := frame(over, 38, 24), strings.Join([]string{
-		"Agent             live   plan · agent",
-		"idle            pinned card-highlight",
-		"",
-		"",
-		"rex › plan · card-highlight → active",
-		"thinking ×4  Looking at the plans vie…",
-		"$ … +2 earlier",
-		"$ go vet ./...",
-		"$ Edit internal/tui/plans_test.go",
-		"$ Edit internal/tui/outline.go",
-		"$ go test ./internal/tui -run PlanCar…",
-		"✗ go test ./internal/… · exit status 1",
-		"thinking ×2  The bar is drawn per row…",
-		"rex › drift · card-highlight",
-		"  soft live_view.go · next to plans.go",
-		"",
-		"reply ────────────────────────────────",
-		"  The selected card is one block now.",
-		"  • plans.go draws the card through",
-		"    one painter",
-		"  • live.go starts the fill at column",
-		"    0",
-		"",
-		"↑↓ scroll · tab plan · ? help",
-	}, "\n"); got != want {
-		t.Errorf("38×24, the turn over:\n%s\nwant\n%s", got, want)
+	if scene == "settled" || scene == "scrolled" {
+		turn = append(turn, ev(watch.Event{Source: "claude", Kind: "text", Text: "## One block\n\nThe selected card is one painter now:\n- the bar and the fill share it\n- the fill starts at column 0\n\n```\ngo test ./internal/tui\n```\n\ngo vet and go test pass."}))
 	}
-	ask := turn(t, append(thoughts("Two of them.", "Two painters draw the card: one for the bar, one for the fill."), watch.Event{Source: "claude", Kind: "question", Text: "Keep the old card style too?"})...)
-	if got, want := frame(ask, 38, 7), strings.Join([]string{
-		"Agent             live   plan · agent",
-		"waiting on you  pinned card-highlight",
-		"$ Edit internal/tui/live.go",
-		"$ go test ./internal/tui",
-		"thinking ×2  Two painters draw the ca…",
-		"[ASK] Keep the old card style too?",
-		"↑↓ scroll · tab plan · ? help",
-	}, "\n"); got != want {
-		t.Errorf("38×7:\n%s\nwant\n%s", got, want)
+	switch scene {
+	case "warm-started":
+		// What the agent did before Rex started, then a prompt since.
+		a.warmStart(turn[:9], c.t.Add(time.Minute))
+		a.ingest([]watch.Event{ev(watch.Event{Source: "claude", Kind: "user", Text: "now the footer"})})
+	case "scrolled":
+		var earlier []watch.Event
+		for i := 0; i < 20; i++ {
+			earlier = append(earlier, at(c, -time.Duration(30-i)*time.Second, watch.Event{Source: "claude", Kind: "text", Text: fmt.Sprintf("Earlier reply %d.", i), Meta: map[string]any{"cwd": repo}}))
+		}
+		a.ingest(earlier)
+		a.tapeLine("plan", "following Send-off demo")
+		a.ingest(turn)
+		press(a, "up", "up", "up", "up", "up", "up")
+	case "empty":
+	default:
+		a.tapeLine("plan", "following Send-off demo")
+		a.ingest(turn)
+	}
+	return a
+}
+
+// agentScenes are the AGENT goldens (docs/ux.md §10): mid-turn, after the
+// turn, asking, scrolled, warm-started, and empty (the feed's health).
+var agentScenes = []string{"live", "settled", "asking", "scrolled", "warm-started", "empty"}
+
+// docs/ux.md §10: each AGENT scene's text column at 80×24 and 120×32, in
+// NO_COLOR, and at 80×24 in color (its SGR written as \e), against the
+// goldens in testdata/agent; -update rewrites them.
+func TestAgentGoldens(t *testing.T) {
+	for _, scene := range agentScenes {
+		var plain, color []string
+		for _, size := range [][2]int{{80, 24}, {120, 32}} {
+			a := agentScene(t, scene)
+			if scene == "empty" {
+				a.log = nil // the scene's turn never came
+				a.health = feedHealth{path: filepath.Join(os.Getenv("HOME"), ".rex", "session.jsonl"), statusesFor: func(string) []watch.HarnessStatus {
+					return []watch.HarnessStatus{
+						{Name: "claude", Present: true, Wired: true, Prompts: true},
+						{Name: "codex"},
+						{Name: "cursor", Present: true, Wired: true, Prompts: true, Partial: true},
+						{Name: "opencode"},
+					}
+				}}
+			}
+			a.settle(size[0], size[1])
+			column := textColumn(a.layout(), a.lines, a.composeOptions())
+			plain = append(plain, fmt.Sprintf("%d×%d", size[0], size[1]))
+			for _, row := range column {
+				plain = append(plain, strings.TrimRight(row, " "))
+			}
+			if size[0] == 80 {
+				a.enabled = true
+				for _, row := range textColumn(a.layout(), a.lines, a.composeOptions()) {
+					color = append(color, strings.ReplaceAll(strings.TrimRight(row, " "), "\033", `\e`))
+				}
+			}
+		}
+		for name, got := range map[string]string{scene + ".txt": strings.Join(plain, "\n") + "\n", scene + ".color.txt": strings.Join(color, "\n") + "\n"} {
+			golden := filepath.Join("testdata", "agent", name)
+			if *update {
+				os.MkdirAll(filepath.Dir(golden), 0o755)
+				if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				continue
+			}
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("%v (go test ./internal/tui -run AgentGoldens -update)", err)
+			}
+			if got != string(want) {
+				t.Errorf("%s:\n%s\nwant\n%s", golden, got, want)
+			}
+		}
 	}
 }
+
+// docs/ux.md §10: the scenes keep their promises: the off-pin edit's tag
+// is the pin's yellow and the soft one muted, the pin's id under the
+// prompt yellow, only the ✗ and a turn's error red, and the color frame's
+// text is the NO_COLOR frame's.
+func TestAgentScenesRoles(t *testing.T) {
+	a := agentScene(t, "settled")
+	a.settle(80, 32)
+	a.enabled = true
+	color := textColumn(a.layout(), a.lines, a.composeOptions())
+	a.enabled = false
+	plain := textColumn(a.layout(), a.lines, a.composeOptions())
+	for i := range plain {
+		if stripSGR(color[i]) != plain[i] {
+			t.Fatalf("row %d: %q vs %q", i, stripSGR(color[i]), plain[i])
+		}
+	}
+	find := func(s string) string {
+		for i, row := range plain {
+			if strings.Contains(row, s) {
+				return color[i]
+			}
+		}
+		t.Fatalf("no row has %q\n%s", s, strings.Join(plain, "\n"))
+		return ""
+	}
+	yellow, muted, red := fg("accent"), fg("muted"), fg("error")
+	if row := find("format.go"); !strings.Contains(row, yellow+"off pin") {
+		t.Errorf("hard drift's tag is yellow: %q", row)
+	}
+	if row := find("live_view.go"); !strings.Contains(row, muted+"off pin?") || strings.Contains(row, yellow) {
+		t.Errorf("soft drift's tag is muted: %q", row)
+	}
+	if row := find("with pin"); !strings.Contains(row, yellow+"card-highlight") {
+		t.Errorf("the pin's id under the prompt: %q", row)
+	}
+	if row := find("unreachable code"); !strings.Contains(row, red+"✗") || strings.Count(row, red) != 1 {
+		t.Errorf("only the ✗ is red: %q", row)
+	}
+	if row := find("go test ./internal/tui -run PlanCard"); !strings.Contains(row, muted+"  $ go test") {
+		t.Errorf("a step is muted: %q", row)
+	}
+}
+
+func fg(role string) string { return mascot.FG(mascot.UI[role]) }

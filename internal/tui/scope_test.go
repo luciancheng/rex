@@ -37,7 +37,7 @@ func TestTapeShowsRepoRelativePaths(t *testing.T) {
 	abs := filepath.Join(a.plans.Repo, "internal", "tui", "plans.go")
 	a.ingest([]watch.Event{{Source: "cursor", Kind: "command", Text: "Write " + abs, Meta: map[string]any{"tool": "Write", "path": abs, "cwd": a.plans.Repo}}})
 	view := viewText(a.logView(78))
-	if !strings.Contains(view, "$ Write internal/tui/plans.go") || strings.Contains(view, a.plans.Repo) {
+	if !strings.Contains(view, "  edit internal/tui/plans.go") || strings.Contains(view, a.plans.Repo) {
 		t.Fatalf("%s", view)
 	}
 }
@@ -57,7 +57,7 @@ func TestWarmStart(t *testing.T) {
 		t.Fatalf("a fresh turn is restored: turn=%d anim=%s", a.turn, a.sequence.Name)
 	}
 	view := viewText(a.logView(78))
-	if !strings.Contains(view, "── before rex started") || !strings.Contains(view, "Looking at plans.go") {
+	if !strings.HasPrefix(view, "  before Rex started\n› fix the cards\n") || !strings.Contains(view, "Looking at plans.go") {
 		t.Fatalf("%s", view)
 	}
 	stale := testApp(t)

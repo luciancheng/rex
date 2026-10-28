@@ -1,0 +1,58 @@
+80×24
+Agent                                                       live   plan · agent
+running                                                   pinned card-highlight
+
+  rex · following Send-off demo
+
+› Start on the pinned task: the selected card should be one block.
+  Keep the fill on all three rows.
+  with pin card-highlight
+
+  thinking ×3 · One painter for the bar and the fill, then.
+  $ go test ./internal/tui -run PlanCard
+  edit internal/tui/plans.go
+  edit internal/watch/format.go                                         off pin
+  edit internal/tui/live_view.go                                       off pin?
+  $ go vet ./...
+✗ go vet ./... · plans.go:88: unreachable code
+  $ go test ./internal/tui
+
+
+
+
+
+
+↑↓ scroll · home oldest · end live · tab plan · ? help
+120×32
+Agent                                                     live   plan · agent
+running                                                 pinned card-highlight
+
+  rex · following Send-off demo
+
+› Start on the pinned task: the selected card should be one block.
+  Keep the fill on all three rows.
+  with pin card-highlight
+
+  thinking ×3 · One painter for the bar and the fill, then.
+  $ go test ./internal/tui -run PlanCard
+  edit internal/tui/plans.go
+  edit internal/watch/format.go                                       off pin
+  edit internal/tui/live_view.go                                     off pin?
+  $ go vet ./...
+✗ go vet ./... · plans.go:88: unreachable code
+  $ go test ./internal/tui
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+↑↓ scroll · home oldest · end live · tab plan · ? help

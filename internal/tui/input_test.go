@@ -136,13 +136,20 @@ func TestIdleIsNoLongerAVerb(t *testing.T) {
 }
 
 // ? opens Help at once on a screen without a composer (docs/ux.md §2).
-// Its page title is the page it opened over, then HELP, and THIS PAGE lists
+// Its page title is the page it opened over, then Help, and This page lists
 // that page's keys (docs/ux.md §13).
 func TestHelpOverlay(t *testing.T) {
 	a := testApp(t)
+	// Over the empty tab, a page: its ends, no fold (docs/ux.md §10).
 	press(a, "\t", "?")
+	if body := viewText(a.helpBody(78)); a.helpOver[PaneChat] != "no events" || !strings.Contains(body, "top / bottom (also ctrl+a ctrl+e)") || strings.Contains(body, "oldest") || strings.Contains(body, "folding") {
+		t.Fatalf("Help over the empty tab\n%s", body)
+	}
+	press(a, "esc")
+	a.ingest([]watch.Event{watch.NewEvent("claude", "text", "Done.", nil)})
+	press(a, "?")
 	frame := a.frame()
-	for _, want := range []string{"Agent › Help", "THIS PAGE", "agent", "EVERYWHERE", "switch plan / agent", "esc close"} {
+	for _, want := range []string{"Agent › Help", "Keys for Agent, then everywhere.", "  This page", "  Everywhere", "switch between Plan and Agent", "esc close"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("help overlay lacks %q\n%s", want, frame)
 		}
@@ -158,12 +165,19 @@ func TestHelpOverlay(t *testing.T) {
 				t.Fatalf("help at %d offers %q\n%s", width, never, body)
 			}
 		}
-		if m := regexp.MustCompile(`(?m)^  [a-hj-np-z]( |$)`).FindString(body); m != "" {
+		if m := regexp.MustCompile(`(?m)^    [a-hj-np-z]( |$)`).FindString(body); m != "" {
 			t.Fatalf("help at %d has a one-letter key %q\n%s", width, m, body)
 		}
-		for _, want := range []string{"THIS PAGE", "MARKS", "pinned", "next up", "also active", "cycle", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLANS", "REX NEVER", "FEED", "/breakdance"} {
+		// Five sections; over AGENT, Marks are AGENT's: what the gutter's
+		// marks, a step, a tag and Rex's own line mean.
+		for _, want := range []string{"  This page\n", "  Everywhere\n", "  Marks\n", "  Your agent and the pin\n", "  Feed\n", "thinking", "(×N)", "    off pin", "    off pin?", "with pin", "rex ·", "    ›", "    ✗", "    ?", "    $", "    edit"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("help at %d lacks %q\n%s", width, want, body)
+			}
+		}
+		for _, never := range []string{"THIS PAGE", "AGENT TAB", "PLANS", "REX NEVER", "[ASK]", "reply ───", "rex ›", "also active", "/breakdance"} {
+			if strings.Contains(body, never) {
+				t.Fatalf("help at %d has %q\n%s", width, never, body)
 			}
 		}
 		// The fold is display only, and Help over AGENT says so (docs/ux.md
@@ -173,16 +187,19 @@ func TestHelpOverlay(t *testing.T) {
 			t.Fatalf("help at %d doesn't say the feed keeps every thought\n%s", width, body)
 		}
 		for _, line := range a.helpBody(width) {
-			if strings.Contains(line.Text, "folding is display only") && (!strings.HasPrefix(line.Text, "  folding") || len(line.Spans) > 0) {
+			if strings.Contains(line.Text, "folding is display only") && (!strings.HasPrefix(line.Text, "    folding") || len(line.Spans) > 0) {
 				t.Fatalf("help at %d: the fold note is a key row: %+v", width, line)
 			}
 			if strings.Contains(line.Text, "×N") && !strings.Contains(line.Text, "(×N)") {
 				t.Fatalf("help at %d: ×N is in the key column: %q", width, line.Text)
 			}
+			if line.Kind == "h2" && (len(line.Spans) != 2 || !line.Spans[1].Bold || strings.Contains(line.Text, "─")) {
+				t.Fatalf("help at %d: a section label is bold, with no rule: %+v", width, line)
+			}
 		}
-		// From 34 cells AGENT TAB's first key sits in the key column like
-		// its siblings, not over its own row.
-		if width >= 34 && !strings.Contains(body, "  thinking   a run of N thoughts (×N)") {
+		// From 36 cells a mark sits in the key column like its siblings,
+		// not over its own row.
+		if width >= helpStackBelow && !strings.Contains(body, "    thinking    a run of N thoughts") {
 			t.Fatalf("help at %d: thinking stacks\n%s", width, body)
 		}
 		for _, line := range a.helpBody(width) {
@@ -203,7 +220,7 @@ func TestHelpOverlay(t *testing.T) {
 	if strings.Contains(a.frame(), "› Help") {
 		t.Fatal("Esc closes it")
 	}
-	// THIS PAGE follows the page under Help.
+	// This page follows the page under Help.
 	b, _, _ := openDemo(t, demoPlan, 120, 32)
 	for _, step := range []struct {
 		keys        []string
@@ -217,8 +234,17 @@ func TestHelpOverlay(t *testing.T) {
 		press(b, step.keys...)
 		press(b, "?")
 		body := viewText(b.helpBody(78))
-		if !strings.Contains(strings.SplitN(body, "\n", 3)[0], "THIS PAGE") || !strings.Contains(body, step.page+"\n") || !strings.Contains(b.frame(), step.crumb) {
+		if strings.SplitN(body, "\n", 2)[0] != "  This page" || b.helpOver[b.pane] != step.page || !strings.Contains(b.frame(), step.crumb) {
 			t.Fatalf("%s: help\n%s", step.page, b.frame())
+		}
+		// Over a PLAN page Marks are the plan's.
+		for _, want := range []string{"pinned", "next up", "also active", "cycle", "1/3", "following", "latched"} {
+			if !strings.Contains(body, want) || strings.Contains(body, "off pin?") {
+				t.Fatalf("%s: Marks lack %q\n%s", step.page, want, body)
+			}
+		}
+		if step.page == "plans" && (!strings.Contains(body, "/breakdance") || !strings.Contains(body, "ctrl+u")) {
+			t.Fatalf("Plans' This page has its field's keys\n%s", body)
 		}
 	}
 }
@@ -303,7 +329,8 @@ func TestHelpTakesNoTyping(t *testing.T) {
 		t.Fatalf("scroll is clamped, so ↑ works at once: %d -> %d", top, a.overlayScroll[PaneChat])
 	}
 	for _, line := range a.helpBody(PaneTextWidth(80, 24)) {
-		if strings.Contains(line.Text, "…") || cellLen(line.Text) > PaneTextWidth(80, 24) {
+		if strings.Contains(strings.ReplaceAll(line.Text, "… +N", ""), "…") || cellLen(line.Text) > PaneTextWidth(80, 24) { // … +N is the fold's mark
+
 			t.Fatalf("help rows wrap, never clip: %q", line.Text)
 		}
 	}

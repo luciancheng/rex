@@ -306,11 +306,10 @@ func TestSendStateFitsRowOne(t *testing.T) {
 	}
 }
 
-// docs/ux.md §10: under a prompt that carried the pin, AGENT says so, in
-// the prompt box's column: "with pin <id>", muted, the id in the pin's
-// yellow; a new plan's line, "with plan <name>". It comes from the
-// stamps, never the prompt's words, and a prompt with no text of its own
-// draws as one.
+// docs/ux.md §10: under a prompt that carried the pin, AGENT says so,
+// after the gutter: "with pin <id>", muted, the id in the pin's yellow; a
+// new plan's line, "with plan <name>". It comes from the stamps, never the
+// prompt's words, and a prompt with no text of its own draws as one.
 func TestAgentSaysWhatAPromptCarried(t *testing.T) {
 	log := []watch.Event{
 		prompted("", "carry on", "card-highlight", cujRel),
@@ -319,17 +318,17 @@ func TestAgentSaysWhatAPromptCarried(t *testing.T) {
 		prompted("", watch.NoText, "card-highlight", cujRel),
 	}
 	text := viewText(BuildLogView(log, 60, viewOpt{tall: true}))
-	want := `                                     carry on
-                                     with pin card-highlight
+	want := `› carry on
+  with pin card-highlight
 
-                                 a prompt that says with pin
-                                 fake-id in its words
+› a prompt that says with pin fake-id in its
+  words
 
-                                         plan this
-                                         with plan team/auth
+› plan this
+  with plan team/auth
 
-                                     (no text)
-                                     with pin card-highlight`
+› (no text)
+  with pin card-highlight`
 	if got := trimmed(text); got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}
@@ -342,7 +341,7 @@ func TestAgentSaysWhatAPromptCarried(t *testing.T) {
 	if !strings.Contains(painted, mascot.FG(mascot.UI["muted"])+"with pin ") || !strings.Contains(painted, mascot.FG(mascot.UI["accent"])+"card-highlight") {
 		t.Fatalf("%q", painted)
 	}
-	// Narrow, it clips inside the box's column, at most half the row.
+	// Narrow, it clips to the row.
 	for _, w := range []int{16, 24, 38} {
 		for _, l := range BuildLogView(log[:1], w, viewOpt{}) {
 			if row := plainRow(l, w); cellLen(row) > w {
@@ -382,7 +381,7 @@ func TestFeedHealthSaysWhoGetsThePin(t *testing.T) {
 	} {
 		h := feedHealth{path: "/x/session.jsonl", statuses: []watch.HarnessStatus{tc.s}, read: time.Now()}
 		for _, w := range []int{24, 38, 78} {
-			lines := h.lines(w, 0, skill.Current, time.Now())
+			lines := h.lines(w, 0, skill.Current, time.Now(), false, false)
 			text := viewText(lines)
 			if got := strings.Join(strings.Fields(text), " "); !strings.Contains(got, tc.want) {
 				t.Errorf("%d cells: want %q\n%s", w, tc.want, text)
@@ -394,16 +393,22 @@ func TestFeedHealthSaysWhoGetsThePin(t *testing.T) {
 			}
 		}
 	}
-	// Help says what the states mean, and FEED which command fixes one.
+	// Help says what the states mean, and Feed which command fixes one;
+	// over AGENT, its Marks say what "with pin" under a prompt is.
 	a, _, _ := cujApp(t)
 	wire(a, oldPlugin())
 	press(a, "?")
 	help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " ")
-	for _, want := range []string{"YOUR AGENT AND THE PIN", "sent your last prompt carried the pin", "sends not sent yet: it goes with your next prompt", "not sent nothing is pinned", "with pin under a prompt: the pin it carried", "opencode wired · old plugin, no pin: rex ingest --install opencode"} {
+	for _, want := range []string{"Your agent and the pin", "sent your last prompt carried the pin", "sends not sent yet: it goes with your next prompt", "not sent nothing is pinned", "Feed", "opencode wired · old plugin, no pin: rex ingest --install opencode"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("Help has %q\n%s", want, help)
 		}
 	}
+	press(a, "\t", "?")
+	if help := strings.Join(strings.Fields(viewText(a.helpBody(78))), " "); !strings.Contains(help, "with pin under a prompt: the pin it carried") {
+		t.Errorf("Help over AGENT says what with pin is\n%s", help)
+	}
+	press(a, "esc", "\t")
 	if got := sides("pinned  card-highlight · Selected plan card is one block", "not sent · ? help", 79); textOf(a.frameRows().Rows[1], a.columns) == got {
 		t.Fatal("Help has its own row 1")
 	}

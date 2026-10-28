@@ -679,7 +679,7 @@ func TestStatusRowIsBlankWithoutStatus(t *testing.T) {
 
 // docs/ux.md §4, as the app builds them: each of Plans' pages' title,
 // its meta counting what the page holds or saying where it is, and the
-// THIS PAGE of the Help it opens.
+// page the Help it opens names on row 1 and lists in This page.
 func TestPageTitleFromApp(t *testing.T) {
 	repo := attachRepo(t)
 	for _, name := range []string{"top.rex.json", "cuj/sendoff-demo.rex.json", "cuj/second.rex.json", "cuj/sub/deep.rex.json"} {
@@ -718,14 +718,8 @@ func TestPageTitleFromApp(t *testing.T) {
 		if got, want := textOf(a.frameRows().Rows[0], a.columns), sides(left+" › Help", "plan · agent", 78); got != want {
 			t.Fatalf("%s: Help's row 0\n got %q\nwant %q", step, got, want)
 		}
-		var h2 string
-		for _, line := range a.helpBody(78) {
-			if strings.HasPrefix(line.Text, "THIS PAGE ") {
-				h2 = line.Text
-			}
-		}
-		if !strings.HasSuffix(h2, "─ "+help) {
-			t.Fatalf("%s: THIS PAGE is %q, want %q", step, h2, help)
+		if got := a.helpOver[a.pane]; got != help || textOf(a.frameRows().Rows[1], a.columns) != "Keys for "+helpPages[help]+", then everywhere." {
+			t.Fatalf("%s: Help over %q, want %q", step, got, help)
 		}
 		press(a, "esc")
 	}
@@ -758,7 +752,7 @@ func TestPageTitleFromApp(t *testing.T) {
 	check("deeper", "Plans › Open a plan › cuj/ › sub/", "rex/plans/cuj/sub/", "open a plan")
 
 	press(a, "\t")
-	check("agent", "Agent", "no events yet", "agent")
+	check("agent", "Agent", "no events yet", "no events")
 	var many []watch.Event
 	for i := 0; i < 40; i++ {
 		many = append(many, watch.NewEvent("claude", "text", fmt.Sprintf("line %d", i), nil))
@@ -774,7 +768,7 @@ func TestPageTitleFromApp(t *testing.T) {
 }
 
 // docs/ux.md §13: Help keeps the page it was opened over. A plan the
-// agent writes opens under it; THIS PAGE and the scroll stay put until Esc
+// agent writes opens under it; This page and the scroll stay put until Esc
 // shows the outline, while the title's crumbs follow the page under Help,
 // so they still say where Esc goes (docs/ux.md §4).
 func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
@@ -795,7 +789,7 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 		return strings.TrimSpace(crumbs)
 	}
 	title, body := frame()
-	if crumbs(title) != "Plans › Help" || a.overlayScroll[PanePlans] != 3 || !strings.Contains(viewText(a.helpBody(38)), "─ plans\n") {
+	if crumbs(title) != "Plans › Help" || a.overlayScroll[PanePlans] != 3 || a.helpOver[PanePlans] != "plans" {
 		t.Fatalf("title %q scroll %d\n%s", title, a.overlayScroll[PanePlans], body)
 	}
 	a.ingest([]watch.Event{wrote(repo, writePlan(t, repo, "cuj/x.rex.json", demoPlan))})
@@ -810,7 +804,7 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 		t.Fatalf("Esc shows the task list: %q", title)
 	}
 	press(a, "?")
-	if title, _ := frame(); crumbs(title) != "Send-off demo › Help" || !strings.Contains(viewText(a.helpBody(38)), "─ tasks\n") {
+	if title, _ := frame(); crumbs(title) != "Send-off demo › Help" || a.helpOver[PanePlans] != "tasks" || !strings.Contains(viewText(a.helpBody(38)), "open its details") {
 		t.Fatalf("Help opens over the task list now: %q", title)
 	}
 	// Over a task's details an attach waits (docs/ux.md §11): Help's
@@ -822,8 +816,8 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 	if title, _ := frame(); crumbs(title) != "Send-off demo › card-highlight › Help" || a.pending != newer {
 		t.Fatalf("Help's crumbs name the task under it: %q", title)
 	}
-	if !strings.Contains(viewText(a.helpBody(38)), "─ task\n") {
-		t.Fatal("THIS PAGE stays the task's")
+	if a.helpOver[PanePlans] != "task" || strings.Contains(viewText(a.helpBody(38)), "open its details") {
+		t.Fatal("This page stays the task's")
 	}
 	press(a, "esc", "esc")
 	if title, _ := frame(); !strings.HasPrefix(title, "Brand new plan ") {
@@ -837,18 +831,21 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 	}
 }
 
-// docs/ux.md §5 (rule 3), §12: from 16 rows each H2 in Help but the first
-// has a blank row above it (the first's is row 2); on 15 none does.
+// docs/ux.md §5 (rule 3), §12, §13: Help is five sections, each a bold
+// label: This page, Everywhere, Marks, Your agent and the pin, Feed. From
+// 16 rows each but the first has a blank row above it (the first's is row
+// 2); on 15 none does.
 func TestHelpGapsFrom16Rows(t *testing.T) {
 	a := testApp(t)
 	for _, lines := range []int{15, 16} {
 		a.lines = lines
 		press(a, "?")
 		body := a.helpBody(38)
-		h2s, gaps := 0, 0
+		var labels []string
+		gaps := 0
 		for i, line := range body {
-			if len(line.Spans) > 1 && strings.HasPrefix(line.Spans[1].Text, " ───") {
-				h2s++
+			if line.Kind == "h2" {
+				labels = append(labels, strings.TrimSpace(line.Text))
 				if i > 0 && body[i-1].Kind == "gap" {
 					gaps++
 				}
@@ -856,24 +853,25 @@ func TestHelpGapsFrom16Rows(t *testing.T) {
 		}
 		want := 0
 		if lines >= 16 {
-			want = h2s - 1
+			want = len(labels) - 1
 		}
-		if h2s < 6 || gaps != want || body[0].Kind == "gap" {
-			t.Fatalf("%d rows: %d of %d H2s have a gap above\n%s", lines, gaps, h2s, viewText(body))
+		if strings.Join(labels, ", ") != "This page, Everywhere, Marks, Your agent and the pin, Feed" || gaps != want || body[0].Kind == "gap" {
+			t.Fatalf("%d rows: %d of %v have a gap above\n%s", lines, gaps, labels, viewText(body))
 		}
 		press(a, "esc")
 	}
 }
 
-// docs/ux.md §3, §4, §13: Help's THIS PAGE names every key its page acts
+// docs/ux.md §3, §4, §13: Help's This page names every key its page acts
 // on, not only the footer's. A key acts when it changes the frame, from
 // where the page starts or after the opposite key, or what Esc shows next
 // (so New plan's Home and End must leave Plans' cursor alone). Help never
 // opens over text in a field (? is a letter there), so a find and a
-// filter have no page of their own.
+// filter have no page of their own: Plans' pages list what the field
+// takes (typing, ctrl+u, ctrl+w, /help, /breakdance; a/b in New plan).
 // o, where it opens the notice row's offer, is said in the same words
 // everywhere.
-func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
+func TestHelpKeys(t *testing.T) {
 	pick := func(a *app, kind PlanRowKind) {
 		for i, row := range a.plans.Rows {
 			if row.Kind == kind {
@@ -932,9 +930,13 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 		{"new plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x") }},
 		{"plans", nil}, // a first run
 		{"agent", func(a *app) { press(a, "\t"); scrolls(a) }},
+		// The empty tab is a page: home and end are its ends, and it
+		// scrolls on a short screen (docs/ux.md §10).
+		{"no events", func(a *app) { press(a, "\t") }},
+		{"no events", func(a *app) { latched(a); press(a, "\t"); offered(a) }},
 		{"agent", func(a *app) { latched(a); press(a, "\t"); scrolls(a); offered(a) }},
 	}
-	words := map[string]string{"up": "↑↓", "down": "↑↓", "pageup": "pgup", "pagedown": "pgdn", "home": "home", "end": "end", "left": "←", "right": "→", "esc": "esc", "\r": "enter", "i": "i", "p": "p", "d": "d"}
+	words := map[string]string{"up": "↑↓", "down": "↑↓", "pageup": "pgup", "pagedown": "pgdn", "home": "home", "end": "end", "left": "←", "right": "→", "esc": "esc", "\r": "enter", "i": "i", "p": "p", "d": "d", "\x15": "ctrl+u", "\x17": "ctrl+w"}
 	opposite := map[string]string{"up": "down", "down": "up", "pageup": "pagedown", "pagedown": "pageup", "home": "end", "end": "home"}
 	for _, size := range [][2]int{{24, 7}, {80, 12}, {120, 32}} {
 		for _, pg := range pages {
@@ -955,18 +957,24 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 			first := start()
 			var section []LogLine
 			for _, line := range helpLines(78, pg.page, false)[1:] {
-				if strings.HasPrefix(line.Text, "EVERYWHERE") {
-					break
+				if line.Kind == "h2" {
+					break // Everywhere
 				}
 				section = append(section, line)
 			}
+			// A key row is the key in text at column 4, then what it does.
 			listed := map[string]bool{}
 			for _, line := range section {
-				for _, s := range line.Spans {
-					if s.Bold {
-						for _, w := range strings.Fields(s.Text) {
-							listed[w] = true
-						}
+				if len(line.Spans) > 1 && line.Spans[0].Text == "    " && line.Spans[1].Role == "text" {
+					for _, w := range strings.Fields(line.Spans[1].Text) {
+						listed[w] = true
+					}
+				}
+			}
+			if typing := map[string][]string{"plans": {"type"}, "open a plan": {"type"}, "new plan": {"type", "a/b"}}[pg.page]; typing != nil {
+				for _, w := range append(typing, "ctrl+u", "ctrl+w", "/help", "/breakdance") {
+					if !listed[w] {
+						t.Errorf("%d×%d %s: the field takes %q, but This page has no %q", size[0], size[1], pg.page, w, w)
 					}
 				}
 			}
@@ -997,7 +1005,7 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 				return frame(a) != frame(b)
 			}
 			if first.offerOpens() && (!listed["o"] || !strings.Contains(strings.Join(strings.Fields(text), " "), offerHelp.what)) {
-				t.Errorf("%d×%d %s: o opens the offer, but THIS PAGE doesn't say %q\n%s", size[0], size[1], pg.page, offerHelp.what, text)
+				t.Errorf("%d×%d %s: o opens the offer, but This page doesn't say %q\n%s", size[0], size[1], pg.page, offerHelp.what, text)
 			}
 			for key, word := range words {
 				if listed[word] || len(key) == 1 && key >= "a" && key <= "z" && listed["type"] { // a letter types where the page takes typing
@@ -1005,7 +1013,7 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 				}
 				o, ok := opposite[key]
 				if acts(nil, key) || ok && acts([]string{o}, key) {
-					t.Errorf("%d×%d %s: %q acts, but THIS PAGE has no %q\n%s", size[0], size[1], pg.page, key, word, text)
+					t.Errorf("%d×%d %s: %q acts, but This page has no %q\n%s", size[0], size[1], pg.page, key, word, text)
 				}
 			}
 		}
@@ -1239,25 +1247,12 @@ func TestExitLine(t *testing.T) {
 	}
 }
 
-// docs/ux.md §5: H2 is a bold capitals label, a slate rule of at least
-// three cells, and optional muted meta.
-func TestH2Line(t *testing.T) {
-	var got []string
-	for _, l := range []LogLine{h2Line("VERIFY", "2", 38), h2Line("CONTEXT", "", 38)} {
-		got = append(got, plainRow(l, 38))
-	}
-	want := []string{
-		"VERIFY ───────────────────────────── 2",
-		"CONTEXT ──────────────────────────────",
-	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
-	if h := h2Line("A LONG SECTION NAME", "a long meta", 24); plainRow(h, 24) != "A LONG SECTION NAME ────" {
-		t.Fatalf("meta goes before the rule gets under 3 cells: %q", plainRow(h, 24))
-	}
-	if h := h2Line("FEED", "", 38); !h.Spans[0].Bold || h.Spans[1].Role != "border" {
-		t.Fatalf("%+v", h.Spans)
+// docs/ux.md §5: a section label (Help's, the feed's, Plans' Recent) is
+// bold text in title case after the gutter, with no rule and no meta.
+func TestSectionLabel(t *testing.T) {
+	l := labelLine("Your agent and the pin")
+	if plainRow(l, 38) != "  Your agent and the pin" || l.Kind != "h2" || l.Spans[1] != (Span{Text: "Your agent and the pin", Role: "text", Bold: true}) {
+		t.Fatalf("%q %+v", plainRow(l, 38), l.Spans)
 	}
 }
 
@@ -1276,8 +1271,8 @@ func TestHardDriftNoticeGoesOnceAgentIsSeen(t *testing.T) {
 	press(a, "\t")
 	a.ingest([]watch.Event{edit(a, c, 2*time.Second, "docs/other.md")})
 	press(a, "\t")
-	if got := a.notice().Text; got != "" || !strings.Contains(viewText(a.logView(78)), "hard docs/other.md") {
-		t.Fatalf("drift seen on AGENT is in its block, and no notice: %q", got)
+	if got := a.notice().Text; got != "" || len(drifted(a.log)) != 2 || !strings.Contains(viewText(a.logView(78)), "  edit docs/other.md") {
+		t.Fatalf("drift seen on AGENT is tagged there, and no notice: %q %v", got, drifted(a.log))
 	}
 }
 

@@ -10,44 +10,51 @@ import (
 	"github.com/luciancheng/rex/internal/watch"
 )
 
-// viewOpt is how AGENT's stream is laid out (docs/ux.md §10): live (the
-// turn is in flight) lets the newest block, when it is a thought run, go
-// on over a second row, and tall (agentTitleRows rows and up) puts blank
-// rows between blocks. Both key the view cache, so a turn that ends
-// settles the run with no new event.
+// viewOpt is how AGENT's stream is laid out (docs/ux.md §10): tall
+// (blankFrom rows and up) puts blank rows around prompts and before
+// replies and asks. It keys the view cache.
 type viewOpt struct {
-	live, tall bool
+	tall bool
 }
 
 const (
 	// thinkFrom is the text width from which a thought run shows its
 	// latest thought beside the label; narrower, only "thinking ×N".
 	thinkFrom = 30
-	// cmdCap is the most commands a run shows once it folds; the earlier
-	// ones go into "$ … +N earlier". A run of cmdCap+1 shows whole, since
-	// its fold would save no row.
+	// cmdCap is the most steps a run shows once it folds; the earlier ones
+	// go into "… +N earlier". A run of cmdCap+1 shows whole, since its fold
+	// would save no row.
 	cmdCap = 4
 	// errRows is the most rows a turn's own error takes.
 	errRows = 3
 )
 
-// block is one block of the stream: a run of thoughts or of commands, or
-// a single event.
+// The stream's gutter (docs/ux.md §10): its two cells hold the only marks,
+// your prompt's ›, a failed step's ✗ and your agent's question ?;
+// everything else starts after it.
+const (
+	gutterPad  = "  "
+	promptMark = "›"
+	failMark   = "✗"
+	askMark    = "?"
+)
+
+// block is one block of the stream: a run of thoughts or of steps, or a
+// single event.
 type block struct {
 	kind string
 	evs  []watch.Event
 }
 
-// BuildLogView lays out AGENT's stream (docs/ux.md §10). A block is named
-// by its first characters (thinking, $, ✗, [ASK], rex ›); only a reply and
-// the before-rex-started line have a rule. File looks and results stay
-// hidden, and no file body is ever shown.
+// BuildLogView lays out AGENT's stream (docs/ux.md §10): marks in the
+// gutter, steps muted, a reply plain text, no rules. File looks and
+// results stay hidden, and no file body is ever shown.
 func BuildLogView(log []watch.Event, width int, opt viewOpt) []LogLine {
 	if width <= 0 {
 		return nil
 	}
 	if len(log) == 0 {
-		return []LogLine{{Kind: "idle", Text: "Ready. Watching for agent events."}}
+		return []LogLine{{Kind: "idle", Text: gutterPad + "Ready. Watching for agent events."}}
 	}
 	var blocks []block
 	for _, ev := range log {
@@ -65,7 +72,7 @@ func BuildLogView(log []watch.Event, width int, opt viewOpt) []LogLine {
 		if opt.tall && i > 0 && spaced(blocks[i-1].kind, b.kind) {
 			lines = append(lines, LogLine{Kind: "gap"})
 		}
-		lines = append(lines, b.lines(width, opt, i == len(blocks)-1)...)
+		lines = append(lines, b.lines(width, opt)...)
 	}
 	return lines
 }
@@ -88,36 +95,41 @@ func trimmedRows(log []watch.Event, n, width int, opt viewOpt) int {
 			}
 		}
 	}
-	if j < len(log) {
-		opt.live = false // the head's last block isn't the newest
-	}
 	return len(BuildLogView(log[:j], width, opt)) - len(BuildLogView(log[n:j], width, opt))
 }
 
 // hiddenInStream says AGENT draws no block for ev (docs/ux.md §10): a file
-// look, a result echo or a turn end.
+// look, a result echo, a turn end, or a reply with nothing left to show
+// once it is cleaned (only an escape sequence, an empty fence), which
+// would otherwise be a blank row.
 func hiddenInStream(ev watch.Event) bool {
-	return !watch.KeepInPane(ev)
+	return !watch.KeepInPane(ev) || ev.Kind == "text" && emptyReply(ev.Text)
+}
+
+// emptyReply says a reply lays out to no rows, as replyLines reads it.
+func emptyReply(text string) bool {
+	for _, md := range watch.MarkdownBlocks(watch.CleanText(text)) {
+		if strings.TrimSpace(md.Text) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // spaced says a blank row goes between two blocks (docs/ux.md §10): before
-// a reply or an ask and around a prompt, never under the before-rex-started
+// a reply or an ask and around a prompt, never under the before-Rex-started
 // line. Everything else packs.
 func spaced(prev, next string) bool {
 	return prev != "before" && (prev == "user" || next == "user" || next == "text" || next == "question")
 }
 
-func (b block) lines(width int, opt viewOpt, newest bool) []LogLine {
+func (b block) lines(width int, opt viewOpt) []LogLine {
 	ev := b.evs[0]
 	switch b.kind {
 	case "thought":
-		rows := 1
-		if opt.live && opt.tall && newest {
-			rows = 2
-		}
-		return thoughtRun(b.evs, width, rows)
+		return []LogLine{thoughtRow(b.evs, width)}
 	case "command":
-		return commandRun(b.evs, width)
+		return stepRun(b.evs, width)
 	case "error":
 		return errorLines(ev, width)
 	case "text":
@@ -127,37 +139,47 @@ func (b block) lines(width int, opt viewOpt, newest bool) []LogLine {
 	case "user":
 		return promptLines(ev, width, opt.tall)
 	case "plan":
-		return []LogLine{rexLine("plan", "plan · "+squash(ev.Text), width)}
+		return []LogLine{rexLine(squash(ev.Text), width)}
 	case "drift":
-		return driftLines(ev, width)
+		return []LogLine{driftStep(ev, width)}
 	case "before":
-		return []LogLine{{Kind: "before", Text: rule(ev.Text, width)}}
+		// Rex's own line, from no text: the warm start's (docs/ux.md §10).
+		return []LogLine{{Kind: "before", Text: ellipsis(gutterPad+"before Rex started", width)}}
 	}
-	return []LogLine{{Kind: b.kind, Text: ellipsis(squash(ev.Text), width)}}
+	return []LogLine{{Kind: b.kind, Text: ellipsis(gutterPad+squash(ev.Text), width)}}
 }
 
-// promptLines is a prompt (docs/ux.md §10): its box, and under it, in the
-// box's column, what it carried to your agent (carriedTag): "with pin
-// <id>" muted with the id in the pin's yellow, or "with plan <name>". Only
-// a prompt rex ingest stamped has that row, so it never claims more than
-// happened (§7a).
-func promptLines(ev watch.Event, width int, tall bool) []LogLine {
-	lead, what := carriedTag(ev)
-	tag := lead + what
-	rows, left := userRows(watch.CleanText(ev.Text), width, tall, cellLen(tag))
-	var lines []LogLine
-	for _, row := range rows {
-		lines = append(lines, LogLine{Kind: "user", Text: row})
+// tagRoom is the cells a drift tag takes at a row's right end: "off pin?",
+// two blanks before it and the margin cell after it.
+var tagRoom = cellLen(softTag) + 3
+
+// The drift tags (docs/ux.md §9a, §10): hard drift in the pin's yellow,
+// since it is off the pin, soft drift muted; never an error's red.
+const (
+	hardTag = "off pin"
+	softTag = "off pin?"
+)
+
+// tagSpan is a drift level as its tag, or nothing on the pin.
+func tagSpan(level plan.DriftLevel) Span {
+	switch level {
+	case plan.Hard:
+		return Span{Text: hardTag, Role: "accent"}
+	case plan.Soft:
+		return Span{Text: softTag, Role: "muted"}
 	}
-	if what == "" {
-		return lines
+	return Span{}
+}
+
+// withTag is left with level's tag at the row's right end, a cell short
+// of the edge, the tag in its own color. left is already fitted to the
+// room the tag leaves (tagRoom); with no tag it is the row.
+func withTag(kind string, left []Span, level plan.DriftLevel, width int) LogLine {
+	tag := tagSpan(level)
+	if tag.Text == "" || width-tagRoom < 1 {
+		return spanLine(kind, cutSpans(left, width)...)
 	}
-	shown := ellipsis(tag, max(1, width-left))
-	spans := []Span{{Text: strings.Repeat(" ", left)}, {Text: shown, Role: "muted"}}
-	if id, ok := strings.CutPrefix(shown, lead); ok && lead == "with pin " {
-		spans = []Span{spans[0], {Text: lead, Role: "muted"}, {Text: id, Role: "accent"}}
-	}
-	return append(lines, spanLine("user", spans...))
+	return spanLine(kind, append(padSpans(cutSpans(left, width-tagRoom), width-1-cellLen(tag.Text)), tag)...)
 }
 
 // squash is agent text as one clean line, its whitespace collapsed.
@@ -168,11 +190,33 @@ func squash(s string) string {
 // proseLine is prose as one clean line: Markdown stripped, code marks
 // dropped, whitespace collapsed.
 func proseLine(s string) string {
-	parts := watch.MarkdownLines(watch.CleanText(s))
+	parts := mdLines(watch.CleanText(s))
 	for i, p := range parts {
 		parts[i] = strings.TrimPrefix(p, "│ ")
 	}
 	return squash(strings.Join(parts, " "))
+}
+
+// listMark is a Markdown list item's lead, as the stream writes it.
+var listMark = regexp.MustCompile(`^\s*(· |\d+\. )`)
+
+// bullet is a Markdown line with its list item's "• " as "· " (docs/ux.md
+// §5: the stream's one bullet is the middle dot).
+func bullet(line string) string {
+	body := strings.TrimLeft(line, " ")
+	if rest, ok := strings.CutPrefix(body, "• "); ok {
+		return line[:len(line)-len(body)] + "· " + rest
+	}
+	return line
+}
+
+// mdLines is watch.MarkdownLines with the stream's bullet.
+func mdLines(text string) []string {
+	lines := watch.MarkdownLines(text)
+	for i, l := range lines {
+		lines[i] = bullet(l)
+	}
+	return lines
 }
 
 // hang wraps text after lead into rows of width cells, the later rows
@@ -201,57 +245,101 @@ func hang(lead, text string, width, indent, most int) []string {
 	return out
 }
 
-// thoughtRun is a run of thoughts (docs/ux.md §10): "thinking ×N" with the
-// latest thought beside it ("thinking" alone for one), in one row; a live
-// run goes on over rows rows. Under thinkFrom cells only the label shows.
-// The fold is display only: the feed keeps every thought.
-func thoughtRun(evs []watch.Event, width, rows int) []LogLine {
+// thoughtRow is a run of thoughts (docs/ux.md §10): one muted row,
+// "thinking ×N · <latest>" ("thinking · <text>" for one). Under thinkFrom
+// cells only the label shows. The fold is display only: the feed keeps
+// every thought.
+func thoughtRow(evs []watch.Event, width int) LogLine {
 	label := "thinking"
 	if len(evs) > 1 {
 		label = fmt.Sprintf("thinking ×%d", len(evs))
 	}
-	if width < thinkFrom {
-		return []LogLine{spanLine("thought", Span{Text: ellipsis(label, width), Bold: true})}
+	row := gutterPad + label
+	if latest := proseLine(evs[len(evs)-1].Text); width >= thinkFrom && latest != "" {
+		row += " · " + latest
 	}
-	var lines []LogLine
-	for i, row := range hang(label+"  ", proseLine(evs[len(evs)-1].Text), width, 2, rows) {
-		if i == 0 {
-			lines = append(lines, spanLine("thought", Span{Text: label, Bold: true}, Span{Text: row[len(label):]}))
-			continue
-		}
-		lines = append(lines, LogLine{Kind: "thought", Text: row})
-	}
-	return lines
+	return LogLine{Kind: "thought", Text: ellipsis(row, width)}
 }
 
-// commandRun is a run of commands, one clipped row each (docs/ux.md §10).
-// Past cmdCap+1, the earlier ones fold into a muted "$ … +N earlier", so a
-// fold always hides at least two and a run takes at most cmdCap+1 rows.
-func commandRun(evs []watch.Event, width int) []LogLine {
+// stepRun is a run of the agent's steps (docs/ux.md §10), one muted row
+// each, a drift tag at the end of an edit off the pin. Past cmdCap+1, the
+// earlier ones fold into "… +N earlier", which takes the worst tag of the
+// steps it hides, so a fold always hides at least two, takes at most
+// cmdCap+1 rows, and never hides drift.
+func stepRun(evs []watch.Event, width int) []LogLine {
 	var lines []LogLine
 	if n := len(evs) - cmdCap; len(evs) > cmdCap+1 {
-		lines = append(lines, spanLine("command", Span{Text: ellipsis(fmt.Sprintf("$ … +%d earlier", n), width), Role: "muted"}))
+		worst := plan.OnPin
+		for _, ev := range evs[:n] {
+			worst = max(worst, driftOf(ev))
+		}
+		lines = append(lines, stepRow(fmt.Sprintf("… +%d earlier", n), "", worst, width))
 		evs = evs[n:]
 	}
 	for _, ev := range evs {
-		lines = append(lines, LogLine{Kind: "command", Text: ellipsis("$ "+squash(ev.Text), width)})
+		verb, what := stepText(ev)
+		lines = append(lines, stepRow(verb, what, driftOf(ev), width))
 	}
 	return lines
 }
 
-// errorLines is an error (docs/ux.md §10). A failed tool call, after which
-// the turn goes on, is one row, "✗ <what> · <why>". The turn's own error
-// is "✗ error · <text>" over up to errRows rows.
+// stepText is one step as its row reads it (docs/ux.md §10): a shell
+// command after "$" (any command no tool names too), a change to a file
+// "edit <path>" (a write, a patch, a delete: a step doesn't say which),
+// and any other tool as its adapter wrote it. path is what follows the
+// verb, a path that clips from the left.
+func stepText(ev watch.Event) (verb, path string) {
+	tool := watch.MetaTool(ev)
+	line := squash(ev.Text)
+	switch {
+	case tool == "" || watch.IsShellTool(tool):
+		return "$ " + line, ""
+	case watch.IsFileEditTool(tool) && len(watch.EventPaths(ev)) > 0:
+		_, rest, _ := strings.Cut(line, " ")
+		return "edit", rest
+	}
+	return line, ""
+}
+
+// stepRow is one step's row: muted, after the gutter, text then path
+// (which keeps its file name as it clips), and its drift tag.
+func stepRow(text, path string, level plan.DriftLevel, width int) LogLine {
+	room := width - cellLen(gutterPad)
+	if tagSpan(level).Text != "" && width-tagRoom >= 1 {
+		room = width - tagRoom - cellLen(gutterPad)
+	}
+	row := ellipsis(text, max(1, room))
+	if path != "" {
+		if lead := text + " "; cellLen(lead) < room {
+			row = lead + pathEllipsis(path, room-cellLen(lead))
+		}
+	}
+	return withTag("command", []Span{{Text: gutterPad + row}}, level, width)
+}
+
+// driftStep is an edit off the pin whose step AGENT doesn't show (a
+// harness that reported only its completion): Rex draws the step from the
+// drift's own meta, never from text (docs/ux.md §9a).
+func driftStep(ev watch.Event, width int) LogLine {
+	rel, _ := ev.Meta["rel"].(string)
+	return stepRow("edit", squash(rel), driftOf(ev), width)
+}
+
+// errorLines is an error (docs/ux.md §10), ✗ in the gutter. A failed tool
+// call, after which the turn goes on, is one muted step row, "✗ <what> ·
+// <why>", only the ✗ red. The turn's own error is "✗ error · <text>" in
+// red over up to errRows rows.
 func errorLines(ev watch.Event, width int) []LogLine {
 	if watch.MetaTool(ev) == "" {
 		var lines []LogLine
-		for _, row := range hang("✗ error · ", watch.TurnErrorText(ev), width, 2, errRows) {
+		for _, row := range hang(failMark+" error · ", watch.TurnErrorText(ev), width, 2, errRows) {
 			lines = append(lines, LogLine{Kind: "error", Text: row})
 		}
 		return lines
 	}
 	what, why, path := watch.FailParts(ev)
-	return []LogLine{{Kind: "error", Text: whatWhy("✗ ", what, why, width, path)}}
+	row := whatWhy("", what, why, max(1, width-2), path)
+	return []LogLine{spanLine("error", Span{Text: failMark, Role: "error"}, Span{Text: " " + row, Role: "muted"})}
 }
 
 // whatWhy is one row, "<lead><what> · <why>" (docs/ux.md §10): when it
@@ -300,24 +388,23 @@ func pathEllipsis(p string, width int) string {
 	}
 }
 
-// listMark is a Markdown list item's lead, as MarkdownLines writes it.
-var listMark = regexp.MustCompile(`^\s*(• |\d+\. )`)
-
-// replyLines is a reply (docs/ux.md §10): "reply ───" across the row, then
-// its Markdown indented 2: headings bold, code muted, and a list item's
-// later rows hang under its text. Short screens drop its blank rows.
+// replyLines is a reply (docs/ux.md §10): its Markdown after the gutter in
+// plain text, no rule over it: headings bold, code muted "│ " lines, and a
+// list item's later rows hang under its text. Short screens drop its
+// blank rows.
 func replyLines(text string, width int, tall bool) []LogLine {
-	lines := []LogLine{spanLine("text", Span{Text: "reply", Bold: true}, Span{Text: " " + strings.Repeat("─", max(1, width-cellLen("reply "))), Role: "border"})}
+	var lines []LogLine
 	inner := max(1, width-2)
 	for _, md := range watch.MarkdownBlocks(watch.CleanText(text)) {
+		md.Text = bullet(md.Text)
 		switch {
 		case strings.TrimSpace(md.Text) == "":
-			if tall {
+			if tall && len(lines) > 0 {
 				lines = append(lines, LogLine{Kind: "text"})
 			}
 		case strings.HasPrefix(md.Text, "│ "):
 			for _, row := range hardWrap(md.Text, inner) {
-				lines = append(lines, spanLine("text", Span{Text: "  " + row, Role: "muted"}))
+				lines = append(lines, spanLine("text", Span{Text: gutterPad + row, Role: "muted"}))
 			}
 		default:
 			rows := wrap(md.Text, inner)
@@ -325,55 +412,128 @@ func replyLines(text string, width int, tall bool) []LogLine {
 				rows = hang(m, squash(md.Text[len(m):]), inner, cellLen(m), 0)
 			}
 			for _, row := range rows {
-				lines = append(lines, spanLine("text", Span{Text: "  "}, Span{Text: row, Bold: md.Heading}))
+				lines = append(lines, spanLine("text", Span{Text: gutterPad}, Span{Text: row, Bold: md.Heading}))
 			}
 		}
 	}
-	for len(lines) > 1 && lines[len(lines)-1].Text == "" {
+	for len(lines) > 0 && lines[len(lines)-1].Text == "" {
 		lines = lines[:len(lines)-1]
 	}
 	return lines
 }
 
-// askLines is the agent asking (docs/ux.md §10): an [ASK] pill and the
-// question, wrapped under the question.
+// askLines is your agent asking (docs/ux.md §10): a bold ? in the gutter,
+// then the question, wrapped after the gutter.
 func askLines(text string, width int) []LogLine {
-	const lead = "[ASK] "
 	var lines []LogLine
-	for i, row := range hang(lead, squash(text), width, cellLen(lead), 0) {
+	for i, row := range wrap(squash(text), max(1, width-2)) {
+		lead := Span{Text: gutterPad}
 		if i == 0 {
-			lines = append(lines, spanLine("question", append(pill("ASK", "text"), Span{Text: row[len("[ASK]"):], Role: "text"})...))
+			lead = Span{Text: askMark + " ", Role: "text", Bold: true}
+		}
+		lines = append(lines, spanLine("question", lead, Span{Text: row, Role: "text"}))
+	}
+	return lines
+}
+
+// promptLines is your prompt (docs/ux.md §10): a muted › in the gutter
+// and its text after it, left-aligned, its paragraphs kept, capped at
+// maxPromptRows; its drift tag on its first row, which always leaves the
+// tag's room so a tag never moves a row; and under it, after the gutter,
+// what it carried to your agent (carriedTag): "with pin <id>" muted with
+// the id in the pin's yellow, or "with plan <name>". Only a prompt rex
+// ingest stamped has that row, so it never claims more than happened (§7a).
+func promptLines(ev watch.Event, width int, tall bool) []LogLine {
+	inner := max(1, width-2)
+	first := inner
+	if width-tagRoom >= 2+promptMin {
+		first = width - tagRoom - 2
+	}
+	rows, more := promptRows(watch.CleanText(ev.Text), first, inner, tall)
+	var lines []LogLine
+	for i, row := range rows {
+		switch {
+		case i == 0:
+			left := []Span{{Text: promptMark + " ", Role: "muted"}, {Text: row}}
+			lines = append(lines, withTag("user", left, driftOf(ev), width))
+		case row == "":
+			lines = append(lines, LogLine{Kind: "user"})
+		default:
+			lines = append(lines, LogLine{Kind: "user", Text: gutterPad + row})
+		}
+	}
+	if more > 0 {
+		lines = append(lines, spanLine("user", Span{Text: ellipsis(fmt.Sprintf("%s(+%d more rows)", gutterPad, more), width), Role: "muted"}))
+	}
+	lead, what := carriedTag(ev)
+	if what == "" {
+		return lines
+	}
+	shown := ellipsis(lead+what, inner)
+	spans := []Span{{Text: gutterPad}, {Text: shown, Role: "muted"}}
+	if id, ok := strings.CutPrefix(shown, lead); ok && lead == "with pin " {
+		spans = []Span{spans[0], {Text: lead, Role: "muted"}, {Text: id, Role: "accent"}}
+	}
+	return append(lines, spanLine("user", spans...))
+}
+
+// promptMin is the fewest cells a prompt's first row keeps beside the
+// room it leaves for a drift tag; narrower, the row takes it all and the
+// tag clips the row.
+const promptMin = 10
+
+// promptRows is a prompt's text as rows (docs/ux.md §10): its first row
+// first cells wide, the rest width cells; its Markdown paragraphs kept,
+// blank rows between them only when tall; code hard-wrapped. It keeps
+// maxPromptRows rows and says how many more there were.
+func promptRows(text string, first, width int, tall bool) (rows []string, more int) {
+	for _, chunk := range mdLines(text) {
+		code := strings.HasPrefix(chunk, "│ ")
+		if !code {
+			chunk = strings.Join(strings.Fields(chunk), " ")
+		}
+		if chunk == "" {
+			if tall && len(rows) > 0 {
+				rows = append(rows, "")
+			}
 			continue
 		}
-		lines = append(lines, spanLine("question", Span{Text: row, Role: "text"}))
-	}
-	return lines
-}
-
-// rexLine is one of Rex's own lines (docs/ux.md §10): "rex › plan · …" in
-// muted, "rex ›" bold. They never come from or go to the feed.
-func rexLine(kind, text string, width int) LogLine {
-	row := ellipsis("rex › "+text, width)
-	return spanLine(kind, Span{Text: "rex ›", Role: "muted", Bold: true}, Span{Text: strings.TrimPrefix(row, "rex ›"), Role: "muted"})
-}
-
-// driftLines is the drift seen while one task was the pin (docs/ux.md
-// §9a): "rex › drift · <pin>", then a row per path or prompt laid out like
-// a failed tool call, "<level> <subject> · <why>", hard ones (off the pin)
-// in the pin's yellow and soft ones muted; drift is never an error's red.
-// The rows come from the event's meta, which only Rex writes (the block
-// never reaches the feed).
-func driftLines(ev watch.Event, width int) []LogLine {
-	pin, _ := ev.Meta["pin"].(string)
-	lines := []LogLine{rexLine("drift", "drift · "+squash(pin), width)}
-	rows, _ := ev.Meta["rows"].([]driftNote)
-	for _, n := range rows {
-		role := "muted"
-		if n.d.Level == plan.Hard {
-			role = "accent"
+		if len(rows) == 0 && first < width {
+			// The first row leaves room for a drift tag; the rest of its
+			// paragraph wraps to the full width.
+			if code {
+				head := hardWrap(chunk, first)[0]
+				rows = append(rows, head)
+				chunk = chunk[len(head):]
+			} else {
+				head := wrap(chunk, first)[0]
+				rows = append(rows, head)
+				chunk = strings.TrimSpace(strings.TrimPrefix(chunk, head))
+			}
+			if chunk == "" {
+				continue
+			}
 		}
-		row := whatWhy("  "+n.d.Level.String()+" ", squash(n.d.Subject), squash(n.d.Reason), width, n.rel != "")
-		lines = append(lines, spanLine("drift", Span{Text: row, Role: role}))
+		if code {
+			rows = append(rows, hardWrap(chunk, width)...)
+		} else {
+			rows = append(rows, wrap(chunk, width)...)
+		}
 	}
-	return lines
+	for len(rows) > 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	if len(rows) == 0 {
+		return []string{""}, 0
+	}
+	if len(rows) > maxPromptRows {
+		return rows[:maxPromptRows], len(rows) - maxPromptRows
+	}
+	return rows, 0
+}
+
+// rexLine is one of Rex's own lines (docs/ux.md §10): "rex · <text>",
+// muted, after the gutter. They never come from or go to the feed.
+func rexLine(text string, width int) LogLine {
+	return LogLine{Kind: "plan", Text: ellipsis(gutterPad+"rex · "+text, width)}
 }

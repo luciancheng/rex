@@ -25,17 +25,17 @@ const maxText = 100
 // there too (§10). Shorter, a notice takes row 1 while it shows.
 const blankFrom = 12
 
-// layout is how a terminal size splits into mascot, text and composer.
+// layout is how a terminal size splits into mascot and text.
 type layout struct {
 	mascotCols int // 0 in text-only mode
 	gutter     int
 	textW      int // 0 when the text column would be too narrow
 	blank      int // 1 when row 2 is the blank row (docs/ux.md §4)
 	notice     int // 1 when H−2 is the notice row
-	composer   int // 3 = boxed, 1 = one bare row, 0 = none
 	bodyH      int
 	locked     bool // too narrow: only Ctrl+C (and Ctrl+L) do anything
-	typing     bool // tall enough for a composer: the plan list takes typing
+	typing     bool // tall enough to type: Plans' text field takes keys (docs/ux.md §12)
+	boxed      bool // tall enough for the text field's box (docs/ux.md §2)
 }
 
 func layoutFor(columns, lines int) layout {
@@ -52,27 +52,22 @@ func layoutFor(columns, lines int) layout {
 		l.textW, l.locked = 0, true
 	}
 	l.textW = min(l.textW, maxText)
-	switch {
-	case lines >= 16:
-		l.composer = InputRows
-	case lines >= 7:
-		l.composer = 1
-	}
 	if lines >= blankFrom {
 		l.blank, l.notice = 1, 1
 	}
-	l.typing = l.composer > 0 && !l.locked
-	l.bodyH = max(0, lines-2-l.blank-l.notice-FooterRows-l.composer)
+	l.typing = lines >= typeFrom && !l.locked
+	l.boxed = lines >= boxFrom
+	l.bodyH = max(0, lines-2-l.blank-l.notice-FooterRows)
 	return l
 }
 
-// bare is l on a screen without a composer: the body takes its rows.
-// typing still says whether the terminal is tall enough to type in.
-func (l layout) bare() layout {
-	l.bodyH += l.composer
-	l.composer = 0
-	return l
-}
+// typeFrom is the height from which Plans' text field takes keys, and
+// boxFrom the one from which it is a box rather than one row (docs/ux.md
+// §2, §12).
+const (
+	typeFrom = 7
+	boxFrom  = 16
+)
 
 // labelFrom is the text width from which row 0 ends with the places'
 // label, "plan · agent" (docs/ux.md §4).
@@ -108,13 +103,13 @@ func otherPlace(pane PaneKind) string {
 	return placeWords[PanePlans]
 }
 
-// withoutEnter is the plan list's footer when the screen is too short to
-// show its composer (docs/ux.md §12). Typing is ignored there, so "type
-// to …" goes; enter never submits a draft blind, so enter goes while the
-// draft has text, and in a Name prompt, which nothing can be typed into;
-// with a hidden draft ? would be text, so "? help" goes too. None of it
-// depends on the cursor. Screens without a composer keep their footers,
-// since their keys act at once.
+// withoutEnter is Plans' footer when the screen is too short to type in
+// (docs/ux.md §12): the text field is hidden and typing is ignored, so
+// "type to …" goes; enter never submits a draft blind, so enter goes
+// while the draft has text, and in New plan, which nothing can be typed
+// into; with a hidden draft ? would be text, so "? help" goes too. None of
+// it depends on the cursor. Screens without a text field keep their
+// footers, since their keys act at once.
 func withoutEnter(segs []FooterSeg, draft string, prompting bool) []FooterSeg {
 	var out []FooterSeg
 	for _, s := range segs {
@@ -156,57 +151,58 @@ func footerSegments(opt ComposeOptions, scroll int) []FooterSeg {
 	return agentFooter()
 }
 
-// hintText is how a placeholder reads: dim when there is color, in
-// parentheses when there isn't, so it never looks like typed text.
-func hintText(placeholder string, enabled bool) string {
-	if enabled || placeholder == "" {
-		return placeholder
-	}
-	return "(" + placeholder + ")"
-}
-
-// enterOn is what enter does on the plan list's selected row, as the
-// footer says it: it opens a plan or a folder, or starts or makes a new
-// one. Its width is the longer, so the cursor never changes the footer.
+// enterOn is what enter does on Plans' selected row, as the footer says
+// it (docs/ux.md §4): opens a plan or a folder, creates one, or browses
+// rex/plans. Its width is the longest, so the cursor never changes the
+// footer.
 func enterOn(b *PlanBrowser) FooterSeg {
-	s := seg("enter open", "enter create")
+	s := seg("enter open", "enter create", "enter browse")
 	if b.Cursor < len(b.Rows) {
 		switch b.Rows[b.Cursor].Kind {
-		case PlanRowNew, PlanRowMkdir, PlanRowCreateNamed:
+		case PlanRowNew, PlanRowCreateNamed:
 			s.Text = "enter create"
+		case PlanRowOpen:
+			s.Text = "enter browse"
 		}
 	}
 	return s
 }
 
-// listFooter is the plan list's footer (docs/ux.md §4): ↑↓, what enter
-// does on the selected row, typing, where esc goes, tab, then ? help while
-// ? opens Help (on an empty draft).
+// listFooter is Plans' footer (docs/ux.md §4): ↑↓ while there is more than
+// one row, what enter does on the selected row, where esc goes, typing,
+// tab, then ? help while ? opens Help (with the field empty).
 func listFooter(b *PlanBrowser, draft, preview string) []FooterSeg {
 	tab := FooterSeg{Text: "tab agent"}
-	move := FooterSeg{Text: "↑↓ select"}
 	if preview != "" {
 		return []FooterSeg{{Text: preview}, {Text: "esc clear"}, tab}
 	}
-	enter := enterOn(b)
+	if b.Prompting() {
+		out := []FooterSeg{{Text: "enter create"}, {Text: "esc cancel"}, tab}
+		if draft == "" {
+			out = append(out, helpSeg)
+		}
+		return out
+	}
+	var out []FooterSeg
+	if len(b.Rows) > 1 {
+		out = append(out, FooterSeg{Text: "↑↓ select"})
+	}
+	if len(b.Rows) > 0 {
+		out = append(out, enterOn(b))
+	}
 	switch {
-	case b.Prompting() && draft == "":
-		return []FooterSeg{{Text: "enter create"}, {Text: "esc cancel"}, tab, helpSeg}
-	case b.Prompting():
-		return []FooterSeg{{Text: "enter create"}, {Text: "esc clear"}, tab}
 	case draft != "":
-		return []FooterSeg{move, enter, {Text: "esc clear"}, tab}
+		return append(out, FooterSeg{Text: "esc clear"}, tab)
 	case b.Browsing():
 		esc := seg("esc up", "esc plans")
 		if b.topFolder() {
-			esc.Text = "esc plans" // from a top folder Esc is the plan list (docs/ux.md §11)
+			esc.Text = "esc plans" // from rex/plans itself Esc is Plans (docs/ux.md §11)
 		}
-		return []FooterSeg{move, enter, {Text: "type to filter"}, esc, tab, helpSeg}
-	case b.Current == "":
-		// With no plan open, Esc goes back to the Wait screen (docs/ux.md §3).
-		return []FooterSeg{move, enter, {Text: "type to find"}, {Text: "esc wait"}, tab, helpSeg}
+		return append(out, esc, FooterSeg{Text: "type to filter"}, tab, helpSeg)
+	case b.total > 0:
+		out = append(out, FooterSeg{Text: "type to find"})
 	}
-	return []FooterSeg{move, enter, {Text: "type to find"}, tab, helpSeg}
+	return append(out, tab, helpSeg)
 }
 
 // agentFooter is AGENT's footer (docs/ux.md §4): scrolling, its ends,
@@ -216,8 +212,8 @@ func agentFooter() []FooterSeg {
 	return []FooterSeg{{Text: "↑↓ scroll"}, {Text: "home oldest"}, {Text: "end live"}, {Text: "tab plan"}, helpSeg}
 }
 
-// pageFooter is the footer of a page that starts at its top (Wait, the
-// empty AGENT tab, Help): ↑↓ scroll only while it runs past the screen,
+// pageFooter is the footer of a page that starts at its top (the empty
+// AGENT tab, Help): ↑↓ scroll only while it runs past the screen,
 // then where esc goes, if anywhere, and tab; help is "" on Help itself,
 // where ? does nothing.
 func pageFooter(more bool, esc, tab string, help bool) []FooterSeg {
@@ -235,38 +231,21 @@ func pageFooter(more bool, esc, tab string, help bool) []FooterSeg {
 	return out
 }
 
-// composerRows draws the composer: a box when there is room, a bare row on
-// short terminals.
-func composerRows(l layout, draft, prefix, placeholder string, enabled bool) []string {
-	switch l.composer {
-	case InputRows:
-		return inputBox(draft, l.textW, enabled, prefix, placeholder)
-	case 1:
-		if draft == "" && placeholder != "" {
-			return []string{mascot.Paint(prefix, mascot.UI["text"], enabled) + mascot.Paint(clip(hintText(placeholder, enabled), max(0, l.textW-cellLen(prefix))), mascot.UI["border"], enabled)}
-		}
-		line := clip(prefix+visibleDraft(draft, l.textW-cellLen(prefix)), l.textW)
-		return []string{mascot.Paint(line, mascot.UI["text"], enabled)}
+// fieldLines is Plans' text field (docs/ux.md §2), shown only while it
+// is open: from boxFrom rows a muted box titled with what it does
+// ("╭ find ─"), else one row ("find  re"), the end of a long draft after
+// "…". It reports where the terminal's cursor goes in it: rows under its
+// top, and cells from the text column's edge.
+func fieldLines(label, draft string, width int, boxed bool) (lines []LogLine, row, col int) {
+	box := width - 3 // from column 2, one cell short of the edge
+	if room := box - 4; boxed && room-cellLen(label) >= 1 {
+		visible := visibleDraft(draft, room)
+		top := "╭ " + label + " " + strings.Repeat("─", room-cellLen(label)) + "╮"
+		bottom := "╰" + strings.Repeat("─", box-2) + "╯"
+		mid := spanLine("muted", Span{Text: "  │ "}, Span{Text: visible, Role: "text"}, Span{Text: strings.Repeat(" ", room-cellLen(visible)) + " │"})
+		return []LogLine{{Kind: "muted", Text: "  " + top}, mid, {Kind: "muted", Text: "  " + bottom}}, 1, 4 + cellLen(visible)
 	}
-	return nil
-}
-
-// cursorFor places the cursor after the draft, or hides it (row 0). The
-// composer sits over the notice row and the footer.
-func cursorFor(l layout, lines int, draft, prefix string) (int, int) {
-	visible := visibleDraft(draft, l.textW-l.composerChrome()-cellLen(prefix))
-	switch l.composer {
-	case InputRows:
-		return lines - 2 - l.notice, l.mascotCols + l.gutter + 1 + 1 + cellLen(prefix) + cellLen(visible)
-	case 1:
-		return lines - 1 - l.notice, l.mascotCols + l.gutter + 1 + cellLen(prefix) + cellLen(visible)
-	}
-	return 0, 0
-}
-
-func (l layout) composerChrome() int {
-	if l.composer == InputRows {
-		return 2
-	}
-	return 0
+	lead := "  " + label + "  "
+	visible := visibleDraft(draft, max(0, width-1-cellLen(lead)))
+	return []LogLine{spanLine("muted", Span{Text: lead}, Span{Text: visible, Role: "text"})}, 0, cellLen(lead) + cellLen(visible)
 }

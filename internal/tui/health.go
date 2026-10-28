@@ -103,7 +103,7 @@ func (h feedHealth) lines(width int, hidden int, sk skill.Copy, now time.Time) [
 		}
 	}
 	// The agent drives the plan only once it has the skill: shown wherever
-	// the wiring is, since start opens a plan and skips the Wait screen.
+	// the wiring is, since Plans says so only on a first run.
 	switch sk {
 	case skill.Current:
 		row("text", "skill", "rex-plan current")

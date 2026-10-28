@@ -19,7 +19,6 @@ const (
 	QuitWindowTicks = 25
 	Gutter          = 2
 	MinTextCols     = 24
-	InputRows       = 3
 	FooterRows      = 1
 	MaxLog          = 400
 	maxPromptRows   = 6 // a pasted wall of text must not push the stream away
@@ -321,9 +320,9 @@ func statusForTurn(turn Turn, lastKind string) string {
 	}
 }
 
-// PaneBodyHeight is AGENT's body height: it has no composer.
+// PaneBodyHeight is AGENT's body height.
 func PaneBodyHeight(termLines int) int {
-	return layoutFor(TextOnlyBelow, termLines).bare().bodyH
+	return layoutFor(TextOnlyBelow, termLines).bodyH
 }
 
 // PaneTextWidth is the text column's width: the mascot takes its share
@@ -363,29 +362,6 @@ func visibleDraft(draft string, room int) string {
 	return "…" + tailCells(clean, room-1)
 }
 
-func inputBox(draft string, width int, enabled bool, prefix, placeholder string) []string {
-	inner := max(0, width-2)
-	top := "╭" + strings.Repeat("─", inner) + "╮"
-	bot := "╰" + strings.Repeat("─", inner) + "╯"
-	if width < 4 {
-		out := make([]string, InputRows)
-		for i := range out {
-			out[i] = clip("", width)
-		}
-		return out
-	}
-	middle := mascot.Paint(clip(prefix+visibleDraft(draft, inner-cellLen(prefix)), inner), mascot.UI["text"], enabled)
-	if draft == "" && placeholder != "" {
-		room := max(0, inner-cellLen(prefix))
-		middle = mascot.Paint(prefix, mascot.UI["text"], enabled) + mascot.Paint(clip(hintText(placeholder, enabled), room), mascot.UI["border"], enabled)
-	}
-	return []string{
-		mascot.Paint(top, mascot.UI["border"], enabled),
-		mascot.Paint("│", mascot.UI["border"], enabled) + middle + mascot.Paint("│", mascot.UI["border"], enabled),
-		mascot.Paint(bot, mascot.UI["border"], enabled),
-	}
-}
-
 func textColumn(l layout, height int, opt ComposeOptions) []string {
 	width := l.textW
 	if width <= 0 || height <= 0 {
@@ -396,7 +372,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		return out
 	}
 	bodyTop := 2 + l.blank
-	bodyBottom := height - FooterRows - l.notice - l.composer
+	bodyBottom := height - FooterRows - l.notice
 	fillBottom := bodyBottom // rows a shorter view leaves are blank
 	bodyH := max(0, bodyBottom-bodyTop)
 	var body, pinned []LogLine
@@ -407,20 +383,19 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		scroll = min(opt.Overlay.Scroll, max(0, len(body)-bodyH))
 		fromTop = true
 	} else if opt.Pane == PanePlans && opt.Plans != nil {
-		// The plan list's notice and error stay put; only the list under
-		// them scrolls.
-		all := planList(opt.Plans, width, listFit{body: bodyH, tall: height >= 16, short: height < blankFrom, follow: opt.Follow})
-		head := headOf(all)
-		pinned = planHead(all[:head], len(all), bodyH)
+		// The text field stays put; only the list under it scrolls.
+		all := planList(opt.Plans, width, listFit{body: bodyH, tall: l.boxed, short: height < blankFrom, field: opt.Composer && l.typing, draft: opt.Draft})
+		head := min(headOf(all), bodyH)
+		pinned = all[:head]
 		body = all[head:]
 		bodyTop += len(pinned)
 		bodyH -= len(pinned)
 		scroll = opt.Plans.window(body, bodyH)
 		fromTop, list = true, true
 	} else if opt.Pane == PanePlans {
-		// Wait, or the open plan's screen, even an empty one. The task
-		// list and its pages come laid out to their rows (docs/ux.md §6),
-		// PlanRows of them where it says.
+		// The open plan's screen, even an empty one. The task list and its
+		// pages come laid out to their rows (docs/ux.md §6), PlanRows of
+		// them where it says.
 		if opt.PlanRows > 0 && opt.PlanRows < bodyH {
 			bodyH, bodyBottom = opt.PlanRows, bodyTop+opt.PlanRows
 		}
@@ -441,7 +416,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		}
 		if len(opt.Log) == 0 {
 			// The empty tab is a page, not a stream: it starts at its top
-			// and scrolls from there, as Wait does (docs/ux.md §10).
+			// and scrolls from there (docs/ux.md §10).
 			scroll = min(scroll, max(0, len(body)-bodyH))
 			fromTop = true
 		} else {
@@ -467,7 +442,7 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		visible = append([]LogLine(nil), body[start:end]...)
 		switch {
 		case fromTop && len(visible) > 2 && list:
-			visible = listMore(visible, body[:start], end < len(body))
+			visible = listMore(visible, body[:start], body[end:])
 		case fromTop && len(visible) > 2:
 			// Say when the list goes on past the window, without covering the selection.
 			if start > 0 && !visible[0].Selected {
@@ -519,9 +494,6 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 			rows[index] = strings.Repeat(" ", width)
 		}
 	}
-	for offset, line := range composerRows(l, opt.Draft, composerPrefix(opt), opt.Placeholder, enabled) {
-		rows[height-FooterRows-l.notice-l.composer+offset] = line
-	}
 	if l.notice > 0 {
 		rows[height-FooterRows-1] = statusRow(opt.Notice, width, enabled)
 	}
@@ -530,8 +502,8 @@ func textColumn(l layout, height int, opt ComposeOptions) []string {
 		if opt.Overlay != nil && !opt.QuitPending {
 			segs = opt.Overlay.Footer
 		}
-		if !l.typing && opt.Composer {
-			segs = withoutEnter(segs, opt.Draft, opt.Plans != nil && opt.Plans.Prompting())
+		if !l.typing && opt.Plans != nil && opt.Overlay == nil {
+			segs = withoutEnter(segs, opt.Draft, opt.Plans.Prompting())
 		}
 		rows[len(rows)-1] = paintLine(footerLine(segs, width), width, enabled)
 	}
@@ -613,23 +585,21 @@ type ComposeOptions struct {
 	Enabled     bool
 	Columns     int
 	Lines       int
-	Composer    bool // the plan list's composer is drawn and takes typing (app.composing, docs/ux.md §2)
+	Composer    bool // Plans' text field is open: drawn at the top of its body, the cursor in it (app.fieldOpen, docs/ux.md §2)
 	Draft       string
 	Log         []watch.Event
 	QuitPending bool
 	Status      string // the turn's word, for AGENT's live layout
 	Scroll      int
 	Pane        PaneKind
-	Plans       *PlanBrowser // the plan list, set only while it is PLAN's screen
-	Follow      string       // "following" or "latched" while a plan is open: the plan list's OPEN meta
+	Plans       *PlanBrowser // Plans, set only while it is PLAN's screen
 	LogView     []LogLine    // laid-out AGENT stream, when the caller already has it
 	Page        *Page        // row 0's title; nil names the place
 	Context     StatusLine   // row 1 (docs/ux.md §4)
 	Notice      StatusLine   // the notice row, or row 1 under blankFrom rows
 	Overlay     *Overlay
-	Placeholder string      // dim hint in an empty composer
 	Preview     string      // what enter will do with the draft, shown in the footer
-	PlanView    []LogLine   // Wait or the open plan's screen, when PLAN shows one
+	PlanView    []LogLine   // the open plan's screen, when PLAN shows one
 	PlanScroll  int         // its first visible line
 	PlanRows    int         // the body rows the open plan's screen takes, when fewer than the screen has
 	More        string      // "↑ 3 more": the open plan's list or page goes on above, said at row 2's right end
@@ -658,9 +628,6 @@ func composeRows(spriteName, color string, opt ComposeOptions) Frame {
 	columns := max(1, opt.Columns)
 	lines := max(1, opt.Lines)
 	l := layoutFor(columns, lines)
-	if !opt.Composer {
-		l = l.bare()
-	}
 	if l.locked {
 		rows := make([]string, lines)
 		msg := fmt.Sprintf("widen to %d columns", MinTextCols)
@@ -695,7 +662,12 @@ func composeRows(spriteName, color string, opt ComposeOptions) Frame {
 		out = append(out, left+gutter+text[index])
 	}
 	f := Frame{Rows: out}
-	f.CursorRow, f.CursorCol = cursorFor(l, lines, opt.Draft, composerPrefix(opt))
+	if opt.Composer && opt.Plans != nil && opt.Overlay == nil && l.typing && l.textW > 0 {
+		// The cursor sits after the text in Plans' field, at the top of the
+		// body (docs/ux.md §2).
+		_, row, col := fieldLines(opt.Plans.fieldLabel(), opt.Draft, l.textW, l.boxed)
+		f.CursorRow, f.CursorCol = 2+l.blank+row+1, l.mascotCols+l.gutter+col+1
+	}
 	return f
 }
 

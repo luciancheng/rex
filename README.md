@@ -74,11 +74,11 @@ This puts `rex` in `$(go env GOPATH)/bin`. Then wire your agent (see [Agents](#a
 
 ## Quick start
 
-1. Wire your agent (see [Agents](#agents)) and teach it the plan format with `rex ingest --install-skill`. Open a new terminal, `cd` into your repo and run `rex start`. It opens the plan you had open last time, else the newest plan in `rex/plans/`, else waits for one.
-2. Ask your agent to plan the work in `rex/plans/<name>.rex.json`. Rex opens its task list as soon as the agent writes the file, and updates it as the agent fills it in.
+1. Wire your agent (see [Agents](#agents)) and teach it the plan format with `rex ingest --install-skill`. Open a new terminal, `cd` into your repo and run `rex start`. It starts on Plans, with the plan you had open last time selected as **Continue**: press enter to open it. **Open latest** is the newest plan, **Open a plan** browses `rex/plans/`, and **Create a plan** makes an empty one you name (`team/auth` puts it in a folder); typing finds a plan by name or title.
+2. Or ask your agent to plan the work in `rex/plans/<name>.rex.json`. Rex opens its task list as soon as the agent writes the file, and updates it as the agent fills it in.
 3. Ask your agent to work the plan ("work the plan", "continue rex/plans/<name>.rex.json"). It sets the task it starts to `active`, and Rex shows it as the pin on the second row and tags it `pinned` in the list. When it finishes, it marks the task `done` with what it did, what it changed and how it checked, and Rex shows `✔ <task> done · next up <next>`; the tag moves on to the next task. Enter on a task shows all of it; `i` shows the plan's goal, scope and progress. Each task is one PR; ask it for the next one when you're ready.
 4. Press Tab to watch the agent while it works, and Tab again to go back to the plan. `?` shows every key.
-5. The top row says `following` while Rex opens each plan your agent writes. Pick another plan yourself (Esc, then pick it from the list, or type a name and enter) and Rex stays on it: a plan the agent writes then waits on the row above the keys, `Your agent wrote … · o opens it`, until you press `o`.
+5. The top row says `following` while Rex opens each plan your agent writes, as it does after Continue or Open latest. Pick another plan yourself (Esc to Plans, then a plan under Recent, Open a plan, or type a name and enter) and Rex stays on it: a plan the agent writes then waits on the row above the keys, `Your agent wrote … · o opens it`, and in Open latest, until you open it.
 6. Ctrl+C twice quits.
 
 **How does the agent know the pinned task?** In Claude Code, Codex and Cursor the prompt hook, and in OpenCode Rex's plugin, adds it to every prompt you send: a short, factual note that starts with `Rex note`, read from the plan file just then (what the task does and needs, how to verify it, its files, what it builds on, what is out of scope). It is sent only while a task is `active` in the plan Rex last opened in this repo (a task that is only next up is never sent, and a plan you never opened in Rex sends nothing, whatever it pins), it is capped at 1,500 bytes, and it is left out if it isn't ready within 750 ms of the hook starting (OpenCode's plugin waits for it at most 1.5 s, then sends the prompt without it). While nothing is pinned and the plan Rex last opened in this repo has no tasks yet, the note just names that plan, so "plan this" works. With nothing pinned and no such empty plan, nothing is sent: that is the off switch. Cursor reads the note on every prompt in recent builds (seen working in Cursor 3.20 and its CLI 2026.10; the field Rex uses there is undocumented, and an older build, such as 3.2, ignores it); it also gets it at least once per chat, from a `sessionStart` hook, as of the moment the chat starts. To stop the note, set the task back to `pending` (ask your agent, or edit its `status`); `rex ingest --uninstall claude` (or `codex`, `cursor` or `opencode`) takes Rex's hooks out altogether. The `rex-plan` skill also tells the agent to re-read the plan at the start of every turn and work its `active` task, so a fresh chat picks up where the last one stopped when you say "continue the plan".
@@ -102,14 +102,14 @@ Rex watches agents through their hooks: each wired agent runs `rex ingest` on it
 
 ## Keys
 
-Keys act at once, and every screen's bottom row lists the ones that work there. The only place you type is the plan list, to find, filter or name a plan.
+Keys act at once, and every screen's bottom row lists the ones that work there. The only place you type is Plans, to find, filter or name a plan.
 
 | Key | Does |
 | --- | --- |
 | Tab | switch between PLAN and AGENT |
 | Enter | open the selection |
 | `o` | open a plan the agent wrote, when the row above the keys offers it (it names `o`) |
-| Esc | go up one level, back along the title on the top row (in the plan list, clear what you typed first) |
+| Esc | go up one level, back along the title on the top row (on Plans, clear what you typed first) |
 | ↑ ↓ · PgUp PgDn | move, or scroll |
 | ← → | up a level · into a folder or a task's detail |
 | Home End | first and last; on AGENT, oldest and live (also Ctrl+A, Ctrl+E) |
@@ -117,7 +117,7 @@ Keys act at once, and every screen's bottom row lists the ones that work there. 
 | Ctrl+L | repaint |
 | Ctrl+C twice | quit |
 
-The plan list (Esc from the task list) groups the open plan, the plans you opened before it and the newest others, and the folders under `rex/plans/`, each plan once, and the selected plan opens in place to show its goal, its pinned task, what comes next and what was last done. There, typing finds a plan or names a new one, Ctrl+U and Ctrl+W clear the line or a word, and a leading `/` runs a verb: `/help`, `/breakdance` (one dance). Pinning a task, marking it done and handing off to a fresh chat are your agent's job: ask it. The full key map is in [docs/ux.md](docs/ux.md).
+Plans (where Rex starts, and Esc from the task list) has four cards, each only when it does something: Continue (the plan you had open), Create a plan, Open a plan (browse `rex/plans/`, folders then plans) and Open latest (the newest plan); then Recent, the plans you opened before and the newest others, each plan once. Continue and Open latest follow the plans your agent writes; any other pick stays put. There, typing finds a plan by name or title, or names a new one (`+ Create <name>`), Ctrl+U and Ctrl+W clear the line or a word, and a leading `/` runs a verb: `/help`, `/breakdance` (one dance). Pinning a task, marking it done and handing off to a fresh chat are your agent's job: ask it. The full key map is in [docs/ux.md](docs/ux.md).
 
 ## Plans
 
@@ -131,7 +131,7 @@ Rex makes no network connections, and everything stays on this machine:
 
 - **`~/.rex/session.jsonl`** (and the `session.jsonl.lock` next to it): the feed every wired agent appends to. It holds your prompts (and, for one that carried the pin, the task's id and its plan's path), the agent's thoughts and replies, the commands it runs, file paths and working folders, from every repo on this machine. File bodies and diffs are left out, and each event's text is capped at 32 KB. Only your user can read it (`0600`, in a `0700` folder). It only grows; delete it whenever you like. Set `REX_EVENTS` to keep it somewhere else.
 - **`~/.rex/state.json`**: the last plan opened in each repo (by you, or followed because your agent wrote it), the only plan whose pinned task the prompt hooks hand your agent.
-- **Your repo**: Rex never edits a plan. `+ New plan`, `+ Create` and `+ New folder` in the plan list write a new empty plan or a folder (and `rex/plans/.gitkeep` the first time), never over an existing file. Everything else in `rex/plans/` is written by your agent or by you.
+- **Your repo**: Rex never edits a plan. Create a plan and `+ Create` on Plans write a new empty plan (and `rex/plans/.gitkeep` and any folders it names the first time), never over an existing file. Everything else in `rex/plans/` is written by your agent or by you.
 - **Agent configs**: only the files in the [Agents](#agents) table, each with a `.bak` copy of what was there, and only when you run `--install`. `--install claude --project` also adds two lines to the repo's `.git/info/exclude`, and `--install-skill` writes the two `rex-plan` skill folders (and, with `CLAUDE_CONFIG_DIR` set, updates a copy Rex left in `~/.claude/skills`).
 
 The install script downloads Rex's source through Go and git.
@@ -170,7 +170,7 @@ The install script downloads Rex's source through Go and git.
 - **No dino, or "widen".** The dino shows only from 110 columns and 16 rows, so a smaller terminal gives the plan all of its width. Under 24 columns Rex asks you to widen the terminal.
 - **The agent doesn't get the pinned task.** Claude Code, Codex, Cursor and OpenCode get the note, and only while a task is `active` in the plan Rex last opened in that repo: open that plan in Rex once. Any other plan sends nothing, even one with an `active` task. A subagent never gets it. Cursor takes it before each prompt only on recent builds (3.20 and the CLI 2026.10 were seen taking it); it also gets it when a chat starts, if `~/.cursor/hooks.json` has Rex's `sessionStart` entry (run `rex ingest --install cursor` again to add it), and that note is as of the chat's start: a pin moved later reaches it only through the plan file. Cursor's cloud agents don't run your user hooks. OpenCode needs the plugin from this Rex: run `rex ingest --install opencode` again, then restart OpenCode.
 - **The agent still gets a task you have moved on from.** It is still `active` in the plan. Ask your agent to set it back to `pending` (or edit its `status` yourself), or to finish it.
-- **The agent doesn't pin or finish tasks in the plan.** Install the skill (`rex ingest --install-skill`, then start a new agent session), and ask it to work the plan. The wait screen and Help (`?`, the `skill` row) say when the skill is installed nowhere Rex knows, or when a copy is from an older Rex (run the command they show); an older copy is also a status-line notice when Rex starts on a plan.
+- **The agent doesn't pin or finish tasks in the plan.** Install the skill (`rex ingest --install-skill`, then start a new agent session), and ask it to work the plan. Plans (before your first plan) and Help (`?`, the `skill` row) say when the skill is installed nowhere Rex knows, or when a copy is from an older Rex (run the command they show); an older copy is also a notice when Rex starts.
 - **"rex/ is a file here · plans off".** A file named `rex` sits at the repo root, where the plans folder goes. Move it.
 
 ## Contributing

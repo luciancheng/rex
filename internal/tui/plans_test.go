@@ -3,9 +3,9 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/luciancheng/rex/internal/plan"
 )
@@ -84,25 +84,28 @@ func TestStartCreatesNothing(t *testing.T) {
 	}
 }
 
-// docs/ux.md §4: outside git the plan list's notice is its row 1, on the
-// Wait screen and on the list, and never a line of the list's body.
+// docs/ux.md §4, §11: outside git, Plans says so on row 0 and row 1, the
+// Create a plan card says where Rex makes the folder, and start creates
+// nothing there.
 func TestOutsideGitShowsWherePlansGo(t *testing.T) {
 	dir := t.TempDir()
 	b := NewPlanBrowser(dir)
-	if !strings.Contains(b.Notice, "not in a git repo") || !strings.Contains(b.Notice, "rex/plans") {
+	if !strings.HasPrefix(b.Notice, "Not in a git repo · plans go in ") || !strings.HasSuffix(b.Notice, "/rex/plans/") {
 		t.Fatalf("notice %q", b.Notice)
 	}
-	if strings.Contains(viewText(BuildPlanView(b, 80)), "not in a git repo") {
+	if strings.Contains(viewText(BuildPlanView(b, 80)), "Not in a git repo") {
 		t.Fatal("the notice is row 1's, not the body's")
 	}
 	a := newApp("yellow", false, "idle", b, 120, 32)
-	for _, step := range []string{"wait", "list"} {
-		if step == "list" {
-			press(a, "esc")
-		}
-		if row := textOf(a.frameRows().Rows[1], 120); !strings.HasPrefix(row, "not in a git repo · plans go to ") {
-			t.Fatalf("%s: row 1 %q", step, row)
-		}
+	rows := a.frameRows().Rows
+	if head := textOf(rows[0], 120); !strings.HasSuffix(head, " no git repo   plan · agent") {
+		t.Fatalf("row 0 %q", head)
+	}
+	if row := textOf(rows[1], 120); !strings.HasPrefix(row, "Not in a git repo · plans go in ") {
+		t.Fatalf("row 1 %q", row)
+	}
+	if body := viewText(BuildPlanView(b, 300)); !strings.Contains(body, "❯ Create a plan   Rex makes "+homePath(b.Root)+"/ for it\n") || !strings.Contains(body, "Start Rex from your project's folder") {
+		t.Fatalf("the card says where plans go\n%s", body)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "rex")); !os.IsNotExist(err) {
 		t.Fatalf("start outside git created rex/: %v", err)
@@ -132,34 +135,27 @@ func TestStartLeavesLegacyPlansAlone(t *testing.T) {
 	}
 }
 
-func TestNewFolderCreatesPlansDirAndRespectsARexFile(t *testing.T) {
-	repo := t.TempDir()
-	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
-	b := NewPlanBrowser(repo)
-	b.Screen = ScreenBrowse
-	b.Rebuild()
-	if b.CommitFolder("grp") != PlanStay || b.Err != "" {
-		t.Fatalf("err %q", b.Err)
-	}
-	for _, p := range []string{"rex/plans/.gitkeep", "rex/plans/grp"} {
-		if _, err := os.Stat(filepath.Join(repo, p)); err != nil {
-			t.Fatalf("missing %s", p)
-		}
-	}
+// docs/ux.md §11: with plans off Plans has no card to pick, says how to
+// turn them on, and a find's + Create is refused with the cause on the
+// notice row, not twice.
+func TestPlansOffRefusesToCreate(t *testing.T) {
 	other := t.TempDir()
+	os.Mkdir(filepath.Join(other, ".git"), 0o755)
 	os.WriteFile(filepath.Join(other, "rex"), []byte("bin"), 0o755)
-	c := NewPlanBrowser(other)
-	c.Screen = ScreenBrowse
-	if c.CommitFolder("grp") != PlanStay || !strings.Contains(c.Err, "move the rex file") {
-		t.Fatalf("err %q", c.Err)
-	}
-	// On the list the notice is row 1 and the error the notice row
-	// (docs/ux.md §4): they don't say the same thing twice.
 	a := newApp("yellow", false, "idle", NewPlanBrowser(other), 120, 32)
-	press(a, "esc")
-	a.plans.CommitFolder("grp")
-	if f := a.frame(); strings.Count(f, "rex/ is a file here") != 1 || !strings.Contains(f, "✗ move the rex file to create plans") {
+	if len(a.plans.Rows) != 0 || !strings.Contains(a.frame(), "A file named rex sits where the rex/plans/ folder goes.") || strings.Contains(a.frame(), "❯") {
+		t.Fatalf("no cards, and how to turn plans on\n%s", a.frame())
+	}
+	if f := a.frame(); !strings.Contains(f, "tab agent · ? help") || strings.Contains(f, "enter") {
+		t.Fatalf("nothing for enter to do\n%s", f)
+	}
+	typeText(a, "grp")
+	press(a, "\r")
+	if f := a.frame(); strings.Count(f, "rex/ is a file here") > 1 || !strings.Contains(f, "✗ move the rex file to create plans") {
 		t.Fatalf("the notice and the error must not say the same thing twice\n%s", f)
+	}
+	if data, _ := os.ReadFile(filepath.Join(other, "rex")); string(data) != "bin" {
+		t.Fatal("the rex file was touched")
 	}
 }
 
@@ -198,7 +194,7 @@ func TestOutsideGitNoticeKeepsWherePlansGo(t *testing.T) {
 	b := NewPlanBrowser(deep)
 	for _, width := range []int{40, 60, 80} {
 		row := strings.TrimRight(statusRow(noticeLine(b.Notice), width, false), " ")
-		if !strings.Contains(row, "git") || !strings.HasSuffix(row, "/rex/plans") || cellLen(row) > width-1 {
+		if !strings.Contains(row, "git") || !strings.HasSuffix(row, "/rex/plans/") || cellLen(row) > width-1 {
 			t.Fatalf("width %d: %q", width, row)
 		}
 	}
@@ -209,8 +205,8 @@ func TestOutsideGitNoticeKeepsWherePlansGo(t *testing.T) {
 // §12).
 func TestNoticesFitNarrowPanes(t *testing.T) {
 	cases := []struct{ notice, want string }{
-		{outsideGitPrefix + "~/work/clients/acme/very/deep/folder/rex/plans", "/rex/plans"},
-		{outsideGitPrefix + "~/作業/顧客/とても長いフォルダの名前/rex/plans", "/rex/plans"},
+		{outsideGitPrefix + "~/work/clients/acme/very/deep/folder/rex/plans/", "/rex/plans/"},
+		{outsideGitPrefix + "~/作業/顧客/とても長いフォルダの名前/rex/plans/", "/rex/plans/"},
 		{rexFileNotice, "plans off"},
 		{"rex-plans/ has 3 old plan(s) · move them into rex/plans", "rex-plans/"},
 	}
@@ -224,50 +220,54 @@ func TestNoticesFitNarrowPanes(t *testing.T) {
 	}
 }
 
+// seedPlans writes each name as an empty plan under repo's rex/plans,
+// each newer than the last by writePlan's clock.
 func seedPlans(t *testing.T, repo string, names ...string) string {
 	t.Helper()
-	root := filepath.Join(repo, "rex", "plans")
 	for _, name := range names {
-		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(2 * time.Millisecond)
+		writePlan(t, repo, name, "{}\n")
 	}
-	return root
+	return PlansDir(repo)
 }
 
-func TestPlanHomeShowsTheGroups(t *testing.T) {
+// docs/ux.md §11: Plans is the cards, in #70's order, each only when it
+// does something, then Recent; with no plan to continue the cursor starts
+// on Open latest.
+func TestPlansShowsTheCards(t *testing.T) {
 	repo := t.TempDir()
-	seedPlans(t, repo, "alpha.rex.json")
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	seedPlans(t, repo, "alpha.rex.json", "beta.rex.json")
 	b := NewPlanBrowser(repo)
 	if b.Screen != ScreenHome {
-		t.Fatal("home first")
+		t.Fatal("Plans first")
 	}
-	view := viewText(BuildPlanView(b, 48))
-	for _, needle := range []string{"RECENT ─", "FOLDERS ─", "rex/plans/", "alpha", "+ New plan", "+ New folder"} {
+	var kinds []PlanRowKind
+	for _, row := range b.Rows {
+		kinds = append(kinds, row.Kind)
+	}
+	if want := []PlanRowKind{PlanRowNew, PlanRowOpen, PlanRowLatest, PlanRowPlan}; !slices.Equal(kinds, want) {
+		t.Fatalf("rows %v, want %v", kinds, want)
+	}
+	view := viewText(BuildPlanView(b, 80))
+	for _, needle := range []string{"  Create a plan   name it; you or your agent fill in the tasks", "  Open a plan     browse rex/plans/ · 2 plans", "❯ Open latest     beta · no tasks · changed ", "\n\n  Recent\n  alpha "} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("missing %q in\n%s", needle, view)
 		}
 	}
-	if b.Rows[b.Cursor].Group != groupRecent {
-		t.Fatal("with plans and none open, the cursor starts on the newest")
+	if b.Rows[b.Cursor].Kind != PlanRowLatest {
+		t.Fatal("with plans and none to continue, the cursor starts on Open latest")
 	}
 }
 
-func TestFirstRunShowsTheActions(t *testing.T) {
+// docs/ux.md §11: a first run is the Create a plan card alone, and start
+// makes no folder for it.
+func TestFirstRunShowsOnlyCreate(t *testing.T) {
 	b := NewPlanBrowser(t.TempDir())
-	if len(b.Rows) != 2 || b.Rows[0].Kind != PlanRowNew || b.Rows[1].Kind != PlanRowMkdir || b.Cursor != 0 {
+	if len(b.Rows) != 1 || b.Rows[0].Kind != PlanRowNew || b.Cursor != 0 {
 		t.Fatalf("rows %#v", b.Rows)
 	}
 	if _, err := os.Stat(b.Root); !os.IsNotExist(err) {
 		t.Fatalf("start must not create the plans dir: %v", err)
-	}
-	if !strings.Contains(viewText(BuildPlanView(b, 60)), "No plans in rex/plans/ yet") {
-		t.Fatal("first-run sentence")
 	}
 }
 
@@ -280,12 +280,10 @@ func TestPlanCreateWarnsOnDuplicate(t *testing.T) {
 	}
 	again := NewPlanBrowser(repo)
 	again.Screen = ScreenCreate
-	again.From = ScreenHome
-	name := "alpha"
-	if act := again.CommitCreate(name); act != PlanStay {
+	if act := again.CommitCreate("alpha"); act != PlanStay {
 		t.Fatal("duplicate must not open")
 	}
-	if !strings.Contains(again.Err, "already exists") {
+	if again.Err != "alpha already exists · pick another name" {
 		t.Fatalf("err %q", again.Err)
 	}
 }
@@ -310,81 +308,35 @@ func TestPlanCreateWritesTheV1Stub(t *testing.T) {
 	}
 }
 
-func TestPlanBrowseFoldersAndCreateFolder(t *testing.T) {
+// docs/ux.md §11: Open a plan lists a folder's folders, with their plans,
+// then its plans; no ../, no files that aren't plans, no hidden folders,
+// no + rows.
+func TestOpenAPlanListsFoldersThenPlans(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, "rex", "plans")
-	if err := os.MkdirAll(filepath.Join(root, "archive", "old"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "archive", "sprint.rex.json"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "archive", "notes.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	b := NewPlanBrowser(repo)
-	for i, row := range b.Rows {
-		if row.Kind == PlanRowDir {
-			b.Cursor = i
+	for _, dir := range []string{"archive/old", "archive/.hidden", "zeta"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if b.Activate() != PlanStay || b.Screen != ScreenBrowse || b.Dir != filepath.Join(root, "archive") {
-		t.Fatal("a folder under FOLDERS opens in Browse")
+	for _, name := range []string{"archive/sprint.rex.json", "archive/old/a.rex.json", "archive/.hidden/b.rex.json", "zeta/z.rex.json"} {
+		os.WriteFile(filepath.Join(root, name), []byte("{}\n"), 0o644)
 	}
-	view := viewText(BuildPlanView(b, 48))
-	for _, want := range []string{"  ../", "❯ old/ ", "  sprint ", "  notes.txt", "  + New plan", "  + New folder"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("missing %q\n%s", want, view)
-		}
-	}
-	if strings.Contains(view, "[ + ") {
-		t.Fatalf("actions have no brackets\n%s", view)
-	}
-	b.Screen, b.From = ScreenFolder, ScreenBrowse // as + New folder in Browse does
-	if b.CommitFolder("team") != PlanStay {
-		t.Fatal("mkdir")
-	}
-	if b.Dir != filepath.Join(root, "archive", "team") {
-		t.Fatalf("dir %q", b.Dir)
-	}
-	if _, err := os.Stat(b.Dir); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestPlanRecentIsNewestFirst(t *testing.T) {
-	repo := t.TempDir()
-	root := filepath.Join(repo, "rex", "plans")
-	nested := filepath.Join(root, "archive")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	old := filepath.Join(root, "old.rex.json")
-	fresh := filepath.Join(nested, "fresh.rex.json")
-	if err := os.WriteFile(old, []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(5 * time.Millisecond)
-	if err := os.WriteFile(fresh, []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	os.WriteFile(filepath.Join(root, "archive", "notes.txt"), []byte("x"), 0o644)
 	b := NewPlanBrowser(repo)
-	if plans := b.plans(); len(plans) == 0 || plans[0].path != fresh {
-		t.Fatalf("newest first: %+v", plans)
+	b.pick(PlanRowOpen)
+	if b.Activate() != PlanStay || b.Screen != ScreenBrowse || b.Dir != root {
+		t.Fatal("Open a plan browses rex/plans")
+	}
+	if got := viewText(BuildPlanView(b, 48)); got != "❯ archive/                              2 plans\n  zeta/                                  1 plan\n" {
+		t.Fatalf("rex/plans:\n%s", got)
+	}
+	if b.Activate() != PlanStay || b.Dir != filepath.Join(root, "archive") {
+		t.Fatalf("enter goes into the folder: %q", b.Dir)
 	}
 	view := viewText(BuildPlanView(b, 48))
-	if !strings.Contains(view, "RECENT ─") || !strings.Contains(view, "archive/fresh") {
-		t.Fatalf("%s", view)
-	}
-	if b.Rows[0].Path != fresh || b.Rows[1].Path != old {
-		t.Fatalf("rows %+v", b.Rows)
-	}
-	b.Cursor = 0
-	if act := b.Activate(); act != PlanOpenChat || b.Current != fresh {
-		t.Fatalf("act=%d current=%q", act, b.Current)
-	}
-	if b.CurrentRel() != "rex/plans/archive/fresh.rex.json" {
-		t.Fatalf("rel %q", b.CurrentRel())
+	if view != "❯ old/                                   1 plan\n  sprint                               no tasks\n" {
+		t.Fatalf("archive/:\n%s", view)
 	}
 }
 
@@ -395,39 +347,37 @@ func TestPlanBrowseDoesNotLeaveRoot(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	seedPlans(t, repo, "x.rex.json")
 	b := NewPlanBrowser(repo)
-	b.Screen = ScreenBrowse
-	b.Dir = nested
-	b.Rebuild()
+	b.browse(nested)
 	if !b.Up() || b.Dir != filepath.Join(root, "archive") || !b.Browsing() {
 		t.Fatal("up a folder")
 	}
-	if !b.Up() || b.Screen != ScreenHome || b.Dir != root {
-		t.Fatal("up from a top folder is the plan list")
+	if !b.Up() || b.Dir != root || !b.Browsing() || b.Rows[b.Cursor].Name != "archive" {
+		t.Fatal("up to rex/plans itself, on the folder")
 	}
-	b.Screen, b.Dir = ScreenBrowse, root
-	b.Rebuild()
-	if b.Screen != ScreenHome {
-		t.Fatal("there is no Browse root: FOLDERS is it")
+	if !b.Up() || b.Screen != ScreenHome || b.Rows[b.Cursor].Kind != PlanRowOpen {
+		t.Fatal("up from rex/plans is Plans, on the Open a plan card")
 	}
 	b.Screen, b.Dir = ScreenBrowse, filepath.Dir(root)
 	b.Rebuild()
-	if b.Dir != root || b.Screen != ScreenHome {
-		t.Fatalf("Browse never leaves rex/plans: %q", b.Dir)
+	if b.Dir != root {
+		t.Fatalf("Open a plan never leaves rex/plans: %q", b.Dir)
 	}
 }
 
 func TestComposeFramePlansPane(t *testing.T) {
 	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
 	b := NewPlanBrowser(repo)
 	page := libraryPage(b)
 	frame := ComposeFrame("idle", "yellow", ComposeOptions{
 		Enabled: false, Columns: 38, Lines: 24,
-		Pane: PanePlans, Plans: b, Composer: true, Page: &page,
+		Pane: PanePlans, Plans: b, Page: &page,
 	})
 	// Row 0 at 38 cells: the title, the meta's short form, the label
 	// (docs/ux.md §4).
-	if !strings.Contains(frame, "Plans     no plans yet   plan · agent") || !strings.Contains(frame, "❯ + New plan") {
+	if !strings.Contains(frame, "Plans     no plans yet   plan · agent") || !strings.Contains(frame, "❯ Create a plan   name it; you or yo…") {
 		t.Fatalf("%s", frame)
 	}
 }

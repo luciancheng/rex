@@ -854,19 +854,6 @@ func (b *defList) heading(title string, notes ...string) {
 	}
 }
 
-// notePinned is the line under a task's title (docs/ux.md §6): whether
-// your agent gets its fields, and if not, how to send them: only the pin
-// of a plan Rex may send reaches it (§7a), and p pins it (§7).
-func notePinned(t, pin *plan.Task, p *plan.Plan) string {
-	switch {
-	case p.ReadOnly != "":
-		return "A read-only plan sends your agent nothing."
-	case t == pin && t.Status == plan.Active:
-		return "Your agent gets these fields with every prompt."
-	}
-	return "Pin it (p) and your agent gets these fields with every prompt."
-}
-
 // noteCap is the pin note's size, as the page that leaves fields out for
 // it says (docs/ux.md §7a).
 const noteCap = "1,500 bytes"
@@ -881,8 +868,9 @@ const noteCap = "1,500 bytes"
 // isn't sent. A read-only plan sends nothing, so all of it is muted. A
 // done task leads with what your agent wrote when it finished it, then
 // what was planned, muted. rel is the plan's path from the repo, as the
-// note names it.
-func taskPage(d *planDoc, rel, key string, width int) []LogLine {
+// note names it; note is the line under the title, in the send state's
+// words (app.detailNote), or "" for none.
+func taskPage(d *planDoc, rel, key string, width int, note string) []LogLine {
 	var t *plan.Task
 	if d.plan != nil {
 		t = findTask(d.plan, key)
@@ -920,7 +908,10 @@ func taskPage(d *planDoc, rel, key string, width int) []LogLine {
 			dropped = append(dropped, f.Label)
 		}
 	}
-	notes := []string{notePinned(t, pin, p)}
+	var notes []string
+	if note != "" {
+		notes = append(notes, note)
+	}
 	if len(dropped) > 0 && p.ReadOnly == "" {
 		notes = append(notes, "Not sent (the note is capped at "+noteCap+"): "+strings.Join(dropped, ", "))
 	}
@@ -1110,9 +1101,10 @@ func docStatus(d *planDoc) (StatusLine, bool) {
 // pinStatus is the task list's row 1, the pin line (docs/ux.md §4): the
 // agent's pin, "pinned  <id> · <title>" with the id in the pin's yellow;
 // else what Rex would pin next, which is never sent, nor yellow; else why
-// nothing is pinned. Narrow, the title clips, and with fewer than
-// pinTitleMin cells of it the line is the id alone. The agent writes the
-// pin, or you do with p (docs/ux.md §7).
+// nothing is pinned. Narrow, the title clips, first to keep the send state
+// on the right (the caller's), and with fewer than pinTitleMin cells of it
+// the line is the id alone. The agent writes the pin, or you do with p
+// (docs/ux.md §7).
 func pinStatus(p *plan.Plan) StatusLine {
 	muted := func(text string) StatusLine { return StatusLine{Text: text, Kind: "muted"} }
 	if p == nil {
@@ -1137,6 +1129,8 @@ func pinStatus(p *plan.Plan) StatusLine {
 	s := StatusLine{Text: lead + id, Kind: "muted"}
 	if strings.TrimSpace(title) != "" {
 		s.Text += " · " + title
+		// The title clips to keep the send state beside it (docs/ux.md §4).
+		s.Keep = cellLen(lead+id+" · ") + pinTitleMin
 		s.Fit = func(w int) string {
 			room := w - cellLen(lead+id+" · ")
 			if room < pinTitleMin {

@@ -52,11 +52,16 @@ func cujApp(t *testing.T) (*app, *clock, string) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, cujFixture(t), 0o644)
 	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
+	// The test's clock from the start: what the open reads and stamps is
+	// on it, whenever the test runs.
+	c := &clock{t: time.Unix(1_800_000_000, 0)}
+	a.now = c.now
 	if press(a, "\r"); a.at != atOutline || !a.follow {
 		t.Fatalf("setup: Open latest opens the CUJ plan: at=%d", a.at)
 	}
-	c := &clock{t: time.Unix(1_800_000_000, 0)}
-	a.now = c.now
+	// The Opened notice has had its time, as in openDemo (no tick: the
+	// open's glance is still to play).
+	c.t = c.t.Add(toastFor)
 	return a, c, path
 }
 
@@ -196,7 +201,8 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	if a.at != atTaskDetail || !strings.Contains(rows().Rows[0], "Send-off demo › card-highlight") || !strings.Contains(rows().Rows[1], "task 2 of 3") {
 		t.Fatalf("C. enter opens the pin's details on a page of their own\n%s", frame())
 	}
-	for _, want := range []string{"Your agent gets these fields with every prompt.", "  Does          Bar, border and fill cover all three rows of the selected", "  Needs         the pick and pickbg colors exist in mascot.UI", "  Files         internal/tui/plans.go", "  Builds on     plans-ui (done): Home cards, folder browser"} {
+	// Nothing is wired in the test's HOME: the page never says the agent gets them.
+	for _, want := range []string{"Not sent: no wired agent takes the pin · ? help", "  Does          Bar, border and fill cover all three rows of the selected", "  Needs         the pick and pickbg colors exist in mascot.UI", "  Files         internal/tui/plans.go", "  Builds on     plans-ui (done): Home cards, folder browser"} {
 		if !strings.Contains(frame(), want) {
 			t.Fatalf("C. the pin's details show %q\n%s", want, frame())
 		}
@@ -258,7 +264,7 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	if head := rows().Rows[0]; !strings.Contains(head, "card-highlight") || !strings.Contains(head, "✔ done") {
 		t.Fatalf("E. the details' title names the task and its state: %q", head)
 	}
-	detail := viewText(taskPage(a.doc, a.plans.CurrentRel(), a.outline.sel, 78)) // it scrolls; all of it
+	detail := viewText(taskPage(a.doc, a.plans.CurrentRel(), a.outline.sel, 78, a.detailNote(a.outline.sel))) // it scrolls; all of it
 	for _, want := range []string{"  ✔ Done · what your agent wrote when it finished it", "  Did           the selection bar, border and fill cover all three", "  Changed       internal/tui/plans.go", "  Checked       go test ./internal/tui -run PlanCardSelection (passed)", "  Notes         the pick colors were already in mascot.UI", "  Planned       Bar, border and fill"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("E. the details show %q\n%s", want, detail)
@@ -721,10 +727,61 @@ func matrixScreens(t *testing.T) []matrixScreen {
 		{"task details, after p", false, func(a *app) { press(a, "down", "\r", "p") }, func(a *app) bool {
 			return at(atTaskDetail)(a) && a.doc.plan.Task("load-outline").Status == plan.Active
 		}},
+		// The pin's send state (docs/ux.md §4, §7a) on row 1's right: it goes
+		// with the next prompt, the last prompt carried it, no wired agent
+		// takes it (nothing wired, or only an old plugin); and the pin's
+		// details say the same.
+		{"tasks, sends with next prompt", false, func(a *app) { wire(a, wired("claude")) }, sendsAs(sendsNext)},
+		{"tasks, sent with last prompt", false, func(a *app) {
+			wire(a, wired("claude"))
+			a.ingest([]watch.Event{carried(a, "carry on with the plan")})
+		}, sendsAs(sentLast)},
+		{"tasks, no wired agent", false, func(a *app) {}, sendsAs(noHarness)},
+		{"tasks, an old plugin", false, func(a *app) { wire(a, oldPlugin()) }, sendsAs(noHarness)},
+		{"task details, the pin, sent", false, func(a *app) {
+			wire(a, wired("codex"))
+			a.ingest([]watch.Event{carried(a, "carry on")})
+			press(a, "\r")
+		}, func(a *app) bool { return at(atTaskDetail)(a) && a.sendState() == sentLast }},
+		// AGENT: under each prompt that carried the pin, what it carried;
+		// a prompt with no text of its own that carried it too.
+		{"agent, prompts that carried the pin", false, func(a *app) {
+			press(a, "\t")
+			bare := carried(a, watch.NoText)
+			a.ingest([]watch.Event{carried(a, "carry on with the plan, and keep the footer to keys only"), {Source: "claude", Kind: "text", Text: "On it."}, bare})
+		}, func(a *app) bool { return a.pane == PaneChat && a.sendState() == sentLast }},
+		// Help's FEED: a row per harness, each saying whether it hands over
+		// the pin or the command that makes it (docs/ux.md §10).
+		{"help, the feed's pin rows", false, func(a *app) {
+			wire(a, wired("claude"), watch.HarnessStatus{Name: "codex", Present: true}, watch.HarnessStatus{Name: "cursor", Present: true, Wired: true, Prompts: true, Partial: true, Caveat: "on 3.20+ (older: once per chat)"}, oldPlugin())
+			press(a, "?")
+		}, func(a *app) bool { return over(overlayHelp)(a) && len(a.health.statuses) == 4 }},
 		{"help", false, func(a *app) { press(a, "\t", "?") }, over(overlayHelp)},
 		{"help over Plans", false, func(a *app) { list(a); press(a, "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atLibrary }},
 		{"help over a task", false, func(a *app) { press(a, "\r", "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atTaskDetail }},
 	}
+}
+
+// sendsAs is the task list on the pin with send state as row 1's right
+// side says it (docs/ux.md §4, §7a).
+func sendsAs(state string) func(a *app) bool {
+	return func(a *app) bool {
+		return a.pane == PanePlans && a.at == atOutline && a.overlay[a.pane] == overlayNone && a.sendState() == state
+	}
+}
+
+// carried is the CUJ repo's agent's prompt as rex ingest records it when
+// the prompt hook handed over the pin: stamped with the task and the plan
+// (docs/ux.md §7a).
+func carried(a *app, text string) watch.Event {
+	return watch.Event{Source: "claude", Kind: "user", Text: text, TS: float64(time.Now().UnixNano()) / 1e9, Meta: map[string]any{
+		"cwd": a.plans.Repo, "pin": "card-highlight", "pin_plan": "rex/plans/cuj/sendoff-demo.rex.json", "pin_repo": a.plans.Repo,
+	}}
+}
+
+// oldPlugin is OpenCode wired by a plugin from before the pin.
+func oldPlugin() watch.HarnessStatus {
+	return watch.HarnessStatus{Name: "opencode", Present: true, Wired: true, Prompts: true, Old: true}
 }
 
 // noticeKindOf is which kind of notice a's notice row shows.
@@ -928,8 +985,9 @@ func TestColorFrameSameText(t *testing.T) {
 // docs/ux.md §5: quiet roles on every screen of the matrix. The text
 // column never paints a background (the mascot's half-block pixels are
 // its own); every ✔ is done's green; yellow is only on the pin's marks
-// (its pinned tag, its id on row 1 and on AGENT, its state on a details
-// page's row 0) and hard drift's "off pin"; purple is only the selection,
+// (its pinned tag, its id on row 1, on AGENT and under a prompt that
+// carried it, its state on a details page's row 0) and hard drift's "off
+// pin"; purple is only the selection,
 // one block from its ❯; and a list screen with a row to select has
 // exactly one ❯, the rest none. Row 0 and the footer: the current crumb
 // bold, the footer muted.
@@ -937,7 +995,7 @@ func TestFrameMatrixQuietRoles(t *testing.T) {
 	green, purple, yellow := mascot.FG(mascot.UI["action"]), mascot.FG(mascot.UI["pick"]), mascot.FG(mascot.UI["accent"])
 	pinMark := func(row string) bool {
 		trimmed := strings.TrimSpace(row)
-		for _, mark := range []string{"▸ ", "[PINNED]", "pinned", "hard", "off pin"} {
+		for _, mark := range []string{"▸ ", "[PINNED]", "pinned", "hard", "off pin", "with pin "} {
 			if strings.Contains(row, mark) {
 				return true
 			}

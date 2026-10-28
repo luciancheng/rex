@@ -108,13 +108,14 @@ var offerHelp = helpKey{name: "o", what: "open the plan your agent wrote, while 
 // task's details (docs/ux.md §7b): each writes the task's status into the
 // plan file, and the same key undoes it.
 var (
-	pinHelp  = helpKey{name: "p", what: "pin this task, or unpin the pin; your agent gets the pin with every prompt"}
+	pinHelp  = helpKey{name: "p", what: "pin this task, or unpin the pin; a wired agent gets the pin with each prompt, and row 1 says whether it went"}
 	doneHelp = helpKey{name: "d", what: "mark this task done, or reopen a done one"}
 )
 
 // helpLines is Help (docs/ux.md §13): THIS PAGE, for the page it opened over,
-// then what holds everywhere, the marks, how AGENT names its blocks,
-// typing on Plans and what Rex never does; the feed's health follows.
+// then what holds everywhere, the marks, the pin's send state, how AGENT
+// names its blocks, typing on Plans and what Rex never does; the feed's
+// health follows.
 // tall puts a blank row above each section but the first. From 34 cells the key sits in
 // an 11-cell column left of what it does; narrower it sits above it.
 func helpLines(width int, page string, tall bool) []LogLine {
@@ -162,7 +163,7 @@ func helpLines(width int, page string, tall bool) []LogLine {
 	})
 	section("MARKS", "", []helpKey{
 		{name: doneMark + " – !", what: "done · skipped · blocked; no mark: still to do"},
-		{what: "the task you (p) or your agent set active, which your agent gets with every prompt", key: []Span{{Text: "pinned", Role: "accent"}}},
+		{what: "the task you (p) or your agent set active: a wired agent gets it with each prompt, and row 1 says whether it went", key: []Span{{Text: "pinned", Role: "accent"}}},
 		{what: "nothing pinned: the task Rex would pin, never sent", key: []Span{{Text: "next up", Role: "muted"}}},
 		{what: "a second active task: a problem in the plan", key: []Span{{Text: "also active", Role: "error"}}},
 		{what: "a task in a loop: it waits on itself, or is its own parent", key: []Span{{Text: "cycle", Role: "error"}}},
@@ -171,12 +172,20 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{name: "following", what: "Rex opens each plan your agent writes"},
 		{name: "latched", what: "you picked this plan; another the agent writes shows on the notice row and in Open latest, and o opens it"},
 	})
+	// The pin line's right side (docs/ux.md §4, §7a): where `? help` sends
+	// you, FEED below says which command fixes it.
+	section("YOUR AGENT AND THE PIN", "", []helpKey{
+		{name: "sent", what: "your last prompt carried the pin to your agent"},
+		{name: "sends", what: "not sent yet: it goes with your next prompt"},
+		{name: "not sent", what: "nothing is pinned, or this plan sends nothing (read-only, or not the plan Rex last opened here); with ? help, no wired agent takes it, or your agent's build doesn't read it, and FEED below says what to run"},
+	})
 	section("AGENT TAB", "", []helpKey{
 		{name: "thinking", what: "a run of N thoughts (×N); the latest shows"},
 		{name: "$", what: "a command; over 5 in a row, all but the last 4 fold into one line"},
 		{name: "✗", what: "a failed step, or the turn's own error"},
 		{what: "the agent waits on you", key: pill("ASK", "text")},
 		{name: "reply ───", what: "the agent's reply"},
+		{name: "with pin", what: "under a prompt: the pin it carried to your agent (with plan: a new plan's name)"},
 		{name: "rex ›", what: "Rex's own line, plan news or drift, never sent"},
 	})
 	section("PLANS", "", []helpKey{

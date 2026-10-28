@@ -30,6 +30,21 @@ type Harness struct {
 	// never hands the agent the pin (an OpenCode plugin from before plugin
 	// v2); rerunning Install replaces it (docs/ux.md §7a).
 	Old func(home string) bool
+	// Partial, if set, reports whether Rex's hook is wired for some of the
+	// events that hand over the pin but not all (a Cursor install from
+	// before sessionStart, which hands a new chat the pin). Rerunning
+	// Install adds them.
+	Partial func(home string) bool
+	// Prompts, if set, reports whether Rex's hook is on an event that
+	// hands the agent the pin (a prompt, or a session's start), for the
+	// user or in repo's own config (repo "" for none): a hook on the
+	// others alone records the feed and hands over nothing. Rerunning
+	// Install adds it.
+	Prompts func(home, repo string) bool
+	// Caveat, if set, is what feed health adds after "sends the pin with
+	// each prompt" (docs/ux.md §7a, §10): Cursor reads it per prompt from
+	// 3.20; Codex runs a hook only once it is trusted.
+	Caveat string
 	// WiredHere, if set, reports whether one repo's own config runs Rex
 	// (Claude Code's --project install).
 	WiredHere func(repo string) bool
@@ -111,12 +126,24 @@ func UninstallHarness(name string, out io.Writer) error {
 }
 
 // HarnessStatus is one row of feed health: whether a harness is on this
-// machine and whether Rex is wired into it. Read-only.
+// machine, whether Rex is wired into it, and whether that wiring hands the
+// agent the pin (docs/ux.md §7a, §10). Read-only.
 type HarnessStatus struct {
 	Name, Label string
 	Present     bool
 	Wired       bool
-	Here        bool // wired for this repo only
+	Here        bool   // wired for this repo only
+	Old         bool   // wired, but an older hook that never hands over the pin
+	Partial     bool   // wired, but without one of the events that hand it over: rerun the install
+	Prompts     bool   // Rex's hook is on an event that hands over the pin
+	Caveat      string // what feed health adds after "sends the pin with each prompt"
+}
+
+// Sends reports whether s's agent gets the pin: Rex is wired into it,
+// for the user or this repo, on an event that hands the pin over, and not
+// by an older hook that never does.
+func (s HarnessStatus) Sends() bool {
+	return (s.Wired || s.Here) && s.Prompts && !s.Old
 }
 
 // HarnessStatusesFor is every registered harness: whether it is on this
@@ -128,11 +155,25 @@ func HarnessStatusesFor(repo string) []HarnessStatus {
 	}
 	var out []HarnessStatus
 	for _, h := range Harnesses() {
-		st := HarnessStatus{Name: h.Name, Label: h.Label, Present: h.Present(home), Wired: h.Wired(home)}
+		st := HarnessStatus{Name: h.Name, Label: h.Label, Present: h.Present(home), Wired: h.Wired(home), Caveat: h.Caveat}
 		st.Here = repo != "" && h.WiredHere != nil && h.WiredHere(repo)
+		st.Old = st.Wired && h.Old != nil && h.Old(home)
+		st.Partial = st.Wired && h.Partial != nil && h.Partial(home)
+		st.Prompts = (st.Wired || st.Here) && (h.Prompts == nil || h.Prompts(home, repo))
 		out = append(out, st)
 	}
 	return out
+}
+
+// cursorRex reports whether one of commands is Rex's Cursor hook.
+func cursorRex(commands []string) bool {
+	ours := ingestCommand("cursor", rexExecutable(), runtimeGOOS)
+	for _, c := range commands {
+		if isRexIngestCommand(c, ours, "cursor") {
+			return true
+		}
+	}
+	return false
 }
 
 func dirExists(path string) bool {
@@ -145,6 +186,23 @@ func dirExists(path string) bool {
 // a list, the only shape a harness runs (and the only one Uninstall
 // removes). A missing or unreadable file has none.
 func jsonHookCommands(path string) []string {
+	doc := readHookConfig(path)
+	if doc == nil {
+		return nil
+	}
+	return hookCommands(doc["hooks"])
+}
+
+// jsonEventCommands is jsonHookCommands for one event: the commands under
+// the "hooks" object's key for event (Cursor's shape, a list per event).
+func jsonEventCommands(path, event string) []string {
+	hooks, _ := readHookConfig(path)["hooks"].(map[string]any)
+	return hookCommands(hooks[event])
+}
+
+// readHookConfig is a JSON config as a map, or nil when it is missing,
+// empty or unreadable.
+func readHookConfig(path string) map[string]any {
 	data, err := os.ReadFile(path)
 	if err != nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
@@ -153,6 +211,12 @@ func jsonHookCommands(path string) []string {
 	if json.Unmarshal(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")), &doc) != nil {
 		return nil
 	}
+	return doc
+}
+
+// hookCommands are the "command" values of the hook entries in v: objects
+// in a list, at any depth.
+func hookCommands(v any) []string {
 	var out []string
 	var walk func(v any, inList bool)
 	walk = func(v any, inList bool) {
@@ -170,7 +234,7 @@ func jsonHookCommands(path string) []string {
 			}
 		}
 	}
-	walk(doc["hooks"], false)
+	walk(v, false)
 	return out
 }
 
@@ -183,14 +247,20 @@ func init() {
 		},
 		Present: func(home string) bool { return dirExists(filepath.Join(home, ".cursor")) },
 		Wired: func(home string) bool {
-			ours := ingestCommand("cursor", rexExecutable(), runtimeGOOS)
-			for _, c := range jsonHookCommands(filepath.Join(home, ".cursor", "hooks.json")) {
-				if isRexIngestCommand(c, ours, "cursor") {
-					return true
-				}
-			}
-			return false
+			return cursorRex(jsonHookCommands(filepath.Join(home, ".cursor", "hooks.json")))
 		},
+		// An install from before the pin has no sessionStart entry: its
+		// prompts still get the pin on builds that read it, a new chat
+		// never does (docs/ux.md §7a). Either entry alone hands it over.
+		Partial: func(home string) bool {
+			path := filepath.Join(home, ".cursor", "hooks.json")
+			return !cursorRex(jsonEventCommands(path, "sessionStart")) || !cursorRex(jsonEventCommands(path, "beforeSubmitPrompt"))
+		},
+		Prompts: func(home, _ string) bool {
+			path := filepath.Join(home, ".cursor", "hooks.json")
+			return cursorRex(jsonEventCommands(path, "sessionStart")) || cursorRex(jsonEventCommands(path, "beforeSubmitPrompt"))
+		},
+		Caveat:  "on 3.20+ (older: once per chat)",
 		Install: func(home string, out io.Writer) error { return installCursor(home, out) },
 		Uninstall: func(home string, out io.Writer) error {
 			path := filepath.Join(home, ".cursor", "hooks.json")

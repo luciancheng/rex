@@ -85,6 +85,7 @@ func (a *app) writeStatus(key string) bool {
 		}
 	}
 	d.took(saved)
+	a.trackPin()
 	a.mine = mineOf(d.path, t.ID, key, saved)
 	a.late = nil
 	a.plans.showDoc(d)
@@ -92,7 +93,7 @@ func (a *app) writeStatus(key string) bool {
 		a.outline.keepSel(d.plan)
 	}
 	a.rejudgeDrift()
-	notice, line := a.mine.said(saved.Base, saved.Plan)
+	notice, line := a.mine.said(saved.Base, saved.Plan, a.sendTail())
 	a.show(notice)
 	a.toastDone = strings.HasPrefix(notice.Text, doneMark+" ")
 	a.tapeLine("plan", line)
@@ -188,8 +189,9 @@ func mineOf(path, id, key string, saved *plan.Saved) *ownEdit {
 }
 
 // said is the notice and AGENT's line for the write (docs/ux.md §7b),
-// from the plan before and after it.
-func (m *ownEdit) said(before, after *plan.Plan) (StatusLine, string) {
+// from the plan before and after it; sends is what a pin will do now, in
+// the send state's words (sendTail).
+func (m *ownEdit) said(before, after *plan.Plan, sends string) (StatusLine, string) {
 	id := flat(m.id)
 	g := after.Graph()
 	switch {
@@ -211,7 +213,7 @@ func (m *ownEdit) said(before, after *plan.Plan) (StatusLine, string) {
 		case plan.Blocked:
 			parts = append(parts, notePart{" · it was blocked", 2})
 		}
-		return partsLine("Pinned "+id, " · sends with your next prompt", parts), "you pinned " + id
+		return partsLine("Pinned "+id, sends, parts), "you pinned " + id
 	case m.key == "p":
 		tail := " · nothing is sent now"
 		if pin := g.Pin(); pin != nil && pin.Status == plan.Active {
@@ -366,6 +368,7 @@ func (a *app) readDoc(agent bool) bool {
 	old := a.doc.plan
 	changed, news := a.doc.poll(a.now())
 	if changed {
+		a.trackPin()
 		a.plans.showDoc(a.doc)
 		if a.at == atLibrary {
 			a.plans.Rebuild() // Continue's card follows what the task list shows

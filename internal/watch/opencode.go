@@ -294,7 +294,10 @@ func uninstallOpenCode(path string, out io.Writer) error {
 }
 
 // writeFileAtomic writes data to path through a temp file in the same
-// folder, so OpenCode never loads half a plugin.
+// folder, so OpenCode never loads half a plugin. Windows refuses to
+// replace a file another process holds open (Rex reads the plugin every
+// few seconds while a plan is open, for feed health), so a failed rename
+// writes it in place instead.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -319,7 +322,13 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := os.Chmod(tmp.Name(), mode); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		// Not atomic, as UpdateJSONFile's fallback isn't, but written.
+		if werr := os.WriteFile(path, data, mode); werr != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // openCodeInstalled is the version of the rex plugin installed for home,

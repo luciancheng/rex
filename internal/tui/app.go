@@ -59,6 +59,7 @@ type app struct {
 	scope  watch.Scope
 	hidden int // events from other repos' agents, not shown
 	health feedHealth
+	sent   sendSeen // what the pin's send state rests on (docs/ux.md §7a)
 
 	doc        *planDoc // the open plan, nil until one is opened
 	at         planAt   // which PLAN screen: Plans, the task list or a page
@@ -374,6 +375,7 @@ type pageCache struct {
 	at    planAt
 	key   string
 	width int
+	note  string // the line under a task's title (detailNote)
 	lines []LogLine
 }
 
@@ -397,12 +399,16 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 		return outlineScreen(a.doc.plan, v, width, viewH, roomy)
 	}
 	c := &a.pages
-	if c.plan == nil || c.plan != a.doc.plan || c.at != a.at || c.key != v.sel || c.width != width {
-		*c = pageCache{plan: a.doc.plan, at: a.at, key: v.sel, width: width}
+	note := ""
+	if a.at == atTaskDetail {
+		note = a.detailNote(v.sel) // follows the send state, so it keys the page
+	}
+	if c.plan == nil || c.plan != a.doc.plan || c.at != a.at || c.key != v.sel || c.width != width || c.note != note {
+		*c = pageCache{plan: a.doc.plan, at: a.at, key: v.sel, width: width, note: note}
 		if a.at == atPlanDetail {
 			c.lines = aboutPage(a.doc, width)
 		} else {
-			c.lines = taskPage(a.doc, a.plans.CurrentRel(), v.sel, width)
+			c.lines = taskPage(a.doc, a.plans.CurrentRel(), v.sel, width, note)
 		}
 	}
 	return pageWindow(c.lines, &v.scroll, viewH, roomy)
@@ -465,9 +471,15 @@ func (a *app) context() StatusLine {
 		case a.at == atPlanDetail:
 			return muted(b.CurrentRel())
 		case a.at == atTaskDetail:
-			return muted(taskPlace(d.plan, a.outline.sel))
+			s := muted(taskPlace(d.plan, a.outline.sel))
+			if t := findTask(d.plan, a.outline.sel); t != nil && t == planIndexOf(d.plan).pin && t.Status == plan.Active {
+				s.Right = a.sentRight() // the pinned task's only (docs/ux.md §4)
+			}
+			return s
 		}
-		return pinStatus(d.plan)
+		s := pinStatus(d.plan)
+		s.Right = a.sentRight()
+		return s
 	case b.Screen == ScreenCreate:
 		return muted("Name it. a/b puts plan b in folder a.")
 	case b.Browsing():
@@ -815,7 +827,20 @@ func fromFeed(events []watch.Event) []watch.Event {
 func (a *app) own(events []watch.Event, live bool) []watch.Event {
 	var out []watch.Event
 	for _, ev := range events {
-		if in, known := a.scope.Owns(ev); known && !in {
+		in, known := a.scope.Owns(ev)
+		if ev.Kind == "user" {
+			// The newest prompt for this repo, history too: this repo's
+			// agent's, or one whose note was this repo's wherever it came
+			// from. Only the stamps say what it carried (docs/ux.md §7a).
+			here := a.stampedHere(ev)
+			if here || in || !known {
+				a.sawPrompt(ev, here)
+			}
+			if !here {
+				ev = unstamped(ev)
+			}
+		}
+		if known && !in {
 			a.hidden++
 			continue
 		}
@@ -1190,6 +1215,7 @@ func (a *app) openedPlan() {
 		a.toast = StatusLine{} // the last plan's news isn't this one's
 		a.unsaid, a.mine, a.late = nil, nil, nil
 	}
+	a.trackPin()
 	a.plans.showDoc(a.doc)
 	// Reopening the plan already open (Continue) keeps its last good copy,
 	// its debounce and its selection. Plans' field is done with (an attach
@@ -1204,9 +1230,11 @@ func (a *app) openedPlan() {
 	a.show(openNotice(full+rel, "Opened ", rel))
 	a.glanceOnce() // a reload never comes through here
 	a.syncDrift()
-	_ = plan.UpdateState(a.statePath, now, func(s *plan.State) {
+	if plan.UpdateState(a.statePath, now, func(s *plan.State) {
 		s.Repos[a.plans.Repo] = plan.RepoState{Plan: path, Opened: float64(now.Unix())}
-	})
+	}) == nil && a.statePath != "" {
+		a.lastOpened(a.planFile(path, "")) // what a prompt hook now reads (docs/ux.md §7a)
+	}
 }
 
 // created says the plan you just made was written (docs/ux.md §6),
@@ -1426,7 +1454,7 @@ func (a *app) helpBody(width int) []LogLine {
 	if tall {
 		help = append(help, LogLine{Kind: "gap"})
 	}
-	a.health.refresh(time.Now())
+	a.health.refresh(a.now())
 	return append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now())...)
 }
 
@@ -1521,6 +1549,9 @@ func (a *app) syncPlanInput() bool {
 // mascot advances a frame.
 func (a *app) tick() bool {
 	changed := a.pollDoc()
+	if a.refreshSend() {
+		changed = true
+	}
 	if a.creditDue() {
 		changed = true
 	}

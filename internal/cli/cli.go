@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -328,7 +329,7 @@ var (
 	ingestFn = ingest
 )
 
-// ingestSafely runs one hook payload and prints what it returns in one
+// ingestSafely runs one hook payload, which prints what it prints in one
 // write, so nothing can leave half a reply. A hook's exit code is read by
 // the agent (2 means "block"), and a Go panic exits 2, so even a crash
 // here is reported on stderr and swallowed, and then nothing is printed.
@@ -342,24 +343,25 @@ func ingestSafely(stdin io.Reader, source, events string, stdout, stderr io.Writ
 			fmt.Fprintf(stderr, "rex: ingest crashed: %v\n", r)
 		}
 	}()
-	reply, err := ingestFn(stdin, source, events)
-	if err != nil {
+	if err := ingestFn(stdin, source, events, stdout); err != nil {
 		fmt.Fprintf(stderr, "rex: %v\n", err)
-	}
-	if len(reply) > 0 {
-		_, _ = stdout.Write(reply)
 	}
 }
 
-// ingest records a hook payload in the feed and returns what the hook
-// prints: the pin note, on a prompt hook that hands it to the agent
-// (watch.ContextEvent), found by the deadline; else nothing. The prompt's
-// event says what it carried (meta pin and pin_plan) only when the note
-// is printed. The OpenCode plugin asks for the note in a run of its own,
-// which records nothing, and gets what the note names with it; the
-// prompt's event it sends next says so (watch.SentPin), with no second
-// lookup.
-func ingest(stdin io.Reader, source, events string) ([]byte, error) {
+// ingest prints what a hook payload's hook prints and then records the
+// payload in the feed. It prints the pin note on a prompt hook that hands
+// it to the agent (watch.ContextEvent), found by the deadline, in one
+// write; else nothing. The prompt's event says what it carried (meta pin,
+// pin_plan, and pin_repo, the repo the note was looked up in) only once
+// the note is written to a harness that reads it (watch.NoteRead): one
+// whose build ignores it is told so (pin_unread), and a write that fails
+// leaves no stamp. With them goes where the note was looked up when the
+// payload names no folder (watch.PinOrigin), and a stamped prompt with no
+// text is still recorded (watch.NoText). The OpenCode plugin asks for the
+// note in a run of its own, which records nothing, and gets what the note
+// names with it; the prompt's event it sends next says so (watch.SentPin),
+// with no second lookup, and its repo from its own folder.
+func ingest(stdin io.Reader, source, events string, stdout io.Writer) error {
 	payloads := watch.PayloadsFromRaw(string(watch.ReadPayload(stdin)))
 	var reply []byte
 	var meta map[string]any
@@ -367,6 +369,9 @@ func ingest(stdin io.Reader, source, events string) ([]byte, error) {
 	at := -1
 	for i, p := range payloads {
 		if sent := watch.SentPin(p, source); sent != nil {
+			if cwd, _ := p["cwd"].(string); filepath.IsAbs(cwd) {
+				sent["pin_repo"], _ = plan.FindRepo(cwd)
+			}
 			at, meta = i, sent
 			break
 		}
@@ -374,7 +379,7 @@ func ingest(stdin io.Reader, source, events string) ([]byte, error) {
 		if event == "" {
 			continue
 		}
-		pin, note, err := lookPin(watch.ContextFolders(p, source), watch.IsSessionStart(event), pinBy())
+		pin, note, dir, err := lookPin(watch.ContextFolders(p, source), watch.IsSessionStart(event), pinBy())
 		crash = err
 		var carried map[string]any
 		if pin != nil {
@@ -384,9 +389,27 @@ func ingest(stdin io.Reader, source, events string) ([]byte, error) {
 			}
 		}
 		if reply = watch.ContextReply(source, event, note, carried); reply != nil {
-			at, meta = i, carried
+			at, meta = i, watch.PinOrigin(p, dir)
+			if meta == nil {
+				meta = map[string]any{}
+			}
+			if watch.NoteRead(p, source, event) {
+				for k, v := range carried {
+					meta[k] = v
+				}
+			} else {
+				meta["pin_unread"] = true
+			}
+			if pin.Repo != "" {
+				meta["pin_repo"] = pin.Repo
+			}
 		}
 		break // one note a run
+	}
+	if len(reply) > 0 {
+		if _, err := stdout.Write(reply); err != nil {
+			meta = nil // the harness never got it: no stamp says it did
+		}
 	}
 	err := watch.Record(payloads, source, events, func(i int) map[string]any {
 		if i == at {
@@ -394,21 +417,22 @@ func ingest(stdin io.Reader, source, events string) ([]byte, error) {
 		}
 		return nil
 	})
-	return reply, errors.Join(crash, err)
+	return errors.Join(crash, err)
 }
 
 // lookPin finds the pin for an agent working in dirs (best first) and
 // words its note, giving up at by: a slow disk costs the agent the note,
-// never its prompt. A crash in the lookup is an error and no note.
-func lookPin(dirs []string, session bool, by time.Time) (*plan.Pinned, string, error) {
+// never its prompt. It says which of dirs it looked in. A crash in the
+// lookup is an error and no note.
+func lookPin(dirs []string, session bool, by time.Time) (*plan.Pinned, string, string, error) {
 	wait := time.Until(by)
 	if wait <= 0 {
-		return nil, "", nil
+		return nil, "", "", nil
 	}
 	type found struct {
-		pin  *plan.Pinned
-		note string
-		err  error
+		pin       *plan.Pinned
+		note, dir string
+		err       error
 	}
 	got, find := make(chan found, 1), pinFn
 	go func() {
@@ -417,20 +441,21 @@ func lookPin(dirs []string, session bool, by time.Time) (*plan.Pinned, string, e
 				got <- found{err: fmt.Errorf("pin lookup crashed: %v", r)}
 			}
 		}()
-		pin := find(plan.PinFolder(dirs), plan.StatePath())
+		dir := plan.PinFolder(dirs)
+		pin := find(dir, plan.StatePath())
 		if pin == nil {
 			got <- found{}
 			return
 		}
-		got <- found{pin: pin, note: plan.PinNote(pin, session)}
+		got <- found{pin: pin, note: plan.PinNote(pin, session), dir: dir}
 	}()
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case f := <-got:
-		return f.pin, f.note, f.err
+		return f.pin, f.note, f.dir, f.err
 	case <-timer.C:
-		return nil, "", nil
+		return nil, "", "", nil
 	}
 }
 

@@ -359,15 +359,22 @@ func record(payloads []map[string]any, source, path string, stamp func(i int) ma
 	var written []Event
 	var first error
 	for i, payload := range payloads {
+		var extra map[string]any
+		if stamp != nil {
+			extra = stamp(i)
+		}
 		event := MapPayload(payload, source)
+		if (event == nil || strings.TrimSpace(event.Text) == "") && extra != nil && promptHook(payload, source) {
+			// A prompt with no text that carried the note still says so.
+			ev := NewEvent(DetectSource(payload, source), "user", NoText, nil)
+			event = &ev
+		}
 		if event == nil || strings.TrimSpace(event.Text) == "" {
 			continue
 		}
 		stampOrigin(event, payload)
-		if stamp != nil {
-			for k, v := range stamp(i) {
-				event.Meta[k] = v
-			}
+		for k, v := range extra {
+			event.Meta[k] = v
 		}
 		ok, err := AppendEvent(path, *event)
 		if err != nil && first == nil {

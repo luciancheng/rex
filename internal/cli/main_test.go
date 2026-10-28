@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("REX_TEST_CLOSED_STDOUT") != "" {
 		// TestIngestClosedStdoutExitsZero's child: a hook printing a note
 		// to a stdout whose reader is gone.
-		ingestFn = func(io.Reader, string, string) ([]byte, error) { return []byte("note\n"), nil }
+		ingestFn = func(_ io.Reader, _, _ string, out io.Writer) error { _, err := out.Write([]byte("note\n")); return err }
 		code = Main([]string{"ingest", "--source", "claude"}, strings.NewReader("{}"), os.Stdout, os.Stderr)
 		os.Stderr.WriteString("survived the write\n")
 	} else {

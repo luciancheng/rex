@@ -50,6 +50,7 @@ func TestCUJHumanPinAndDone(t *testing.T) {
 
 	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 80, 24)
 	a.now = c.now
+	wire(a, wired("claude")) // Claude Code's hooks, as rex ingest --install claude leaves them
 	k := &keys{a: a}
 	if row := a.plans.Rows[a.plans.Cursor]; a.at != atLibrary || row.Kind != PlanRowContinue || row.Path != path {
 		t.Fatalf("start is Plans, on Continue: %+v", row)
@@ -58,6 +59,11 @@ func TestCUJHumanPinAndDone(t *testing.T) {
 	k.spent(t, 1, "open last time's plan (enter on Continue)")
 	if a.at != atOutline || !a.follow || a.outline.sel != "card-highlight" {
 		t.Fatalf("Continue opens it, following, on its next up: sel=%q", a.outline.sel)
+	}
+	// Next up is never sent (docs/ux.md §7a); the title clips to keep the
+	// state beside it.
+	if got := textOf(a.frameRows().Rows[1], 80); got != sides("nothing pinned · next up card-highlight · Selected plan card is one…", "not sent", 80) {
+		t.Fatalf("row 1: %q", got)
 	}
 
 	// p: the pin is yours, written into the file at once.
@@ -74,8 +80,8 @@ func TestCUJHumanPinAndDone(t *testing.T) {
   "scope"`).Replace(planned); string(pinned) != want {
 		t.Fatalf("p writes the task and the plan active, nothing else:\n%s", pinned)
 	}
-	if got := a.context().Text; got != "pinned  card-highlight · Selected plan card is one block" {
-		t.Fatalf("row 1: %q", got)
+	if got := textOf(a.frameRows().Rows[1], 80); got != sides("pinned  card-highlight · Selected plan card is one blo…", "sends with next prompt", 80) {
+		t.Fatalf("row 1, the pin and its send state (docs/ux.md §4, §7a): %q", got)
 	}
 
 	// Your next prompt: Claude Code's UserPromptSubmit hook runs rex ingest,
@@ -102,6 +108,22 @@ func TestCUJHumanPinAndDone(t *testing.T) {
 		t.Fatalf("the prompt's event says so: %+v", evs)
 	}
 	a.ingest(evs)
+	k.spent(t, 0, "see that the pin went to your agent")
+	if got := textOf(a.frameRows().Rows[1], 80); got != sides("pinned  card-highlight · Selected plan card is one block", "sent with last prompt", 80) {
+		t.Fatalf("row 1 says the prompt carried it: %q", got)
+	}
+	k.press("\r")
+	if got := textOf(a.frameRows().Rows[1], 80); got != sides("task 2 of 3", "sent with last prompt", 80) {
+		t.Fatalf("and so does the pin's details' row 1: %q", got)
+	}
+	k.press("esc")
+	k.spent(t, 2, "the pin's details and back")
+	// AGENT, under the prompt, says what it carried.
+	press(a, "\t")
+	if body := screenText(a); !strings.Contains(body, "carry on with the plan\n") || !strings.Contains(body, "with pin card-highlight") {
+		t.Fatalf("AGENT: the prompt, with the pin it carried under it\n%s", body)
+	}
+	press(a, "\t")
 
 	// Your agent finishes the task: it re-reads the file, fills the
 	// completion fields and marks it done; Rex says it was your agent.
@@ -116,6 +138,9 @@ func TestCUJHumanPinAndDone(t *testing.T) {
 	k.spent(t, 0, "your agent marks it done")
 	if got := a.notice().Text; got != "Your agent finished card-highlight ✔ · next up load-outline" {
 		t.Fatalf("the notice: %q", got)
+	}
+	if got := a.sendState(); got != notSent {
+		t.Fatalf("nothing is pinned now, so nothing is sent: %q", got)
 	}
 	if !strings.HasPrefix(rowWith(a.frameRows(), "❯ ✔ card-highlight"), "❯ ✔ card-highlight") {
 		t.Fatalf("the cursor stays on it, done\n%s", screenText(a))

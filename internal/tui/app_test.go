@@ -78,7 +78,7 @@ func TestAToastAndAnOfferShowOnceTheAskClears(t *testing.T) {
       "depends_on": ["plans-ui"]`, `"status": "done",
       "depends_on": ["plans-ui"]`, 1)
 	os.WriteFile(path, []byte(done), 0o644)
-	later(a, c)
+	settled(a, c)
 	if _, k := a.noticeOf(); k != noticeNeeds {
 		t.Fatalf("the ask outranks the done toast and the offer: %v %q", k, a.notice().Text)
 	}
@@ -551,8 +551,8 @@ func TestAgentNeedsYouNotice(t *testing.T) {
 	body := func() string { r := rows(); return strings.Join(r[3:len(r)-2], "\n") }
 	before := body()
 	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"status": "pending"`, `"status": "skipped"`, 1)), 0o644)
-	later(a, c)
-	if noticeRow() != "" || !a.toastLive() || !strings.HasPrefix(a.toast.Text, "plan updated") {
+	settled(a, c)
+	if noticeRow() != "" || !a.toastLive() || !strings.HasPrefix(a.toast.Text, "The plan changed") {
 		t.Fatalf("a plan change waits for PLAN: %q %q", noticeRow(), a.toast.Text)
 	}
 	if body() != before || !strings.Contains(textOf(rows()[0], a.columns), "↓ ") {
@@ -564,11 +564,11 @@ func TestAgentNeedsYouNotice(t *testing.T) {
 		t.Fatal("a toast waits for PLAN however long AGENT is on screen")
 	}
 	press(a, "\t")
-	if got := noticeRow(); !strings.HasPrefix(got, "plan updated") {
+	if got := noticeRow(); !strings.HasPrefix(got, "The plan changed") {
 		t.Fatalf("back on PLAN the toast shows: %q", got)
 	}
 	c.t = c.t.Add(toastFor - time.Millisecond)
-	if a.tick(); !strings.HasPrefix(noticeRow(), "plan updated") {
+	if a.tick(); !strings.HasPrefix(noticeRow(), "The plan changed") {
 		t.Fatal("its time starts on PLAN")
 	}
 	c.t = c.t.Add(time.Millisecond)

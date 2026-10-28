@@ -1,7 +1,7 @@
 package tui
 
-// overlayKind is what covers a place's body: only Help now, since Rex has
-// no actions of its own to ask about (docs/ux.md §1).
+// overlayKind is what covers a place's body: only Help now. p and d act at
+// once, with no confirm: the same key undoes (docs/ux.md §1, §7b).
 type overlayKind int
 
 const (
@@ -34,6 +34,8 @@ type helpKey struct {
 var pageKeys = map[string][]helpKey{
 	"tasks": {
 		{name: "enter →", what: "the selected task's details"},
+		pinHelp,
+		doneHelp,
 		{name: "i", what: "about this plan: its goal, scope and progress"},
 		offerHelp,
 		{name: "↑↓", what: "move between tasks · pgup pgdn a page"},
@@ -56,6 +58,8 @@ var pageKeys = map[string][]helpKey{
 		{name: "esc ←", what: "back to Plans"},
 	},
 	"task": {
+		pinHelp,
+		doneHelp,
 		offerHelp,
 		{name: "↑↓", what: "scroll · pgup pgdn a page"},
 		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
@@ -99,6 +103,14 @@ var pageKeys = map[string][]helpKey{
 
 // offerHelp is o in THIS PAGE, on every page where it opens an offer.
 var offerHelp = helpKey{name: "o", what: "open the plan your agent wrote, while the notice row offers it"}
+
+// pinHelp and doneHelp are p and d in THIS PAGE, on the task list and a
+// task's details (docs/ux.md §7b): each writes the task's status into the
+// plan file, and the same key undoes it.
+var (
+	pinHelp  = helpKey{name: "p", what: "pin this task, or unpin the pin; your agent gets the pin with every prompt"}
+	doneHelp = helpKey{name: "d", what: "mark this task done, or reopen a done one"}
+)
 
 // helpLines is Help (docs/ux.md §13): THIS PAGE, for the page it opened over,
 // then what holds everywhere, the marks, how AGENT names its blocks,
@@ -150,7 +162,7 @@ func helpLines(width int, page string, tall bool) []LogLine {
 	})
 	section("MARKS", "", []helpKey{
 		{name: doneMark + " – !", what: "done · skipped · blocked; no mark: still to do"},
-		{what: "the task your agent set active, which it gets with every prompt", key: []Span{{Text: "pinned", Role: "accent"}}},
+		{what: "the task you (p) or your agent set active, which your agent gets with every prompt", key: []Span{{Text: "pinned", Role: "accent"}}},
 		{what: "nothing pinned: the task Rex would pin, never sent", key: []Span{{Text: "next up", Role: "muted"}}},
 		{what: "a second active task: a problem in the plan", key: []Span{{Text: "also active", Role: "error"}}},
 		{what: "a task in a loop: it waits on itself, or is its own parent", key: []Span{{Text: "cycle", Role: "error"}}},
@@ -176,7 +188,7 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{name: "/breakdance", what: "one dance"},
 	})
 	section("REX NEVER", "", nil)
-	for _, w := range wrap("runs or approves tools, edits a plan (it only creates an empty one you name on Plans), sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet), or reads transcripts. Your agent pins and finishes tasks in the plan file; Rex shows it.", max(8, width-2)) {
+	for _, w := range wrap("runs or approves tools, writes a plan beyond the status values you set with p and d and an empty one you name on Plans, sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet), or reads transcripts. You and your agent both pin and finish tasks in the plan file; Rex shows who did.", max(8, width-2)) {
 		lines = append(lines, LogLine{Kind: "text", Text: "  " + w})
 	}
 	return lines

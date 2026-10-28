@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,7 +67,11 @@ type app struct {
 	pageOver   bool      // the open plan's page with no list runs past the screen: ↑↓ scroll it
 	toast      StatusLine
 	toastUntil time.Time
-	toastWait  bool // raised while AGENT was on screen: its time starts on PLAN
+	toastWait  bool       // raised while AGENT was on screen: its time starts on PLAN
+	toastDone  bool       // the toast is done news, which a save that moves no task keeps up
+	unsaid     *docChange // a change read from the open plan, waiting to be credited (docs/ux.md §7b)
+	mine       *ownEdit   // Rex's last write to it, until the next reload says whether it held
+	late       *lateClaim // a change announced as the plan's that a late hook may still claim
 	now        func() time.Time
 	statePath  string
 	drift      driftState    // drift from the current pin, shown only
@@ -404,13 +409,17 @@ func (a *app) planView(width, viewH int) ([]LogLine, int) {
 }
 
 // planFooter is the footer for the open plan's screens (docs/ux.md §4):
-// on the task list ↑↓, enter details, i about, where esc goes, tab, ? help;
-// a page scrolls and esc goes back to the tasks. An offer is taken with o,
+// on the task list ↑↓, enter details, p and d (where they can write), i
+// about, where esc goes, tab, ? help; a page scrolls and esc goes back to
+// the tasks, a task's details with p and d too. An offer is taken with o,
 // which its notice names.
 func (a *app) planFooter() []FooterSeg {
 	tab := FooterSeg{Text: "tab agent"}
-	if a.at == atPlanDetail || a.at == atTaskDetail {
+	switch a.at {
+	case atPlanDetail:
 		return []FooterSeg{{Text: "↑↓ scroll"}, {Text: "esc tasks"}, tab, helpSeg}
+	case atTaskDetail:
+		return append(append([]FooterSeg{{Text: "↑↓ scroll"}}, a.statusSegs()...), FooterSeg{Text: "esc tasks"}, tab, helpSeg)
 	}
 	p := a.doc.plan
 	var scroll []FooterSeg
@@ -423,7 +432,8 @@ func (a *app) planFooter() []FooterSeg {
 	case len(p.Tasks) == 0:
 		return append(scroll, FooterSeg{Text: "i about"}, FooterSeg{Text: "esc plans"}, tab, helpSeg)
 	}
-	return []FooterSeg{{Text: "↑↓ select"}, {Text: "enter details"}, {Text: "i about"}, {Text: "esc plans"}, tab, helpSeg}
+	out := append([]FooterSeg{{Text: "↑↓ select"}, {Text: "enter details"}}, a.statusSegs()...)
+	return append(out, FooterSeg{Text: "i about"}, FooterSeg{Text: "esc plans"}, tab, helpSeg)
 }
 
 // preview says what enter will do with a /word on Plans, for the footer;
@@ -560,7 +570,7 @@ func (a *app) noticeOf() (StatusLine, noticeKind) {
 		return s, noticeDrift
 	}
 	if d := a.doc; d != nil && d.plan != nil && d.plan.ReadOnly != "" && a.at != atLibrary {
-		return StatusLine{Text: "read-only: " + d.plan.ReadOnly, Kind: "muted"}, noticeReadOnly
+		return StatusLine{Text: "Read-only: " + d.plan.ReadOnly + " · p and d are off", Kind: "muted"}, noticeReadOnly
 	}
 	return StatusLine{}, noticeNone
 }
@@ -592,7 +602,7 @@ func (a *app) flash(text, kind string) {
 
 // show puts s up as the toast.
 func (a *app) show(s StatusLine) {
-	a.toast = s
+	a.toast, a.toastDone = s, false
 	a.toastUntil = a.now().Add(toastFor)
 	a.toastWait = a.pane != PanePlans && s.Kind != "error"
 }
@@ -876,9 +886,10 @@ func (a *app) helpKey(key string) bool {
 func (a *app) applyKey(key string) bool {
 	if l := layoutFor(a.columns, a.lines); !l.typing && key != CtrlC && key != "\x0c" {
 		_, paste := IsPaste(key)
-		// ? opening Help, o opening an offer and i opening About type
-		// nothing, so they still work on a short screen.
-		edits := paste || (isPrintableKey(key) && !a.helpKey(key) && !a.offerKey(key) && !a.aboutKey(key)) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
+		// ? opening Help, o opening an offer, i opening About, and p and d
+		// writing a task's status type nothing, so they still work on a
+		// short screen.
+		edits := paste || (isPrintableKey(key) && !a.helpKey(key) && !a.offerKey(key) && !a.aboutKey(key) && !a.statusKey(key)) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
 		submits := (key == "\r" || key == "\n") && a.draft != "" && a.composing()
 		if l.locked || edits || submits {
 			// The UI isn't visible (locked), or the text field isn't: nothing
@@ -942,6 +953,9 @@ func (a *app) handleKeyArmed(key string) bool {
 	}
 	if a.aboutKey(key) {
 		return a.openAbout()
+	}
+	if a.statusKey(key) {
+		return a.writeStatus(key)
 	}
 	text, paste := IsPaste(key)
 	if !a.composing() {
@@ -1169,8 +1183,12 @@ func (a *app) openedPlan() {
 	now := a.now()
 	if a.doc == nil || !samePlan(a.doc.path, path) {
 		a.doc = openDoc(path, now)
+		if _, err := os.Stat(path); err == nil && a.planFile(path, "") == "" {
+			a.doc.outside = true
+		}
 		a.outline = outlineView{sel: defaultSel(a.doc.plan)}
 		a.toast = StatusLine{} // the last plan's news isn't this one's
+		a.unsaid, a.mine, a.late = nil, nil, nil
 	}
 	a.plans.showDoc(a.doc)
 	// Reopening the plan already open (Continue) keeps its last good copy,
@@ -1319,56 +1337,22 @@ func (a *app) toLibrary() bool {
 	return true
 }
 
-// pollDoc re-reads the open plan. An edit keeps the selection, shows a
-// toast, and leaves one "plan" line on AGENT. The agent pins
-// and finishes tasks this way: when the file marks the pin done, the
-// toast says so and names what is next up (docs/ux.md §7, §8).
-func (a *app) pollDoc() bool {
-	if a.doc == nil {
-		return false
-	}
-	var was *plan.Task
-	if a.doc.plan != nil {
-		was = a.doc.plan.Graph().Pin()
-	}
-	changed, news := a.doc.poll(a.now())
-	if !changed {
-		return false
-	}
-	a.plans.showDoc(a.doc)
-	if a.at == atLibrary {
-		a.plans.Rebuild() // Continue's card follows what the task list shows
-	}
-	if a.at != atTaskDetail {
-		// An agent that fills an empty plan lands the cursor on its pin, as
-		// an open does (docs/ux.md §1).
-		a.outline.keepSel(a.doc.plan)
-	}
-	a.rejudgeDrift()
-	if news.text == "" {
-		return true
-	}
-	a.tapeLine("plan", news.text)
-	if done := doneToast(was, a.doc.plan); done.Text != "" {
-		a.show(done)
-		return true
-	}
-	if !news.tasks && strings.HasPrefix(a.toast.Text, doneMark+" ") && a.toastLive() {
-		// The agent finishes a task in several saves (its retrospective,
-		// the plan's own status): the done news stays (docs/ux.md §8).
-		return true
-	}
-	a.flash("plan updated · "+news.text, "text")
-	return true
-}
+// pollDoc re-reads the open plan on the poll's clock. An edit keeps the
+// selection, and once it is credited (readDoc, announce) shows a notice
+// and leaves one "plan" line on AGENT. The agent pins and finishes tasks
+// this way, and so does anyone editing the file: when the file marks the
+// pin done, the notice says so and names what is next up (docs/ux.md §7b,
+// §7, §8).
+func (a *app) pollDoc() bool { return a.readDoc(false) }
 
-// reloadDoc re-reads the open plan now, without waiting for the next poll.
+// reloadDoc re-reads the open plan now, without waiting for the next poll:
+// your agent just saved it, so the change is your agent's.
 func (a *app) reloadDoc() bool {
 	if a.doc == nil {
 		return false
 	}
 	a.doc.polled = time.Time{}
-	return a.pollDoc()
+	return a.readDoc(true)
 }
 
 // doneToast is the notice row's news when the file marks the old pin done: what is
@@ -1537,11 +1521,14 @@ func (a *app) syncPlanInput() bool {
 // mascot advances a frame.
 func (a *app) tick() bool {
 	changed := a.pollDoc()
+	if a.creditDue() {
+		changed = true
+	}
 	if a.scanPlans() {
 		changed = true
 	}
 	if a.toast.Text != "" && !a.toastLive() {
-		a.toast = StatusLine{}
+		a.toast, a.toastDone = StatusLine{}, false
 		changed = true
 	}
 	if a.quitPending {

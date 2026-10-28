@@ -15,13 +15,17 @@ import (
 )
 
 // planDoc is the open plan file: the last good read, and what is on disk
-// now. Rex never writes it; it re-reads the file every docPollEvery and
-// notices a change by content hash (docs/ux.md §6).
+// now. It re-reads the file every docPollEvery and notices a change by
+// content hash (docs/ux.md §6); Rex writes it only on p and d (took).
 type planDoc struct {
 	path string
 	plan *plan.Plan // last good read; nil until the file has parsed once
 	hash string     // the bytes on disk at the last read
 	good string     // hash of the bytes behind plan
+	own  string     // hash of the bytes Rex last wrote (docs/ux.md §7b)
+	// outside: the file's links lead out of rex/plans, so p and d never
+	// write it (plan.Jail); set when it opens.
+	outside bool
 
 	bad      string // why the bytes on disk don't parse, not yet shown
 	badPolls int
@@ -86,7 +90,18 @@ func (d *planDoc) read(now time.Time, first bool) (changed bool, news planNews) 
 		// nothing to announce.
 		return true, planNews{}
 	}
-	return true, planChanges(old, p)
+	news = planChanges(old, p)
+	news.own = h == d.own
+	return true, news
+}
+
+// took is a write Rex just made (docs/ux.md §7b): its bytes are the plan
+// now, with no poll's wait, and a reload that finds them again is Rex's
+// own.
+func (d *planDoc) took(saved *plan.Saved) {
+	d.own = plan.Hash(saved.Data)
+	d.hash, d.good, d.plan = d.own, d.own, saved.Plan
+	d.bad, d.badPolls, d.err, d.gone = "", 0, "", false
 }
 
 func (d *planDoc) poll(now time.Time) (bool, planNews) {
@@ -97,11 +112,15 @@ func (d *planDoc) poll(now time.Time) (bool, planNews) {
 }
 
 // planNews is what an edit of the plan changed: text sums it up for the
-// toast and AGENT ("" when nothing was announced), and tasks says a
-// task's status moved or a task came or went.
+// notice and AGENT ("" when nothing was announced); tasks says a task's
+// status moved or a task came or went, added how many came, and moved
+// that a task moved or went; own that the bytes are Rex's own last write.
 type planNews struct {
 	text  string
 	tasks bool
+	added int
+	moved bool
+	own   bool
 }
 
 // planChanges sums up an edit of the file: task status moves, the plan's
@@ -150,7 +169,7 @@ func planChanges(old, now *plan.Plan) planNews {
 	if removed > 0 {
 		parts = append(parts, plural(removed, "−%d task", "−%d tasks"))
 	}
-	news := planNews{text: "edited", tasks: moved+added+removed > 0}
+	news := planNews{text: "edited", tasks: moved+added+removed > 0, added: added, moved: moved+removed > 0}
 	if len(parts) > 0 {
 		news.text = strings.Join(parts, " · ")
 	}
@@ -836,8 +855,8 @@ func (b *defList) heading(title string, notes ...string) {
 }
 
 // notePinned is the line under a task's title (docs/ux.md §6): whether
-// your agent gets its fields. Only the agent's pin of a plan Rex may
-// send reaches it (§7a).
+// your agent gets its fields, and if not, how to send them: only the pin
+// of a plan Rex may send reaches it (§7a), and p pins it (§7).
 func notePinned(t, pin *plan.Task, p *plan.Plan) string {
 	switch {
 	case p.ReadOnly != "":
@@ -845,7 +864,7 @@ func notePinned(t, pin *plan.Task, p *plan.Plan) string {
 	case t == pin && t.Status == plan.Active:
 		return "Your agent gets these fields with every prompt."
 	}
-	return "Once this task is pinned, your agent gets these fields with every prompt."
+	return "Pin it (p) and your agent gets these fields with every prompt."
 }
 
 // noteCap is the pin note's size, as the page that leaves fields out for
@@ -1093,7 +1112,7 @@ func docStatus(d *planDoc) (StatusLine, bool) {
 // else what Rex would pin next, which is never sent, nor yellow; else why
 // nothing is pinned. Narrow, the title clips, and with fewer than
 // pinTitleMin cells of it the line is the id alone. The agent writes the
-// pin; Rex only shows it (docs/ux.md §7).
+// pin, or you do with p (docs/ux.md §7).
 func pinStatus(p *plan.Plan) StatusLine {
 	muted := func(text string) StatusLine { return StatusLine{Text: text, Kind: "muted"} }
 	if p == nil {

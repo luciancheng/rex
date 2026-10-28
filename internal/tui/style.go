@@ -514,8 +514,9 @@ func segs(texts ...string) []FooterSeg {
 var helpSeg = FooterSeg{Text: "? help"}
 
 // footerRank is which segments the footer keeps longest, by key (docs/ux.md
-// §4), after ? help: enter, esc, tab, ↑↓, typing, then a scroll's ends.
-var footerRank = map[string]int{"ctrl+c": 1, "enter": 2, "esc": 3, "tab": 4, "↑↓": 5, "type": 6, "end": 7, "home": 8}
+// §4), after ? help: enter, p, esc, tab, d, ↑↓, typing, then a scroll's
+// ends; i about and anything else go first.
+var footerRank = map[string]int{"ctrl+c": 1, "enter": 2, "p": 3, "esc": 4, "tab": 5, "d": 6, "↑↓": 7, "type": 8, "end": 9, "home": 10}
 
 func (s FooterSeg) rank() int {
 	if s.Rank != 0 {

@@ -7,7 +7,7 @@ description: 'Write, fill or work a Rex plan file (rex/plans/**/*.rex.json), the
 
 # Rex plans
 
-A Rex plan is one unit of work (a feature, a fix, a migration) saved as JSON at `rex/plans/<name>.rex.json` in the repo, committed with the code. Rex attaches to the plan file you write and shows it live as an outline beside what the agent is doing, with the task you are on pinned. You write the plan, its statuses and its completion fields; Rex only reads the file. Rex has no actions of its own: never tell the person to create, open, pin or mark anything done in Rex. Before each prompt Rex may add a short note that names the task pinned in the plan (see Rex notes); the plan file is still how a new chat picks up the work.
+A Rex plan is one unit of work (a feature, a fix, a migration) saved as JSON at `rex/plans/<name>.rex.json` in the repo, committed with the code. Rex attaches to the plan file you write and shows it live as an outline beside what the agent is doing, with the task you are on pinned. You write the plan, its statuses and its completion fields. The person can also create a plan, pin a task (`p`) or mark one done (`d`) in Rex. Rex writes only `status` values (and an empty new plan), the same ones you write; re-read the file and treat it as the truth. Before each prompt Rex may add a short note that names the task pinned in the plan (see Rex notes); the plan file is still how a new chat picks up the work.
 
 The format is frozen at `"version": 1`; the full contract is `docs/plan-format.md` in the Rex repo.
 
@@ -102,6 +102,7 @@ When you are asked to work, continue or pick up a plan, or a task of one, the pl
 
 - **Which plan.** The one the person names, else the plan a Rex note names. If neither names one: the plan you wrote or worked in this conversation; else the plan under `rex/plans/` whose top-level `status` is `active` (the most recently modified, if several are); else ask.
 - **The current task** is the leaf task with `"status": "active"`. If none is, it is the first `pending` leaf, in file order, whose `depends_on` are all met (`done` or `skipped`; a parent once its leaves are). If the person names a task, that one. Work only on it, stay inside its scope and out of the plan's `scope.out`, and if the plan is wrong, edit the JSON rather than working around it.
+- **The person moves the pin too.** If the active leaf changed since your last turn, the person moved the pin: say which task you are on now.
 - **Starting a task.** Set that leaf's `status` to `active`, set any other `active` leaf to `pending`, and set the plan's own `status` to `active` if it was `pending` or `done`. Never write a parent's status. Save this first, before any other edit: Rex shows the change at once, which is how the person sees what you are on, and judges each edit against the pinned task.
 - **Finishing a task.** Once its work is done and checked (and, in a stack, its PR is open), fill its completion fields:
   - `accomplished`: what actually happened (a retrospective, not a copy of `does`);
@@ -110,6 +111,7 @@ When you are asked to work, continue or pick up a plan, or a task of one, the pl
   - `completed_notes`: anything the next chat should know.
 
   Then set its `status` to `done`, in the same save if you can. Leave `branch` as it is: the next task finds the PR below by it. If every leaf task is now `done` or `skipped`, then set the plan's own top-level `status` to `done`; parent tasks don't need a status of their own. Then stop and report. Start the next task only when the person asks: each task is one PR.
+- **Done in Rex.** A task the person marked done in Rex may have no completion fields. Fill them when asked, and never set it back to pending or active without saying so.
 - **Editing the file.** Edit only the members you change, inside the task objects you change (plus the plan's own `status`), keep every other byte as it is, never reformat the file, and never mark a task done that you did not finish.
 
 ### Rex notes

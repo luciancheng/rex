@@ -549,7 +549,7 @@ func TestNoticePriorityAndExpiry(t *testing.T) {
 	a, c, path := openDemo(t, src, 120, 32)
 	kind := func() noticeKind { _, k := a.noticeOf(); return k }
 	text := func() string { return a.notice().Text }
-	if kind() != noticeReadOnly || !strings.HasPrefix(text(), "read-only: ") {
+	if kind() != noticeReadOnly || !strings.HasPrefix(text(), "Read-only: ") {
 		t.Fatalf("a read-only plan: %v %q", kind(), text())
 	}
 	a.ingest([]watch.Event{edit(a, c, time.Second, "README.md")})
@@ -562,8 +562,8 @@ func TestNoticePriorityAndExpiry(t *testing.T) {
 		t.Fatalf("an offer outranks hard drift: %v %q", kind(), text())
 	}
 	os.WriteFile(path, []byte(strings.Replace(src, `"title": "Outline"`, `"title": "Outline, again"`, 1)), 0o644)
-	later(a, c)
-	if kind() != noticeToast || !strings.HasPrefix(text(), "plan updated") {
+	settled(a, c)
+	if kind() != noticeToast || !strings.HasPrefix(text(), "The plan changed") {
 		t.Fatalf("a toast outranks the offer: %v %q", kind(), text())
 	}
 	a.ingest([]watch.Event{{Source: "claude", Kind: "question", Text: "Which file?"}})
@@ -579,7 +579,7 @@ func TestNoticePriorityAndExpiry(t *testing.T) {
 	// Unwound: each holds while it applies, and the toast expires on the
 	// clock, from when it was raised.
 	os.WriteFile(path, []byte(src), 0o644)
-	later(a, c)
+	settled(a, c)
 	if kind() != noticeNeeds {
 		t.Fatalf("the plan reads again: %v %q", kind(), text())
 	}
@@ -622,13 +622,13 @@ func TestNoticeTakesRowOneUnder12Rows(t *testing.T) {
 		t.Fatalf("12 rows, nothing to say: row 1 %q, notice row %q", textOf(r[1], 38), textOf(r[10], 38))
 	}
 	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"Outline view"`, `"Outline view, again"`, 1)), 0o644)
-	later(a, c)
-	if r := a.frameRows().Rows; textOf(r[1], 38) != pin || !strings.HasPrefix(textOf(r[10], 38), "plan updated") {
+	settled(a, c)
+	if r := a.frameRows().Rows; textOf(r[1], 38) != pin || !strings.HasPrefix(textOf(r[10], 38), "The plan changed") {
 		t.Fatalf("12 rows: the notice row: %q", textOf(r[10], 38))
 	}
 	a.settle(38, 11)
 	r := a.frameRows().Rows
-	if !strings.HasPrefix(textOf(r[1], 38), "plan updated") || !strings.HasPrefix(textOf(r[10], 38), "enter details") {
+	if !strings.HasPrefix(textOf(r[1], 38), "The plan changed") || !strings.HasPrefix(textOf(r[10], 38), "enter details") {
 		t.Fatalf("11 rows: the notice takes row 1, the footer stays: %q / %q", textOf(r[1], 38), textOf(r[10], 38))
 	}
 	c.t = c.t.Add(toastFor)
@@ -934,7 +934,7 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 		{"agent", func(a *app) { press(a, "\t"); scrolls(a) }},
 		{"agent", func(a *app) { latched(a); press(a, "\t"); scrolls(a); offered(a) }},
 	}
-	words := map[string]string{"up": "↑↓", "down": "↑↓", "pageup": "pgup", "pagedown": "pgdn", "home": "home", "end": "end", "left": "←", "right": "→", "esc": "esc", "\r": "enter", "i": "i"}
+	words := map[string]string{"up": "↑↓", "down": "↑↓", "pageup": "pgup", "pagedown": "pgdn", "home": "home", "end": "end", "left": "←", "right": "→", "esc": "esc", "\r": "enter", "i": "i", "p": "p", "d": "d"}
 	opposite := map[string]string{"up": "down", "down": "up", "pageup": "pagedown", "pagedown": "pageup", "home": "end", "end": "home"}
 	for _, size := range [][2]int{{24, 7}, {80, 12}, {120, 32}} {
 		for _, pg := range pages {
@@ -1000,7 +1000,7 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 				t.Errorf("%d×%d %s: o opens the offer, but THIS PAGE doesn't say %q\n%s", size[0], size[1], pg.page, offerHelp.what, text)
 			}
 			for key, word := range words {
-				if listed[word] || key == "i" && listed["type"] { // a letter types where the page takes typing
+				if listed[word] || len(key) == 1 && key >= "a" && key <= "z" && listed["type"] { // a letter types where the page takes typing
 					continue
 				}
 				o, ok := opposite[key]
@@ -1078,8 +1078,13 @@ func TestFootersPinned(t *testing.T) {
 	home := want{"enter open · ? help", "enter open · tab agent · ? help", "↑↓ select · enter open · tab agent · ? help", "↑↓ select · enter open · type to find · tab agent · ? help"}
 	create := want{"enter create · ? help", "enter create · tab agent · ? help", "↑↓ select · enter create · tab agent · ? help", "↑↓ select · enter create · type to find · tab agent · ? help"}
 	browse := want{"enter browse · ? help", "enter browse · tab agent · ? help", "↑↓ select · enter browse · tab agent · ? help", "↑↓ select · enter browse · type to find · tab agent · ? help"}
-	tasks := want{"enter details · ? help", "enter details · esc plans · ? help", "↑↓ select · enter details · esc plans · tab agent · ? help", "↑↓ select · enter details · i about · esc plans · tab agent · ? help"}
-	detail := want{"esc tasks · ? help", "esc tasks · tab agent · ? help", "↑↓ scroll · esc tasks · tab agent · ? help", "↑↓ scroll · esc tasks · tab agent · ? help"}
+	// The task list and a task's details give p a high rank and d a middle
+	// one, each fitted by its longer verb (docs/ux.md §4): on the pin, p
+	// unpins; on a done task, d reopens.
+	tasks := want{"enter details · ? help", "enter details · p unpin · ? help", "enter details · p unpin · esc plans · tab agent · ? help", "enter details · p unpin · d done · esc plans · tab agent · ? help"}
+	tasksDone := want{"enter details · ? help", "enter details · p pin · ? help", "enter details · p pin · esc plans · tab agent · ? help", "enter details · p pin · d reopen · esc plans · tab agent · ? help"}
+	detail := want{"p unpin · ? help", "p unpin · esc tasks · ? help", "p unpin · d done · esc tasks · tab agent · ? help", "↑↓ scroll · p unpin · d done · esc tasks · tab agent · ? help"}
+	about := want{"esc tasks · ? help", "esc tasks · tab agent · ? help", "↑↓ scroll · esc tasks · tab agent · ? help", "↑↓ scroll · esc tasks · tab agent · ? help"}
 	agent := want{"tab plan · ? help", "↑↓ scroll · tab plan · ? help", "↑↓ scroll · home oldest · end live · tab plan · ? help", "↑↓ scroll · home oldest · end live · tab plan · ? help"}
 	for _, tc := range []struct {
 		name  string
@@ -1109,11 +1114,15 @@ func TestFootersPinned(t *testing.T) {
 		{"new plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r") }, want{"enter create · ? help", "enter create · esc cancel · ? help", "enter create · esc cancel · tab agent · ? help", "enter create · esc cancel · tab agent · ? help"}},
 		{"new plan, named", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x") }, want{"enter create", "enter create · esc cancel · tab agent", "enter create · esc cancel · tab agent", "enter create · esc cancel · tab agent"}},
 		{"tasks", func(a *app) {}, tasks},
-		{"tasks, a done task", func(a *app) { press(a, "home") }, tasks},
+		{"tasks, a done task", func(a *app) { press(a, "home") }, tasksDone},
+		{"tasks, read-only", func(a *app) {
+			os.WriteFile(a.plans.Current, []byte(strings.Replace(demoPlan, `"version": 1`, `"version": 2`, 1)), 0o644)
+			a.reloadDoc()
+		}, want{"enter details · ? help", "enter details · esc plans · ? help", "↑↓ select · enter details · esc plans · tab agent · ? help", "↑↓ select · enter details · i about · esc plans · tab agent · ? help"}},
 		{"tasks, offer", func(a *app) { latched(a); press(a, "esc"); typeText(a, "sendoff"); press(a, "\r"); offered(a) }, tasks},
 		{"tasks, none yet", latched, want{"esc plans · ? help", "esc plans · tab agent · ? help", "i about · esc plans · tab agent · ? help", "i about · esc plans · tab agent · ? help"}},
 		{"task detail", func(a *app) { press(a, "\r") }, detail},
-		{"about", func(a *app) { press(a, "i") }, detail},
+		{"about", func(a *app) { press(a, "i") }, about},
 		{"detail, offer", func(a *app) { latched(a); press(a, "esc"); typeText(a, "sendoff"); press(a, "\r", "\r"); offered(a) }, detail},
 		{"agent", func(a *app) { press(a, "\t"); a.ingest([]watch.Event{watch.NewEvent("claude", "text", "done", nil)}) }, agent},
 		{"agent, scrolled", scrolled, agent},

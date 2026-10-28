@@ -57,9 +57,10 @@ func TestSkillNamesEveryField(t *testing.T) {
 	}
 }
 
-// The agent drives the plan and Rex only shows it (docs/ux.md §7, §8, §9):
-// the skill teaches which plan and task to work, how to start and finish a
-// task in the file, and never sends the person to Rex to act or to paste.
+// The agent works the plan from the file (docs/ux.md §7, §7b, §8, §9): the
+// skill teaches which plan and task to work, how to start and finish a
+// task in the file, that the person can pin and finish tasks in Rex too
+// (only status values), and never sends the person to Rex to paste.
 func TestTheSkillHasTheAgentWorkThePlan(t *testing.T) {
 	s := string(RexPlan)
 	for _, want := range []string{
@@ -70,7 +71,9 @@ func TestTheSkillHasTheAgentWorkThePlan(t *testing.T) {
 		"**Finishing a task.**", "set the plan's own top-level `status` to `done`", "Then stop and report",
 		"fill its completion fields", "Then set its `status` to `done`, in the same save if you can",
 		"inside the task objects you change (plus the plan's own `status`)", "keep every other byte", "never mark a task done that you did not finish",
-		"Rex has no actions of its own: never tell the person to create, open, pin or mark anything done in Rex",
+		"The person can also create a plan, pin a task (`p`) or mark one done (`d`) in Rex. Rex writes only `status` values (and an empty new plan), the same ones you write; re-read the file and treat it as the truth.",
+		"If the active leaf changed since your last turn, the person moved the pin: say which task you are on now.",
+		"A task the person marked done in Rex may have no completion fields. Fill them when asked, and never set it back to pending or active without saying so.",
 		"### Its PR, when the plan is a stack", "nearest earlier leaf task that is `done`", "later leaves that are `done`",
 		"### Rex notes", "a note that starts with `Rex note`", "While a task is pinned it is the current task", "stay inside its files and scope",
 		"run its verify list before calling it done", "say so and ask first", "If a note and the file disagree, the file wins", "notes from earlier in the conversation are out of date",
@@ -83,7 +86,7 @@ func TestTheSkillHasTheAgentWorkThePlan(t *testing.T) {
 	}
 	// Starting a task demotes another task's active leaf, so edits are
 	// never confined to one task's object.
-	for _, never := range []string{"rex-sendoff", "send-off", "sendoff", "trailer", "d⏎", "p⏎", "s⏎", "b⏎", "paste", "inside that task's object", "rex never sends you anything"} {
+	for _, never := range []string{"rex-sendoff", "send-off", "sendoff", "trailer", "d⏎", "p⏎", "s⏎", "b⏎", "paste", "inside that task's object", "rex never sends you anything", "rex has no actions", "rex only reads the file"} {
 		if strings.Contains(strings.ToLower(s), never) {
 			t.Errorf("the skill still speaks of %q", never)
 		}

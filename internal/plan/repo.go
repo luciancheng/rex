@@ -80,8 +80,11 @@ type File struct {
 
 // Files lists the plan files under root in lexical order. Only regular
 // files (or symlinks to one) are plans: a FIFO or a device named
-// *.rex.json would hang the reads that follow.
+// *.rex.json would hang the reads that follow. A symlink counts only when
+// it leads to a plan file under root (Within), as the jail judges one: a
+// link out of rex/plans leads nowhere.
 func Files(root string) (files []File) {
+	scope := watch.NewScope(root)
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !IsFile(d.Name()) {
 			return nil
@@ -90,8 +93,20 @@ func Files(root string) (files []File) {
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		files = append(files, File{Path: p, Info: info, Link: d.Type()&fs.ModeSymlink != 0})
+		link := d.Type()&fs.ModeSymlink != 0
+		if rel, in := scope.Rel(p); link && (!in || !IsFile(path.Base(rel))) {
+			return nil
+		}
+		files = append(files, File{Path: p, Info: info, Link: link})
 		return nil
 	})
 	return files
+}
+
+// Within is p as a path under root once both are cleaned and their
+// symlinks resolved, and whether it is one: where a link in rex/plans
+// leads, judged as Jail judges it.
+func Within(root, p string) (rel string, ok bool) {
+	rel, in := watch.NewScope(root).Rel(p)
+	return rel, in && rel != "." && filepath.IsAbs(p)
 }

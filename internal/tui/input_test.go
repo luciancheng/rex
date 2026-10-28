@@ -372,10 +372,12 @@ func TestCtrlCClosesHelp(t *testing.T) {
 	}
 }
 
-// docs/ux.md §2, §3: the task list, both pages, the tape and the wait
-// screen have no composer. Letters (the old verbs too) and a paste change
-// nothing and write nothing, neither the plan nor ~/.rex/state.json; ? opens
-// Help at once; Esc, Tab and enter do what §3 says.
+// docs/ux.md §2, §3: the task list, both pages and the tape have no
+// composer. Letters that aren't a key there (the old verbs s and b too; p
+// and d on About and the tape) and a paste change nothing and write
+// nothing, neither the plan nor ~/.rex/state.json; ? opens Help at once;
+// Esc, Tab and enter do what §3 says. p and d, which write a status on the
+// task list and a task's details, have tests of their own (write_test.go).
 func TestComposerLessScreensIgnoreTyping(t *testing.T) {
 	type screen struct {
 		name  string
@@ -395,7 +397,11 @@ func TestComposerLessScreensIgnoreTyping(t *testing.T) {
 		state, _ := os.ReadFile(a.statePath)
 		stateInfo, _ := os.Stat(a.statePath)
 		frame := a.frame()
-		typeText(a, "pdsbx")
+		letters := "sbxzq"
+		if s.at == atPlanDetail || s.pane == PaneChat {
+			letters = "pdsbxzq"
+		}
+		typeText(a, letters)
 		press(a, PastePrefix+"pin load-outline", "\x7f", "\x15", "\x17")
 		if a.frame() != frame || a.draft != "" || a.at != s.at || a.pane != s.pane {
 			t.Fatalf("%s: something changed: draft %q at %d\n%s", s.name, a.draft, a.at, a.frame())

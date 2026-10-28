@@ -291,7 +291,7 @@ func (b *PlanBrowser) Rebuild() {
 	}
 	switch {
 	case b.Screen == ScreenBrowse:
-		b.Rows, b.findMore = buildBrowseRows(b.Dir, b.Filter), 0
+		b.Rows, b.findMore = buildBrowseRows(b.Root, b.Dir, b.Filter), 0
 	case b.Screen == ScreenHome && b.Find != "":
 		b.Rows, b.findMore = b.findRows(all)
 	default:
@@ -1052,8 +1052,10 @@ func findKey(find string) string {
 
 // buildBrowseRows lists one folder in Open a plan (docs/ux.md §11): its
 // folders, then its plans, each by name. Hidden folders, and files that
-// aren't plans, are left out; a filter narrows both by name.
-func buildBrowseRows(dir, filter string) []PlanRow {
+// aren't plans, are left out; a filter narrows both by name. A symlink is
+// listed only where it leads under root, rex/plans (plan.Within): a link
+// out leads nowhere.
+func buildBrowseRows(root, dir, filter string) []PlanRow {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -1068,6 +1070,7 @@ func buildBrowseRows(dir, filter string) []PlanRow {
 		path := filepath.Join(dir, name)
 		switch info, err := os.Stat(path); {
 		case err != nil:
+		case ent.Type()&fs.ModeSymlink != 0 && !linksIn(root, path, info):
 		case info.IsDir():
 			dirs = append(dirs, PlanRow{Kind: PlanRowDir, Name: name, Path: path})
 		case plan.IsFile(name) && info.Mode().IsRegular():
@@ -1079,6 +1082,13 @@ func buildBrowseRows(dir, filter string) []PlanRow {
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
 	sort.Slice(plans, func(i, j int) bool { return plans[i].Name < plans[j].Name })
 	return append(dirs, plans...)
+}
+
+// linksIn reports that the symlink at path, whose target info is, leads
+// under root: to a folder, or to a plan file.
+func linksIn(root, path string, info os.FileInfo) bool {
+	rel, in := plan.Within(root, path)
+	return in && (info.IsDir() || plan.IsFile(filepath.Base(filepath.FromSlash(rel))))
 }
 
 // fieldLabel is the text field's title on this screen (docs/ux.md §2).

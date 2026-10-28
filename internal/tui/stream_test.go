@@ -358,7 +358,7 @@ func TestRexLines(t *testing.T) {
 	// From the app: a reload's line and an attach's.
 	a, c, path := openDemo(t, demoPlan, 120, 32)
 	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"status": "pending"`, `"status": "skipped"`, 1)), 0o644)
-	later(a, c)
+	settled(a, c)
 	tape := viewText(a.logView(78))
 	if !strings.Contains(tape, "rex › plan · ") || strings.Contains(tape, "(file)") {
 		t.Fatalf("a reload's line\n%s", tape)

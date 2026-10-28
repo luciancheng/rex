@@ -91,6 +91,14 @@ func later(a *app, c *clock) {
 	a.tick()
 }
 
+// settled is later, then past creditWait: a change the poll read that no
+// agent's write claimed is announced as the plan's (docs/ux.md §7b).
+func settled(a *app, c *clock) {
+	later(a, c)
+	c.t = c.t.Add(creditWait)
+	a.tick()
+}
+
 // docs/ux.md §4, §6: row 0 names the plan, its progress and (picked in
 // the list, latched) no follow word; row 1 is the pin line; the body is
 
@@ -221,7 +229,7 @@ func TestTaskListAtAGlance(t *testing.T) {
 	if got := trimmed(planBody(a)); got != want {
 		t.Errorf("the body is the list and nothing else:\n%s\nwant\n%s", got, want)
 	}
-	if got := textOf(rows[23], 80); got != "↑↓ select · enter details · i about · esc plans · tab agent · ? help" {
+	if got := textOf(rows[23], 80); got != "↑↓ select · enter details · p unpin · d done · esc plans · tab agent · ? help" {
 		t.Errorf("footer %q", got)
 	}
 	if a.outline.sel != "page-titles" {
@@ -702,7 +710,7 @@ func TestTaskDetails(t *testing.T) {
 	if r0, r1 := rows(); r0 != sides("Rex visual redesign › agent-stream", "pending   plan · agent", 80) || r1 != "task 3 of 8" {
 		t.Errorf("a pending task's rows 0 and 1: %q / %q", r0, r1)
 	}
-	if body := planBody(a); !strings.Contains(body, "  Once this task is pinned, your agent gets these fields with every prompt.\n  Does          One row per run of thoughts on the Agent tab\n  Waits on      page-titles (not done)\n") {
+	if body := planBody(a); !strings.Contains(body, "  Pin it (p) and your agent gets these fields with every prompt.\n  Does          One row per run of thoughts on the Agent tab\n  Waits on      page-titles (not done)\n") {
 		t.Errorf("a pending task's details\n%s", body)
 	}
 	press(a, "esc", "home", "\r")
@@ -762,7 +770,7 @@ func TestTaskDetails(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Join(intro, " "); got != "Once this task is pinned, your agent gets these fields with every prompt." {
+	if got := strings.Join(intro, " "); got != "Pin it (p) and your agent gets these fields with every prompt." {
 		t.Errorf("40 cells: the line under the title, wrapped: %q", intro)
 	}
 }
@@ -984,9 +992,9 @@ func TestOutlineReloadsOutsideEdits(t *testing.T) {
   ]
 }`, 1)
 	os.WriteFile(path, []byte(edited), 0o644)
-	later(a, c)
+	settled(a, c)
 	line := a.statusLine().Text
-	if line != "plan updated · load-outline → skipped · +1 task" {
+	if line != "The plan changed · load-outline → skipped · +1 task" {
 		t.Fatalf("toast %q", line)
 	}
 	if a.outline.sel != "load-outline" {
@@ -1019,7 +1027,7 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
       "verified_how": ["go test ./internal/tui/"],
       "completed_notes": "the pick colors were already there",`, 1)
 	os.WriteFile(path, []byte(done), 0o644)
-	later(a, c)
+	settled(a, c)
 	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
 		t.Fatalf("the file finished the pin: %q", got)
 	}
@@ -1052,8 +1060,8 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
 	}
 	active := strings.Replace(done, `"status": "pending"`, `"status": "active"`, 1)
 	os.WriteFile(path, []byte(active), 0o644)
-	later(a, c)
-	if got := a.statusLine().Text; got != "plan updated · load-outline → active" {
+	settled(a, c)
+	if got := a.statusLine().Text; got != "The plan changed · load-outline → active" {
 		t.Fatalf("the agent starts the next task: %q", got)
 	}
 	last := strings.Replace(active, `"status": "active",
@@ -1063,7 +1071,7 @@ func TestTheAgentsPinAndDoneShow(t *testing.T) {
   "scope"`, `"status": "done",
   "scope"`, 1)
 	os.WriteFile(path, []byte(last), 0o644)
-	later(a, c)
+	settled(a, c)
 	if got := a.statusLine().Text; got != "✔ load-outline done · the plan is done" {
 		t.Fatalf("the last leaf: %q", got)
 	}
@@ -1083,7 +1091,7 @@ func TestTheAgentsDoneWithNothingUnblocked(t *testing.T) {
       "depends_on": ["plans-ui"],`, `"status": "done",
       "depends_on": ["plans-ui"],`, 1)
 	os.WriteFile(path, []byte(done), 0o644)
-	later(a, c)
+	settled(a, c)
 	if got := a.statusLine().Text; got != "✔ card-highlight done · nothing else is unblocked" {
 		t.Fatalf("the file finished the pin, the rest is blocked: %q", got)
 	}
@@ -1101,7 +1109,7 @@ func TestTheDoneToastOutlastsTheRetrospective(t *testing.T) {
       "depends_on": ["plans-ui"],`, `"status": "done",
       "depends_on": ["plans-ui"],`, 1)
 	os.WriteFile(path, []byte(done), 0o644)
-	later(a, c)
+	settled(a, c)
 	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
 		t.Fatalf("save 1: %q", got)
 	}
@@ -1111,7 +1119,7 @@ func TestTheDoneToastOutlastsTheRetrospective(t *testing.T) {
       "accomplished": ["the bar spans all three card rows"],
       "depends_on": ["plans-ui"],`, 1)
 	os.WriteFile(path, []byte(retro), 0o644)
-	later(a, c) // 1.5 s after save 1
+	settled(a, c) // 1.5 s after save 1
 	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
 		t.Fatalf("save 2, the retrospective only: %q", got)
 	}
@@ -1120,8 +1128,8 @@ func TestTheDoneToastOutlastsTheRetrospective(t *testing.T) {
 	}
 	started := strings.Replace(retro, `"status": "pending"`, `"status": "active"`, 1)
 	os.WriteFile(path, []byte(started), 0o644)
-	later(a, c)
-	if got := a.statusLine().Text; got != "plan updated · load-outline → active" {
+	settled(a, c)
+	if got := a.statusLine().Text; got != "The plan changed · load-outline → active" {
 		t.Fatalf("a task move is news: %q", got)
 	}
 }
@@ -1135,7 +1143,7 @@ func TestTheDoneToastSaysNowWhenTheNextIsStarted(t *testing.T) {
       "depends_on": ["plans-ui"],`, 1)
 	both = strings.Replace(both, `"status": "pending"`, `"status": "active"`, 1)
 	os.WriteFile(path, []byte(both), 0o644)
-	later(a, c)
+	settled(a, c)
 	if got := a.statusLine().Text; got != "✔ card-highlight done · now load-outline" {
 		t.Fatalf("row 1 %q", got)
 	}
@@ -1155,7 +1163,7 @@ func TestThePlanIsDoneBeforeItsStatusSays(t *testing.T) {
       "depends_on": ["plans-ui"],`, 1)
 	leaves = strings.Replace(leaves, `"status": "pending"`, `"status": "skipped"`, 1)
 	os.WriteFile(path, []byte(leaves), 0o644)
-	later(a, c)
+	settled(a, c)
 	if got := a.statusLine().Text; got != "✔ card-highlight done · the plan is done" {
 		t.Fatalf("every leaf is done or skipped, the plan's status not yet: %q", got)
 	}
@@ -1163,7 +1171,7 @@ func TestThePlanIsDoneBeforeItsStatusSays(t *testing.T) {
   "scope"`, `"status": "done",
   "scope"`, 1)
 	os.WriteFile(path, []byte(whole), 0o644)
-	later(a, c)
+	settled(a, c)
 	if got := a.statusLine().Text; got != "✔ card-highlight done · the plan is done" {
 		t.Fatalf("the plan's own status keeps the done news: %q", got)
 	}
@@ -1228,7 +1236,7 @@ func TestOutlineInvalidJSONIsDebounced(t *testing.T) {
 // and an empty one what happens next.
 func TestPlanStates(t *testing.T) {
 	a, _, _ := openDemo(t, `{"version": 2, "goal": "the goal", "tasks": [{"id": "a", "title": "A"}]}`, 120, 32)
-	if rows := a.frameRows().Rows; textOf(rows[30], 120) != "read-only: version 2 · newer than this Rex reads" || !strings.Contains(textOf(rows[0], 120), "0/1 done · read-only   plan · agent") || strings.Contains(planBody(a), "the goal") {
+	if rows := a.frameRows().Rows; textOf(rows[30], 120) != "Read-only: version 2 · newer than this Rex reads · p and d are off" || !strings.Contains(textOf(rows[0], 120), "0/1 done · read-only   plan · agent") || strings.Contains(planBody(a), "the goal") {
 		t.Fatalf("%s", a.frame())
 	}
 	b, _, _ := openDemo(t, `{"tasks": [{"id": "a", "depends_on": ["zz"]}, {"id": "b", "depends_on": ["c"]}, {"id": "c", "depends_on": ["b"]}]}`, 80, 24)
@@ -1274,14 +1282,14 @@ func TestPlanStates(t *testing.T) {
 	}
 }
 
-// The task list has no composer: letters, Backspace and a paste do
-// nothing, ? opens Help at once, and Esc goes straight to the plan list
-// (docs/ux.md §2, §3).
+// The task list has no composer: letters that aren't its keys (i, o, p,
+// d), Backspace and a paste do nothing, ? opens Help at once, and Esc
+// goes straight to the plan list (docs/ux.md §2, §3).
 func TestOutlineKeysActAtOnce(t *testing.T) {
 	a, _, path := openDemo(t, demoPlan, 120, 32)
 	before, _ := os.ReadFile(path)
 	frame := a.frame()
-	typeText(a, "zap pdsb")
+	typeText(a, "zag sbx")
 	press(a, "\x7f", "\x15", "\x17", PastePrefix+"pin load-outline")
 	if a.frame() != frame || a.draft != "" {
 		t.Fatalf("draft %q\n%s", a.draft, a.frame())
@@ -1679,7 +1687,7 @@ func TestOutlineNeverDrawsThePlanList(t *testing.T) {
 			if !strings.HasPrefix(body, "  No tasks yet.") || strings.Contains(body, "+ New plan") || strings.Contains(body, "OPEN ─") {
 				t.Errorf("%v: the task list's body, not the plan list's\n%s\nplan %s", size, a.frame(), src)
 			}
-			if p := a.doc.plan; p.ReadOnly != "" && !strings.HasPrefix(textOf(a.frameRows().Rows[1], size[0]), "read-only: ") {
+			if p := a.doc.plan; p.ReadOnly != "" && !strings.HasPrefix(textOf(a.frameRows().Rows[1], size[0]), "Read-only: ") {
 				t.Errorf("%v: a read-only plan says why on row 1\n%s", size, a.frame())
 			}
 		}

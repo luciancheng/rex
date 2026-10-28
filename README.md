@@ -26,7 +26,7 @@ Rex is a terminal sidecar for developers who work with an AI coding agent: Curso
 - **PLAN**: a JSON file in your repo that breaks the work into PR-sized tasks;
 - **AGENT**: what the agent is doing right now, as it happens: your prompts, its thoughts (a run of them folds to one line with the latest), the commands it runs, failed steps, questions and replies.
 
-Rex is **watch-only**, with one thing it hands over: before each prompt, the task pinned in your plan reaches the agent as a short note (Claude Code, Codex, Cursor and OpenCode). It never runs tools, approves them or steers the agent, and it never edits your plan. The agent drives the plan: you ask it to plan, to work a task or to continue, and it writes the plan file (which task is active, what is done and how it was checked). Rex shows each change as it lands. There is nothing to copy from Rex into the chat.
+Rex is **watch-only**, with one thing it hands over: before each prompt, the task pinned in your plan reaches the agent as a short note (Claude Code, Codex, Cursor and OpenCode). It never runs tools, approves them or steers the agent, and it writes nothing into your plan but status values when you press `p` or `d` (the task's, any task a pin moves off, and the plan's own top-level `status`). You and the agent both drive the plan: you ask it to plan, to work a task or to continue, and it writes the plan file (which task is active, what is done and how it was checked); you can also pin a task (`p`) or mark one done (`d`) in Rex. Rex shows each change as it lands, and who made it. There is nothing to copy from Rex into the chat.
 
 ```
 Send-off demo                               1/3 done · following   plan · agent
@@ -76,7 +76,7 @@ This puts `rex` in `$(go env GOPATH)/bin`. Then wire your agent (see [Agents](#a
 
 1. Wire your agent (see [Agents](#agents)) and teach it the plan format with `rex ingest --install-skill`. Open a new terminal, `cd` into your repo and run `rex start`. It starts on Plans, with the plan you had open last time selected as **Continue**: press enter to open it. **Open latest** is the newest plan, **Open a plan** browses `rex/plans/`, and **Create a plan** makes an empty one you name (`team/auth` puts it in a folder); typing finds a plan by name or title.
 2. Or ask your agent to plan the work in `rex/plans/<name>.rex.json`. Rex opens its task list as soon as the agent writes the file, and updates it as the agent fills it in.
-3. Ask your agent to work the plan ("work the plan", "continue rex/plans/<name>.rex.json"). It sets the task it starts to `active`, and Rex shows it as the pin on the second row and tags it `pinned` in the list. When it finishes, it marks the task `done` with what it did, what it changed and how it checked, and Rex shows `✔ <task> done · next up <next>`; the tag moves on to the next task. Enter on a task shows all of it; `i` shows the plan's goal, scope and progress. Each task is one PR; ask it for the next one when you're ready.
+3. Ask your agent to work the plan ("work the plan", "continue rex/plans/<name>.rex.json"). It sets the task it starts to `active`, and Rex shows it as the pin on the second row and tags it `pinned` in the list. When it finishes, it marks the task `done` with what it did, what it changed and how it checked, and Rex shows `Your agent finished <task> ✔ · next up <next>`; the tag moves on to the next task. You can pin a task yourself with `p` (your next prompt hands it to the agent) and mark one done with `d`; the same key puts the task back (the plan's own `status` may stay as the first key set it). Enter on a task shows all of it; `i` shows the plan's goal, scope and progress. Each task is one PR; ask it for the next one when you're ready.
 4. Press Tab to watch the agent while it works, and Tab again to go back to the plan. `?` shows every key.
 5. The top row says `following` while Rex opens each plan your agent writes, as it does after Continue or Open latest. Pick another plan yourself (Esc to Plans, then a plan under Recent, Open a plan, or type a name and enter) and Rex stays on it: a plan the agent writes then waits on the row above the keys, `Your agent wrote … · o opens it`, and in Open latest, until you open it.
 6. Ctrl+C twice quits.
@@ -108,6 +108,8 @@ Keys act at once, and every screen's bottom row lists the ones that work there. 
 | --- | --- |
 | Tab | switch between PLAN and AGENT |
 | Enter | open the selection |
+| `p` | on a task: pin it (your agent gets it with your next prompt), or unpin the pinned one |
+| `d` | on a task: mark it done, or reopen a done one |
 | `o` | open a plan the agent wrote, when the row above the keys offers it (it names `o`) |
 | Esc | go up one level, back along the title on the top row (on Plans, clear what you typed first) |
 | ↑ ↓ · PgUp PgDn | move, or scroll |
@@ -131,7 +133,7 @@ Rex makes no network connections, and everything stays on this machine:
 
 - **`~/.rex/session.jsonl`** (and the `session.jsonl.lock` next to it): the feed every wired agent appends to. It holds your prompts (and, for one that carried the pin, the task's id and its plan's path), the agent's thoughts and replies, the commands it runs, file paths and working folders, from every repo on this machine. File bodies and diffs are left out, and each event's text is capped at 32 KB. Only your user can read it (`0600`, in a `0700` folder). It only grows; delete it whenever you like. Set `REX_EVENTS` to keep it somewhere else.
 - **`~/.rex/state.json`**: the last plan opened in each repo (by you, or followed because your agent wrote it), the only plan whose pinned task the prompt hooks hand your agent.
-- **Your repo**: Rex never edits a plan. Create a plan and `+ Create` on Plans write a new empty plan (and `rex/plans/.gitkeep` and any folders it names the first time), never over an existing file. Everything else in `rex/plans/` is written by your agent or by you.
+- **Your repo**: Rex never edits a plan beyond its `status` values when you press `p` or `d` (the task's, any task a pin moves off, and the plan's own top-level `status`: the same values your agent writes; only those bytes change, the file is re-checked just before an atomic rename, a task that changed since you looked is refused, and a plan that is a link out of `rex/plans/` is never written). Create a plan and `+ Create` on Plans write a new empty plan (and `rex/plans/.gitkeep` and any folders it names the first time), never over an existing file. Everything else in `rex/plans/` is written by your agent or by you.
 - **Agent configs**: only the files in the [Agents](#agents) table, each with a `.bak` copy of what was there, and only when you run `--install`. `--install claude --project` also adds two lines to the repo's `.git/info/exclude`, and `--install-skill` writes the two `rex-plan` skill folders (and, with `CLAUDE_CONFIG_DIR` set, updates a copy Rex left in `~/.claude/skills`).
 
 The install script downloads Rex's source through Go and git.

@@ -290,7 +290,7 @@ func TestABatchThatMovesThePinIsJudgedAgainstTheNewPin(t *testing.T) {
 		at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + path, Meta: map[string]any{"tool": "Write", "path": path, "ok": true, "cwd": repo}}),
 		at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + code, Meta: map[string]any{"tool": "Edit", "path": code, "ok": true, "cwd": repo}}),
 	})
-	if got := a.statusLine().Text; got != "✔ card-highlight done · now load-outline" {
+	if got := a.statusLine().Text; got != "Your agent finished card-highlight ✔ and pinned load-outline" {
 		t.Fatalf("row 1 after the batch: %q", got)
 	}
 	later(a, c)
@@ -324,7 +324,7 @@ func TestTheFinishedTasksLastEditIsNotDrift(t *testing.T) {
 			evs = []watch.Event{at(c, 0, watch.Event{Source: "codex", Kind: "result", Text: "wrote " + code, Meta: map[string]any{"tool": "apply_patch", "path": code, "paths": []any{code, path}, "ok": true, "cwd": repo}})}
 		}
 		a.ingest(evs)
-		if got := a.statusLine().Text; !strings.HasPrefix(got, "✔ card-highlight done") {
+		if got := a.statusLine().Text; !strings.HasPrefix(got, "Your agent finished card-highlight ✔") {
 			t.Fatalf("patch=%v: row 1 after the batch: %q", patch, got)
 		}
 		later(a, c)

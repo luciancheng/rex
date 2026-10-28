@@ -820,8 +820,8 @@ func TestNoticeRanksTheOffer(t *testing.T) {
 	// A plan reload's toast, then the offer once it expires.
 	a, c, path, next := offered(t)
 	os.WriteFile(path, []byte(strings.Replace(demoPlan, `"status": "pending"`, `"status": "skipped"`, 1)), 0o644)
-	later(a, c)
-	hidden(t, a, path, "plan updated · load-outline → skipped")
+	settled(a, c)
+	hidden(t, a, path, "The plan changed · load-outline → skipped")
 	c.t = c.t.Add(toastFor)
 	if got := a.notice().Text; got != offer {
 		t.Fatalf("the offer is back once the toast is gone: %q", got)
@@ -857,10 +857,11 @@ func TestNoticeRanksTheOffer(t *testing.T) {
 	hidden(t, a, path, "✗ plan JSON error")
 }
 
-// docs/ux.md §11: Rex has no actions on a plan, so nothing on the task
-// list or the tape latches it; only a pick on Plans other than Continue
-// and Open latest does. A followed plan keeps following whatever you type
-// there, and its file is untouched.
+// docs/ux.md §11: nothing on the task list or the tape latches a plan,
+// not even p and d, which write a task's status (§7b); only a pick on Plans
+// other than Continue and Open latest does. A followed plan keeps
+// following whatever you press there, and its file changes only in the
+// status values p and d write.
 func TestOnlyThePlanListLatches(t *testing.T) {
 	repo := attachRepo(t)
 	one := writePlan(t, repo, "one.rex.json", demoPlan)
@@ -874,8 +875,12 @@ func TestOnlyThePlanListLatches(t *testing.T) {
 			press(a, "\r") // Continue: the open plan, following
 		}
 	}
-	if after, _ := os.ReadFile(one); !a.follow || string(after) != string(before) {
-		t.Fatalf("follow=%v; the plan file changed:\n%s", a.follow, after)
+	after, _ := os.ReadFile(one)
+	if !a.follow || !onlyStatuses(string(before), string(after)) || string(after) == string(before) {
+		t.Fatalf("follow=%v; the plan file:\n%s", a.follow, after)
+	}
+	if p, _ := plan.Load(one); p.Task("load-outline").Status != plan.Done || p.Task("card-highlight").Status != plan.Pending {
+		t.Fatalf("p pinned load-outline and d finished it:\n%s", after)
 	}
 	two := writePlan(t, repo, "two.rex.json", demoPlan)
 	if a.ingest([]watch.Event{wrote(repo, two)}); a.plans.Current != two {

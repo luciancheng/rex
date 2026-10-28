@@ -6,8 +6,8 @@ import (
 )
 
 // Verbs are the /words Plans' text field runs on enter (docs/ux.md
-// §2): Rex has no actions of its own on a plan, so these only show help
-// or dance.
+// §2): Rex's actions on a plan are single keys on the task list (p and
+// d, §7b), so these only show help or dance.
 var verbNames = map[string]string{
 	"help": "help", "?": "help",
 	"breakdance": "breakdance",

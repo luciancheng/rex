@@ -64,6 +64,9 @@ type Plan struct {
 	// file (a newer version, tasks that aren't a list, conflict markers),
 	// or is "".
 	ReadOnly string `json:"-"`
+	// hasStatus: the file has a status member at its root, the only
+	// root member Rex may write (and only replace, docs/ux.md §7b).
+	hasStatus bool
 }
 
 // Task is one PR-sized slice of the plan. Parent is outline (the task sits
@@ -318,6 +321,7 @@ func (r *reader) plan(root *jsonedit.Node) {
 	p.Title = r.text("plan", root, "title")
 	p.Goal = r.text("plan", root, "goal")
 	p.Status = r.status("plan", root)
+	p.hasStatus = root.Member("status") != nil
 	p.Base = strings.TrimSpace(r.text("plan", root, "base"))
 	p.Scope = r.scope("plan", root)
 	tasks := root.Member("tasks")

@@ -82,8 +82,9 @@ func (k *keys) spent(t *testing.T, budget int, what string) {
 // drift → the agent marks the task done → Tab to the tape and back → Esc
 // to Plans, where Continue follows and any other pick latches → the agent
 // writes another plan, which o opens → quit → start again on Continue,
-// one enter from last time's plan. The agent drives the plan; Rex only
-// shows it and never writes it. At 109×24, a column short of the mascot,
+// one enter from last time's plan. Here the agent drives the plan and
+// nobody presses p or d, so Rex never writes it (TestCUJHumanPinAndDone
+// has you pin and finish). At 109×24, a column short of the mascot,
 // the same journey is text-only: every frame gives the text the whole
 // width up to the measure (docs/ux.md §12).
 func TestCUJWholeLoop(t *testing.T) {
@@ -158,7 +159,7 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
   "scope"`))
 	agent(planned)
 	k.spent(t, 0, "see the plan (Rex follows the write)")
-	if a.outline.sel != "card-highlight" || !strings.Contains(frame(), "❯   card-highlight ") || !strings.Contains(frame(), "plan updated · +3 tasks") {
+	if a.outline.sel != "card-highlight" || !strings.Contains(frame(), "❯   card-highlight ") || !strings.Contains(frame(), "Your agent added 3 tasks") {
 		t.Fatalf("B. the filled plan lands on its pin: sel=%q\n%s", a.outline.sel, frame())
 	}
 	if row := rowWith(rows(), "❯   card-highlight"); !strings.HasSuffix(row, " next up") {
@@ -172,8 +173,8 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	// C. The agent starts the task: it writes active, and Rex shows it.
 	agent(active)
 	k.spent(t, 0, "see the pin")
-	if got := a.statusLine().Text; got != "plan updated · card-highlight → active · plan → active" {
-		t.Fatalf("C. the agent's pin arrives as a reload: %q", got)
+	if got := a.statusLine().Text; got != "Your agent pinned card-highlight" {
+		t.Fatalf("C. the agent's pin arrives as a reload, credited to it: %q", got)
 	}
 	if last := a.log[len(a.log)-1]; last.Kind != "plan" || last.Text != "card-highlight → active · plan → active" {
 		t.Fatalf("C. one plan line on the tape: %+v", last)
@@ -205,8 +206,9 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 		t.Fatalf("C. esc goes back to the list, on the same task: at=%d sel=%q", a.at, a.outline.sel)
 	}
 
-	// The agent works the task; the old verbs do nothing on the task list.
-	k.press("p", "d", "s", "b", PastePrefix+"pin load-outline")
+	// The agent works the task; the old verbs and a paste do nothing on
+	// the task list (p and d are yours: TestCUJHumanPinAndDone).
+	k.press("s", "b", "x", PastePrefix+"pin load-outline")
 	if got, _ := os.ReadFile(path); string(got) != string(active) || a.draft != "" || !strings.HasPrefix(a.statusLine().Text, "pinned  card-highlight") {
 		t.Fatal("C. letters and a paste on the task list change nothing")
 	}
@@ -241,7 +243,7 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	agent(done)
 	a.ingest([]watch.Event{at(c, 6*time.Second, watch.Event{Source: "claude", Kind: "text", Text: "Done: one block now. card-highlight is marked done in the plan."})})
 	k.spent(t, 0, "mark done (the agent does)")
-	if got := a.statusLine().Text; got != "✔ card-highlight done · next up load-outline" {
+	if got := a.statusLine().Text; got != "Your agent finished card-highlight ✔ · next up load-outline" {
 		t.Fatalf("E. the file finished the pin: %q", got)
 	}
 	// The list marks it done and tags what is next up; the cursor stays
@@ -696,6 +698,29 @@ func matrixScreens(t *testing.T) []matrixScreen {
 		{"tasks, empty", false, func(a *app) { list(a); typeText(a, "scratch"); press(a, "\r") }, func(a *app) bool {
 			return at(atOutline)(a) && len(a.doc.plan.Tasks) == 0
 		}},
+		// p and d (docs/ux.md §7b): what you wrote, what the file had moved on
+		// to, and your agent saving over your pin.
+		{"tasks, you pinned", false, func(a *app) { press(a, "down", "p") }, func(a *app) bool {
+			return at(atOutline)(a) && noticeKindOf(a) == noticeToast && strings.HasPrefix(a.toast.Text, "Pinned load-outline")
+		}},
+		{"tasks, you marked done", false, func(a *app) { press(a, "d") }, func(a *app) bool {
+			return at(atOutline)(a) && strings.HasPrefix(a.toast.Text, "✔ card-highlight done · nothing pinned")
+		}},
+		{"tasks, a refused write", false, func(a *app) {
+			os.WriteFile(a.plans.Current, []byte(nextUp), 0o644) // no poll has shown it
+			press(a, "p")
+		}, func(a *app) bool { return at(atOutline)(a) && noticeKindOf(a) == noticeError }},
+		{"tasks, your agent saved over your pin", false, func(a *app) {
+			old, _ := os.ReadFile(a.plans.Current)
+			press(a, "down", "p")
+			os.WriteFile(a.plans.Current, old, 0o644)
+			a.reloadDoc()
+		}, func(a *app) bool {
+			return at(atOutline)(a) && strings.HasPrefix(a.toast.Text, "Your agent saved over your pin")
+		}},
+		{"task details, after p", false, func(a *app) { press(a, "down", "\r", "p") }, func(a *app) bool {
+			return at(atTaskDetail)(a) && a.doc.plan.Task("load-outline").Status == plan.Active
+		}},
 		{"help", false, func(a *app) { press(a, "\t", "?") }, over(overlayHelp)},
 		{"help over Plans", false, func(a *app) { list(a); press(a, "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atLibrary }},
 		{"help over a task", false, func(a *app) { press(a, "\r", "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atTaskDetail }},
@@ -715,7 +740,7 @@ func noticeKindOf(a *app) noticeKind {
 var matrixSizes = [][2]int{{24, 7}, {24, 12}, {24, 24}, {30, 10}, {38, 7}, {38, 24}, {44, 16}, {80, 7}, {80, 10}, {80, 12}, {80, 13}, {80, 16}, {80, 20}, {80, 24}, {109, 15}, {109, 24}, {110, 15}, {110, 16}, {120, 7}, {120, 12}, {120, 24}, {120, 32}, {200, 60}}
 
 // footerWords are the keys a footer segment starts with (docs/ux.md §4).
-var footerWords = map[string]bool{"↑↓": true, "enter": true, "esc": true, "tab": true, "?": true, "home": true, "end": true, "type": true, "ctrl+c": true, "i": true}
+var footerWords = map[string]bool{"↑↓": true, "enter": true, "esc": true, "tab": true, "?": true, "home": true, "end": true, "type": true, "ctrl+c": true, "i": true, "p": true, "d": true}
 
 // seedKinds adds a plan of every kind to the CUJ repo (docs/ux.md §11):
 // more root plans than RECENT holds, written first, so FOLDERS lists
@@ -862,7 +887,11 @@ func TestFrameMatrix(t *testing.T) {
 					t.Errorf("%s: footer %q: segment %q", name, footer, s)
 				}
 			}
-			if textW >= 38 && a.overlay[a.pane] == overlayNone && !strings.Contains(footer, "tab") && !strings.Contains(footer, "esc") {
+			// From 38 cells a footer says where to go, but where the task list
+			// gives its room to p, which outranks esc (docs/ux.md §4): Help and
+			// the footer's wider forms still name esc.
+			pins := strings.HasPrefix(footer, "enter details · p ")
+			if textW >= 38 && a.overlay[a.pane] == overlayNone && !strings.Contains(footer, "tab") && !strings.Contains(footer, "esc") && !pins {
 				t.Errorf("%s: footer doesn't say where to go: %q", name, footer)
 			}
 		}

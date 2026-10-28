@@ -14,13 +14,14 @@ import (
 )
 
 // docs/ux.md §4, §12: rows 0 and 1, the blank row 2 and the notice row
-// from 12 rows, the footer; the mascot from 110 columns and 16 rows, and
-// the text column at most maxText cells.
+// from 12 rows, the footer; the mascot from 110 columns and 16 rows, the
+// text column at most maxText cells, and Plans' text field a box from 16
+// rows, one row from 7, none under that.
 func TestLayoutTiers(t *testing.T) {
 	cases := []struct {
-		cols, lines                   int
-		mascot, text, composer, blank int
-		locked, typing                bool
+		cols, lines                int
+		mascot, text, field, blank int
+		locked, typing             bool
 	}{
 		{120, 32, 40, 78, 3, 1, false, true},
 		{200, 32, 40, maxText, 3, 1, false, true}, // the measure
@@ -40,13 +41,13 @@ func TestLayoutTiers(t *testing.T) {
 	}
 	for _, c := range cases {
 		l := layoutFor(c.cols, c.lines)
-		if l.mascotCols != c.mascot || l.textW != c.text || l.composer != c.composer || l.blank != c.blank || l.notice != c.blank || l.locked != c.locked || l.typing != c.typing {
+		if l.mascotCols != c.mascot || l.textW != c.text || l.boxed != (c.field == 3) || l.blank != c.blank || l.notice != c.blank || l.locked != c.locked || l.typing != c.typing {
 			t.Fatalf("%dx%d: %+v", c.cols, c.lines, l)
 		}
 		if gutter := map[bool]int{true: Gutter, false: 0}[c.mascot > 0]; l.gutter != gutter {
 			t.Fatalf("%dx%d: gutter %d, want %d", c.cols, c.lines, l.gutter, gutter)
 		}
-		if want := max(0, c.lines-2-2*c.blank-FooterRows-c.composer); l.bodyH != want {
+		if want := max(0, c.lines-2-2*c.blank-FooterRows); l.bodyH != want {
 			t.Fatalf("%dx%d: body %d, want %d", c.cols, c.lines, l.bodyH, want)
 		}
 		if got := PaneTextWidth(c.cols, c.lines); got != c.text {
@@ -170,28 +171,29 @@ func TestTextMeasure(t *testing.T) {
 	}
 }
 
-func TestShortTerminalComposer(t *testing.T) {
+// docs/ux.md §2, §12: Plans' text field is at the top of its body while
+// it is open, a box from 16 rows and one row under that, the cursor after
+// its text; under 7 rows it takes no keys, and a field typed before the
+// terminal shrank is neither edited nor submitted blind.
+func TestShortTerminalField(t *testing.T) {
 	list := NewPlanBrowser(t.TempDir())
 	rows := frameAt(t, 100, 12, ComposeOptions{Pane: PanePlans, Plans: list, Composer: true, Draft: "hi"})
-	if !strings.Contains(rows[9], "/ hi") || strings.Contains(rows[9], "│") {
-		t.Fatalf("under 16 rows the composer is one bare row, over the notice row: %q", rows[9])
+	if strings.TrimRight(rows[3], " ") != "  find  hi" || strings.Contains(strings.Join(rows, ""), "│") {
+		t.Fatalf("under 16 rows the field is one row, at the top of the body: %q", rows[3])
 	}
-	if tape := frameAt(t, 100, 12, ComposeOptions{Pane: PaneChat, Draft: "hi"}); strings.Contains(strings.Join(tape, ""), "> hi") {
-		t.Fatal("the tape has no composer at any height")
+	if tape := frameAt(t, 100, 12, ComposeOptions{Pane: PaneChat, Draft: "hi"}); strings.Contains(strings.Join(tape, ""), "find  hi") {
+		t.Fatal("the tape has no field at any height")
 	}
 	a := testApp(t)
 	a.settle(100, 6)
-	press(a, "esc", "x")
+	press(a, "x")
 	if a.draft != "" || a.at != atLibrary {
 		t.Fatal("under 7 rows printable keys are ignored")
 	}
 	if press(a, "?"); a.overlay[PanePlans] != overlayHelp {
 		t.Fatal("? still opens Help: it types nothing")
 	}
-	// A draft typed before the terminal shrank is neither edited nor
-	// submitted blind.
 	b := testApp(t)
-	press(b, "esc")
 	typeText(b, "blind")
 	b.settle(100, 6)
 	press(b, "\x7f", "\r")
@@ -206,14 +208,17 @@ func TestShortTerminalComposer(t *testing.T) {
 	if b.quitPending {
 		t.Fatal("a swallowed key still disarms quit")
 	}
-	// The one-row composer leaves the cursor on screen, on its row.
+	// The one-row field leaves the cursor on screen, on its row.
 	f := composeRows("idle", "yellow", ComposeOptions{Pane: PanePlans, Plans: list, Composer: true, Columns: 100, Lines: 12, Draft: strings.Repeat("x", 200)})
-	if f.CursorCol > 100 || f.CursorRow != 10 {
+	if f.CursorCol > 100 || f.CursorRow != 4 {
 		t.Fatalf("cursor at row %d column %d of 100×12", f.CursorRow, f.CursorCol)
 	}
 	f = composeRows("idle", "yellow", ComposeOptions{Pane: PanePlans, Plans: list, Composer: true, Columns: 100, Lines: 24, Draft: "x"})
-	if f.CursorRow != 21 {
-		t.Fatalf("the boxed composer's cursor sits on its middle row, over the notice row: row %d", f.CursorRow)
+	if f.CursorRow != 5 || f.CursorCol != 6 {
+		t.Fatalf("the boxed field's cursor sits on its middle row, after the text: row %d column %d", f.CursorRow, f.CursorCol)
+	}
+	if f = composeRows("idle", "yellow", ComposeOptions{Pane: PanePlans, Plans: list, Columns: 100, Lines: 24}); f.CursorRow != 0 {
+		t.Fatal("with no field open the cursor is hidden")
 	}
 }
 
@@ -231,21 +236,11 @@ func TestHomeFooterSaysCreateWhenThatIsWhatEnterDoes(t *testing.T) {
 		}
 		return ""
 	}
-	for i, row := range b.Rows {
-		if row.Kind == PlanRowNew {
-			b.Cursor = i
+	for kind, want := range map[PlanRowKind]string{PlanRowNew: "enter create", PlanRowOpen: "enter browse", PlanRowLatest: "enter open"} {
+		b.pick(kind)
+		if got := enter(); got != want {
+			t.Fatalf("on card %d: %q, want %q", kind, got, want)
 		}
-	}
-	if got := enter(); got != "enter create" {
-		t.Fatalf("on + New plan: %q", got)
-	}
-	for i, row := range b.Rows {
-		if row.Kind == PlanRowPlan {
-			b.Cursor = i
-		}
-	}
-	if got := enter(); got != "enter open" {
-		t.Fatalf("on a plan: %q", got)
 	}
 }
 
@@ -323,7 +318,7 @@ func TestShortPlanListFooterSaysWhatWorks(t *testing.T) {
 		t.Fatalf("a hidden find: enter and ? would act on it blind: %q", f)
 	}
 	a.settle(120, 32)
-	press(a, "esc", "home", "down", "\r") // the find cleared, then the cuj/ folder
+	press(a, "esc", "home", "down", "down", "\r") // the find cleared, then Open a plan
 	if a.plans.Screen != ScreenBrowse {
 		t.Fatalf("browse: %d", a.plans.Screen)
 	}
@@ -383,7 +378,7 @@ func TestTitleRow(t *testing.T) {
 		{Crumbs: []string{"Send-off demo", "About"}, Meta: metaSpans("active · 1/3 done")},
 		{Crumbs: []string{"Agent"}, Meta: metaSpans("live")},
 		{Crumbs: []string{"Send-off demo", "card-highlight", "Help"}},
-		{Crumbs: []string{"Plans", "Waiting for a plan"}, Meta: metaSpans("rex · no plans yet"), Short: metaSpans("no plans yet")},
+		{Crumbs: []string{"Plans", "billing-and-plans/"}, Meta: metaSpans("rex · no plans yet"), Short: metaSpans("no plans yet")},
 	}
 	const label = "plan · agent"
 	for _, tc := range []struct {
@@ -399,10 +394,10 @@ func TestTitleRow(t *testing.T) {
 			{"Send-off demo › About", "active · 1/3 done   " + label},
 			{"Agent", "live   " + label},
 			{"Send-off demo › card-highlight › Help", label},
-			{"Plans › Waiting for a plan", "rex · no plans yet   " + label},
+			{"Plans › billing-and-plans/", "rex · no plans yet   " + label},
 		}},
-		{50, [][2]string{8: {"Waiting for a plan", "no plans yet   " + label}}},
-		{40, [][2]string{8: {"… › Waiting for a plan", label}}},
+		{50, [][2]string{8: {"billing-and-plans/", "no plans yet   " + label}}},
+		{40, [][2]string{8: {"… › billing-and-plans/", label}}},
 		{38, [][2]string{
 			{"Plans", "rex · 4 plans   " + label},
 			{"Plans › Find", "1 match   " + label},
@@ -412,26 +407,26 @@ func TestTitleRow(t *testing.T) {
 			{"Send-off demo › About", label},
 			{"Agent", "live   " + label},
 			{"… › card-… › Help", label},
-			{"… › Waiting for a plan", label},
+			{"… › billing-and-plans/", label},
 		}},
-		{33, [][2]string{8: {"… › Waiting for a plan", "plan"}}},
+		{33, [][2]string{8: {"… › billing-and-plans/", "plan"}}},
 		{30, [][2]string{
 			{"Plans", "4 plans   " + label},
 			3: {"Send-off demo", label},
 			6: {"Agent", "live   " + label},
-			8: {"… › Waiting for a plan", "plan"},
+			8: {"… › billing-and-plans/", "plan"},
 		}},
 		{29, [][2]string{
 			{"Plans", "rex · 4 plans"},
 			3: {"Send-off demo", "1/3"},
-			8: {"Plans › Waiting for a plan", ""},
+			8: {"Plans › billing-and-plans/", ""},
 		}},
 		{24, [][2]string{
 			{"Plans", "rex · 4 plans"},
 			3: {"Send-off demo", "1/3"},
 			4: {"card-highlight", "pinned"},
 			7: {"… › card-… › Help", ""},
-			8: {"… › Waiting for a plan", ""},
+			8: {"… › billing-and-plans/", ""},
 		}},
 	} {
 		for i, want := range tc.want {
@@ -682,18 +677,17 @@ func TestStatusRowIsBlankWithoutStatus(t *testing.T) {
 	}
 }
 
-// docs/ux.md §4, as the app builds them: each plan-list state's title,
-// its meta counting what the list holds or saying where a name goes, and
-// the THIS PAGE of the Help it opens.
+// docs/ux.md §4, as the app builds them: each of Plans' pages' title,
+// its meta counting what the page holds or saying where it is, and the
+// THIS PAGE of the Help it opens.
 func TestPageTitleFromApp(t *testing.T) {
 	repo := attachRepo(t)
 	for _, name := range []string{"top.rex.json", "cuj/sendoff-demo.rex.json", "cuj/second.rex.json", "cuj/sub/deep.rex.json"} {
 		writePlan(t, repo, name, demoPlan)
 	}
 	a := startIn(repo) // 120 columns: a 78-cell pane
-	press(a, "esc")
 	if a.at != atLibrary {
-		t.Fatalf("not the plan list: at=%d", a.at)
+		t.Fatalf("not Plans: at=%d", a.at)
 	}
 	const label = "   plan · agent"
 	to := func(kind PlanRowKind) {
@@ -742,40 +736,26 @@ func TestPageTitleFromApp(t *testing.T) {
 		press(a, "\x15")
 	}
 
-	check("home", "Plans", filepath.Base(repo)+" · 4 plans", "plans")
-	filter("find", "se", "Plans › Find", "2 matches")
+	check("plans", "Plans", filepath.Base(repo)+" · 4 plans", "plans")
+	filter("find", "cuj/s", "Plans › Find", "3 matches")
 	filter("find", "top", "Plans › Find", "1 match")
 	to(PlanRowNew)
 	press(a, "\r")
-	check("name from home", "Plans › New plan", "rex/plans/", "new plan")
-	press(a, "esc")
-	to(PlanRowMkdir)
-	press(a, "\r")
-	check("folder from home", "Plans › New folder", "rex/plans/", "new folder")
+	check("new plan", "Plans › New plan", "rex/plans/", "new plan")
 	press(a, "esc")
 
-	// FOLDERS is Browse's root: a top folder's crumbs start under Plans.
+	// Open a plan's crumbs are the folders from rex/plans down; its meta
+	// is the folder.
+	to(PlanRowOpen)
+	press(a, "\r")
+	check("open a plan", "Plans › Open a plan", "rex/plans/", "open a plan")
+	filter("open a plan", "cu", "Plans › Open a plan", "rex/plans/")
 	to(PlanRowDir)
 	press(a, "\r")
-	check("browse", "Plans › cuj/", "3 plans", "folder")
-	// A filter counts the plans under the rows it leaves: a folder counts
-	// every plan in it and below.
-	filter("browse", "s", "Plans › cuj/", "3 plans")
-	filter("browse", "sub", "Plans › cuj/", "1 plan")
-	filter("browse", "sec", "Plans › cuj/", "1 plan")
-	filter("browse", "zzz", "Plans › cuj/", "0 plans")
-	to(PlanRowMkdir)
-	press(a, "\r")
-	check("name from browse", "Plans › cuj/ › New folder", "rex/plans/cuj/", "new folder")
-	press(a, "esc")
-
+	check("a folder", "Plans › Open a plan › cuj/", "rex/plans/cuj/", "open a plan")
 	to(PlanRowDir)
 	press(a, "\r")
-	check("deeper", "Plans › cuj/ › sub/", "1 plan", "folder")
-	to(PlanRowNew)
-	press(a, "\r")
-	check("name from deeper", "Plans › cuj/ › sub/ › New plan", "rex/plans/cuj/sub/", "new plan")
-	press(a, "esc")
+	check("deeper", "Plans › Open a plan › cuj/ › sub/", "rex/plans/cuj/sub/", "open a plan")
 
 	press(a, "\t")
 	check("agent", "Agent", "no events yet", "agent")
@@ -802,7 +782,7 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 	a := startIn(repo)
 	a.columns, a.lines = 120, 24
 	press(a, "?")
-	if a.at != atWait || a.overlay[PanePlans] != overlayHelp {
+	if a.at != atLibrary || a.overlay[PanePlans] != overlayHelp {
 		t.Fatalf("at=%d overlay=%d", a.at, a.overlay[PanePlans])
 	}
 	press(a, "down", "down", "down")
@@ -815,7 +795,7 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 		return strings.TrimSpace(crumbs)
 	}
 	title, body := frame()
-	if crumbs(title) != "Plans › Waiting for a plan › Help" || a.overlayScroll[PanePlans] != 3 || !strings.Contains(viewText(a.helpBody(38)), "─ waiting\n") {
+	if crumbs(title) != "Plans › Help" || a.overlayScroll[PanePlans] != 3 || !strings.Contains(viewText(a.helpBody(38)), "─ plans\n") {
 		t.Fatalf("title %q scroll %d\n%s", title, a.overlayScroll[PanePlans], body)
 	}
 	a.ingest([]watch.Event{wrote(repo, writePlan(t, repo, "cuj/x.rex.json", demoPlan))})
@@ -833,19 +813,21 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 	if title, _ := frame(); crumbs(title) != "Send-off demo › Help" || !strings.Contains(viewText(a.helpBody(38)), "─ tasks\n") {
 		t.Fatalf("Help opens over the task list now: %q", title)
 	}
-	// Over a task, an attach under Help names the plan Esc lands on.
+	// Over a task's details an attach waits (docs/ux.md §11): Help's
+	// crumbs stay the task's, and the plan opens once you are back on the
+	// list.
 	press(a, "esc", "\r", "?")
 	newer := writePlan(t, repo, "cuj/newer.rex.json", strings.Replace(demoPlan, `"title": "Send-off demo"`, `"title": "Brand new plan"`, 1))
 	a.ingest([]watch.Event{wrote(repo, newer)})
-	if title, _ := frame(); crumbs(title) != "Brand new plan › Help" {
-		t.Fatalf("Help's crumbs name the task list under it: %q", title)
+	if title, _ := frame(); crumbs(title) != "Send-off demo › card-highlight › Help" || a.pending != newer {
+		t.Fatalf("Help's crumbs name the task under it: %q", title)
 	}
 	if !strings.Contains(viewText(a.helpBody(38)), "─ task\n") {
 		t.Fatal("THIS PAGE stays the task's")
 	}
-	press(a, "esc")
+	press(a, "esc", "esc")
 	if title, _ := frame(); !strings.HasPrefix(title, "Brand new plan ") {
-		t.Fatalf("Esc goes where the crumbs said: %q", title)
+		t.Fatalf("back on the list, the plan opens: %q", title)
 	}
 	// AGENT has a title at every height, and so does Help over it.
 	a.lines = 11
@@ -886,7 +868,9 @@ func TestHelpGapsFrom16Rows(t *testing.T) {
 // docs/ux.md §3, §4, §13: Help's THIS PAGE names every key its page acts
 // on, not only the footer's. A key acts when it changes the frame, from
 // where the page starts or after the opposite key, or what Esc shows next
-// (so a Name prompt's Home and End must leave the list's cursor alone).
+// (so New plan's Home and End must leave Plans' cursor alone). Help never
+// opens over text in a field (? is a letter there), so a find and a
+// filter have no page of their own.
 // o, where it opens the notice row's offer, is said in the same words
 // everywhere.
 func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
@@ -922,8 +906,7 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 		writePlan(t, a.plans.Repo, "cuj/sub/deep.rex.json", demoPlan)
 		a.plans.walk = planWalk{}
 		press(a, "esc")
-		a.plans.Screen, a.plans.Dir = ScreenBrowse, filepath.Join(a.plans.Root, "cuj")
-		a.plans.Rebuild()
+		a.plans.browse(filepath.Join(a.plans.Root, "cuj"))
 	}
 	pages := []struct {
 		page  string
@@ -943,14 +926,11 @@ func TestHelpListsEveryKeyThePageTakes(t *testing.T) {
 		{"task", func(a *app) { latched(a); press(a, "\r"); offered(a) }},
 		{"plans", func(a *app) { press(a, "esc") }},
 		{"plans", func(a *app) { latched(a); press(a, "esc"); offered(a) }},
-		{"plans", func(a *app) { press(a, "esc"); typeText(a, "s") }},
-		{"folder", browse},
-		{"folder", func(a *app) { browse(a); pick(a, PlanRowDir); press(a, "\r") }},
-		{"folder", func(a *app) { browse(a); typeText(a, "s") }},
+		{"open a plan", browse},
+		{"open a plan", func(a *app) { browse(a); pick(a, PlanRowDir); press(a, "\r") }},
 		{"new plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r") }},
 		{"new plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x") }},
-		{"new folder", func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r") }},
-		{"waiting", nil},
+		{"plans", nil}, // a first run
 		{"agent", func(a *app) { press(a, "\t"); scrolls(a) }},
 		{"agent", func(a *app) { latched(a); press(a, "\t"); scrolls(a); offered(a) }},
 	}
@@ -1097,6 +1077,7 @@ func TestFootersPinned(t *testing.T) {
 	sizes := [4]int{24, 38, 60, 121}
 	home := want{"enter open · ? help", "enter open · tab agent · ? help", "↑↓ select · enter open · tab agent · ? help", "↑↓ select · enter open · type to find · tab agent · ? help"}
 	create := want{"enter create · ? help", "enter create · tab agent · ? help", "↑↓ select · enter create · tab agent · ? help", "↑↓ select · enter create · type to find · tab agent · ? help"}
+	browse := want{"enter browse · ? help", "enter browse · tab agent · ? help", "↑↓ select · enter browse · tab agent · ? help", "↑↓ select · enter browse · type to find · tab agent · ? help"}
 	tasks := want{"enter details · ? help", "enter details · esc plans · ? help", "↑↓ select · enter details · esc plans · tab agent · ? help", "↑↓ select · enter details · i about · esc plans · tab agent · ? help"}
 	detail := want{"esc tasks · ? help", "esc tasks · tab agent · ? help", "↑↓ scroll · esc tasks · tab agent · ? help", "↑↓ scroll · esc tasks · tab agent · ? help"}
 	agent := want{"tab plan · ? help", "↑↓ scroll · tab plan · ? help", "↑↓ scroll · home oldest · end live · tab plan · ? help", "↑↓ scroll · home oldest · end live · tab plan · ? help"}
@@ -1105,25 +1086,28 @@ func TestFootersPinned(t *testing.T) {
 		setup func(a *app)
 		want  want
 	}{
-		{"plan list", func(a *app) { press(a, "esc") }, home},
-		{"plan list on a folder", func(a *app) { press(a, "esc"); pick(a, PlanRowDir) }, home},
-		{"plan list on + New plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew) }, create},
-		{"plan list on + New folder", func(a *app) { press(a, "esc"); pick(a, PlanRowMkdir) }, create},
-		{"plan list, offer", func(a *app) { latched(a); offered(a); press(a, "esc") }, home},
+		{"plans", func(a *app) { press(a, "esc") }, home},
+		{"plans on Open a plan", func(a *app) { press(a, "esc"); pick(a, PlanRowOpen) }, browse},
+		{"plans on Create a plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew) }, create},
+		{"plans on Open latest", func(a *app) { press(a, "esc"); pick(a, PlanRowLatest) }, home},
+		{"plans, offer", func(a *app) { latched(a); offered(a); press(a, "esc") }, home},
 		{"find", func(a *app) { press(a, "esc"); typeText(a, "send") }, want{"enter open", "enter open · esc clear · tab agent", "↑↓ select · enter open · esc clear · tab agent", "↑↓ select · enter open · esc clear · tab agent"}},
-		{"find on + Create", func(a *app) { press(a, "esc"); typeText(a, "zz-new") }, want{"enter create", "enter create · esc clear · tab agent", "↑↓ select · enter create · esc clear · tab agent", "↑↓ select · enter create · esc clear · tab agent"}},
-		{"browse, a top folder", func(a *app) { press(a, "esc"); pick(a, PlanRowDir); press(a, "\r") }, want{"enter open · ? help", "enter open · esc plans · ? help", "↑↓ select · enter open · esc plans · tab agent · ? help", "↑↓ select · enter open · type to filter · esc plans · tab agent · ? help"}},
-		{"browse, deeper", func(a *app) {
+		{"find, only + Create", func(a *app) { press(a, "esc"); typeText(a, "zz-new") }, want{"enter create", "enter create · esc clear · tab agent", "enter create · esc clear · tab agent", "enter create · esc clear · tab agent"}},
+		{"open a plan, one folder", func(a *app) { press(a, "esc"); pick(a, PlanRowOpen); press(a, "\r") }, want{"enter open · ? help", "enter open · esc plans · ? help", "enter open · esc plans · tab agent · ? help", "enter open · esc plans · type to filter · tab agent · ? help"}},
+		{"open a plan, a folder", func(a *app) {
 			press(a, "esc")
-			pick(a, PlanRowDir)
-			press(a, "\r")
-			pick(a, PlanRowDir)
-			press(a, "\r")
-		}, want{"enter open · ? help", "enter open · esc up · ? help", "↑↓ select · enter open · esc up · tab agent · ? help", "↑↓ select · enter open · type to filter · esc up · tab agent · ? help"}},
-		{"browse, on + New plan", func(a *app) { press(a, "esc"); pick(a, PlanRowDir); press(a, "\r"); pick(a, PlanRowNew) }, want{"enter create · ? help", "enter create · esc plans · ? help", "↑↓ select · enter create · esc plans · tab agent · ? help", "↑↓ select · enter create · type to filter · esc plans · tab agent · ? help"}},
-		{"plan list, /help typed", func(a *app) { press(a, "esc"); typeText(a, "/help") }, want{"enter help · esc clear", "enter help · esc clear · tab agent", "enter help · esc clear · tab agent", "enter help · esc clear · tab agent"}},
-		{"name prompt", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r") }, want{"enter create · ? help", "enter create · esc cancel · ? help", "enter create · esc cancel · tab agent · ? help", "enter create · esc cancel · tab agent · ? help"}},
-		{"name prompt, named", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x") }, want{"enter create", "enter create · esc clear · tab agent", "enter create · esc clear · tab agent", "enter create · esc clear · tab agent"}},
+			pick(a, PlanRowOpen)
+			press(a, "\r", "\r")
+		}, want{"enter open · ? help", "enter open · esc up · ? help", "↑↓ select · enter open · esc up · tab agent · ? help", "↑↓ select · enter open · esc up · type to filter · tab agent · ? help"}},
+		{"open a plan, filtered", func(a *app) {
+			press(a, "esc")
+			pick(a, PlanRowOpen)
+			press(a, "\r", "\r")
+			typeText(a, "s")
+		}, want{"enter open", "enter open · esc clear · tab agent", "↑↓ select · enter open · esc clear · tab agent", "↑↓ select · enter open · esc clear · tab agent"}},
+		{"plans, /help typed", func(a *app) { press(a, "esc"); typeText(a, "/help") }, want{"enter help · esc clear", "enter help · esc clear · tab agent", "enter help · esc clear · tab agent", "enter help · esc clear · tab agent"}},
+		{"new plan", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r") }, want{"enter create · ? help", "enter create · esc cancel · ? help", "enter create · esc cancel · tab agent · ? help", "enter create · esc cancel · tab agent · ? help"}},
+		{"new plan, named", func(a *app) { press(a, "esc"); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x") }, want{"enter create", "enter create · esc cancel · tab agent", "enter create · esc cancel · tab agent", "enter create · esc cancel · tab agent"}},
 		{"tasks", func(a *app) {}, tasks},
 		{"tasks, a done task", func(a *app) { press(a, "home") }, tasks},
 		{"tasks, offer", func(a *app) { latched(a); press(a, "esc"); typeText(a, "sendoff"); press(a, "\r"); offered(a) }, tasks},
@@ -1160,11 +1144,11 @@ func TestFootersPinned(t *testing.T) {
 		cols, rows int
 		want       string
 	}{
-		{"wait", true, func(a *app) {}, 38, 24, "esc plans · tab agent · ? help"},
+		{"plans, first run", true, func(a *app) {}, 38, 24, "enter create · tab agent · ? help"},
+		{"plans, first run, wide", true, func(a *app) {}, 121, 24, "enter create · tab agent · ? help"},
 		{"agent, empty", true, func(a *app) { press(a, "\t") }, 38, 24, "tab plan · ? help"},
 		{"agent, empty, runs past", true, func(a *app) { a.health, a.hidden = notWired(), 4; press(a, "\t") }, 38, 12, "↑↓ scroll · tab plan · ? help"},
-		{"plan list, no plan open", true, func(a *app) { press(a, "esc") }, 38, 24, "enter create · esc wait · ? help"},
-		{"plan list, no plan open, wide", true, func(a *app) { press(a, "esc") }, 121, 24, "↑↓ select · enter create · type to find · esc wait · tab agent · ? help"},
+		{"plans off", true, func(a *app) { os.WriteFile(filepath.Join(a.plans.Repo, "rex"), []byte("x"), 0o644); a.plans.Rebuild() }, 38, 24, "tab agent · ? help"},
 	} {
 		a := testApp(t)
 		tc.setup(a)
@@ -1226,8 +1210,9 @@ func TestFooterNeverMovesWithTheCursor(t *testing.T) {
 				seen[footer()] = true
 				press(a, "down")
 			}
-			// The task list's enter always opens details (docs/ux.md §4.2).
-			if len(seen) < 2 && s.name != "find" && s.name != "tasks" {
+			// The task list's enter always opens details, and Open a plan's
+			// opens a folder or a plan (docs/ux.md §4.2).
+			if len(seen) < 2 && s.name != "find" && s.name != "tasks" && s.name != "browse" {
 				t.Errorf("%s %d×%d: no row changed what enter does: %v", s.name, size[0], size[1], seen)
 			}
 		}

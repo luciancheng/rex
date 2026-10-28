@@ -38,7 +38,7 @@ var pageKeys = map[string][]helpKey{
 		offerHelp,
 		{name: "↑↓", what: "move between tasks · pgup pgdn a page"},
 		{name: "home end", what: "first / last task (also ctrl+a ctrl+e)"},
-		{name: "esc ←", what: "back to the plan list"},
+		{name: "esc ←", what: "back to Plans"},
 	},
 	// A plan with no list: no task to move to or open, only its page to
 	// scroll on a short screen (docs/ux.md §6).
@@ -47,13 +47,13 @@ var pageKeys = map[string][]helpKey{
 		offerHelp,
 		{name: "↑↓", what: "scroll this page on a short screen · pgup pgdn a page"},
 		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
-		{name: "esc ←", what: "back to the plan list"},
+		{name: "esc ←", what: "back to Plans"},
 	},
 	"can't read": {
 		offerHelp,
 		{name: "↑↓", what: "scroll this page on a short screen · pgup pgdn a page"},
 		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
-		{name: "esc ←", what: "back to the plan list"},
+		{name: "esc ←", what: "back to Plans"},
 	},
 	"task": {
 		offerHelp,
@@ -68,37 +68,24 @@ var pageKeys = map[string][]helpKey{
 		{name: "esc ←", what: "back to the task list"},
 	},
 	"plans": {
-		{name: "enter", what: "open the selected plan or folder, or create one"},
-		{name: "→", what: "into the selected folder"},
+		{name: "enter →", what: "the selected card or plan"},
 		{name: "↑↓", what: "move · pgup pgdn a page"},
 		{name: "home end", what: "first / last (also ctrl+a ctrl+e)"},
-		{name: "type", what: "find a plan across rex/plans"},
+		{name: "type", what: "find a plan by name or title across rex/plans"},
 		offerHelp,
-		{name: "esc ←", what: "with no plan open, back to waiting"},
-		{what: "the selected plan opens in place: its goal, pin, what's next and what's done"},
+		{what: "Continue and Open latest follow the plans your agent writes; a plan picked anywhere else stays until you pick another"},
 	},
-	"folder": {
-		{name: "enter", what: "open the plan, or go into the folder"},
-		{name: "→", what: "into the folder"},
+	"open a plan": {
+		{name: "enter →", what: "open the plan, or go into the folder"},
 		{name: "↑↓", what: "move · pgup pgdn a page"},
 		{name: "home end", what: "first / last (also ctrl+a ctrl+e)"},
 		{name: "type", what: "filter this folder"},
-		{name: "esc ← ../", what: "up a folder; from a top folder, back to the plan list"},
+		{name: "esc ←", what: "up a folder; from rex/plans/, back to Plans"},
 	},
 	"new plan": {
 		{name: "enter", what: "create it and open its task list"},
 		{name: "type", what: "its name; a/b makes plan b in folder a"},
-		{name: "esc", what: "clear the name, else cancel: nothing is written"},
-	},
-	"new folder": {
-		{name: "enter", what: "create it and go into it"},
-		{name: "type", what: "its name; a/b makes b inside a"},
-		{name: "esc", what: "clear the name, else cancel: nothing is written"},
-	},
-	"waiting": {
-		{name: "esc ←", what: "the plan list: open or create a plan yourself"},
-		{name: "↑↓", what: "scroll this page on a short screen · pgup pgdn a page"},
-		{name: "home end", what: "top / bottom (also ctrl+a ctrl+e)"},
+		{name: "esc", what: "cancel: nothing is written"},
 	},
 	"agent": {
 		{name: "↑↓", what: "scroll · pgup pgdn a page"},
@@ -114,8 +101,8 @@ var pageKeys = map[string][]helpKey{
 var offerHelp = helpKey{name: "o", what: "open the plan your agent wrote, while the notice row offers it"}
 
 // helpLines is Help (docs/ux.md §13): THIS PAGE, for the page it opened over,
-// then what holds everywhere, the marks, how AGENT names its blocks, the
-// plan list's typing and what Rex never does; the feed's health follows.
+// then what holds everywhere, the marks, how AGENT names its blocks,
+// typing on Plans and what Rex never does; the feed's health follows.
 // tall puts a blank row above each section but the first. From 34 cells the key sits in
 // an 11-cell column left of what it does; narrower it sits above it.
 func helpLines(width int, page string, tall bool) []LogLine {
@@ -170,7 +157,7 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{name: "1/3", what: "a group's progress; on row 0, the plan's"},
 		{what: "your cursor", key: []Span{{Text: "❯", Role: "pick"}}},
 		{name: "following", what: "Rex opens each plan your agent writes"},
-		{name: "latched", what: "you picked this plan; another the agent writes shows on the notice row, and o opens it"},
+		{name: "latched", what: "you picked this plan; another the agent writes shows on the notice row and in Open latest, and o opens it"},
 	})
 	section("AGENT TAB", "", []helpKey{
 		{name: "thinking", what: "a run of N thoughts (×N); the latest shows"},
@@ -180,16 +167,16 @@ func helpLines(width int, page string, tall bool) []LogLine {
 		{name: "reply ───", what: "the agent's reply"},
 		{name: "rex ›", what: "Rex's own line, plan news or drift, never sent"},
 	})
-	section("PLAN LIST", "", []helpKey{
+	section("PLANS", "", []helpKey{
 		{name: "type", what: "find a plan, filter a folder, or name a new one"},
 		{name: "a/b", what: "plan b in folder a"},
 		{name: "ctrl+u", what: "clear the line"},
 		{name: "ctrl+w", what: "delete a word"},
-		{name: "? /help", what: "this help (? on an empty line)"},
+		{name: "? /help", what: "this help (? with the field empty)"},
 		{name: "/breakdance", what: "one dance"},
 	})
 	section("REX NEVER", "", nil)
-	for _, w := range wrap("runs or approves tools, edits a plan (it only creates an empty one you name in the plan list), sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet), or reads transcripts. Your agent pins and finishes tasks in the plan file; Rex shows it.", max(8, width-2)) {
+	for _, w := range wrap("runs or approves tools, edits a plan (it only creates an empty one you name on Plans), sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet), or reads transcripts. Your agent pins and finishes tasks in the plan file; Rex shows it.", max(8, width-2)) {
 		lines = append(lines, LogLine{Kind: "text", Text: "  " + w})
 	}
 	return lines

@@ -5,7 +5,7 @@ import (
 	"unicode"
 )
 
-// Verbs are the /words the plan list's composer runs on ⏎ (docs/ux.md
+// Verbs are the /words Plans' text field runs on enter (docs/ux.md
 // §2): Rex has no actions of its own on a plan, so these only show help
 // or dance.
 var verbNames = map[string]string{
@@ -20,7 +20,7 @@ func parseVerb(text string) (verb string, ok bool) {
 	return verb, ok
 }
 
-// forcedVerb is a plan list draft that asks for a verb: "/name" or a lone
+// forcedVerb is text in Plans' field that asks for a verb: "/name" or a lone
 // "?". Other text there is a find query, filter or name, taken literally.
 func forcedVerb(text string) bool {
 	t := strings.TrimSpace(text)

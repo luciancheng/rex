@@ -466,8 +466,8 @@ func TestPlanEscLadder(t *testing.T) {
 		if !strings.Contains(footer(), "esc plans") {
 			t.Fatalf("the list: %q", footer())
 		}
-		if press(a, back); a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Group != groupOpen {
-			t.Fatalf("%s from the list: the plan list, on the plan: at=%d", back, a.at)
+		if press(a, back); a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowContinue {
+			t.Fatalf("%s from the list: Plans, on Continue: at=%d", back, a.at)
 		}
 		press(a, "\r", "up")
 	}
@@ -853,8 +853,11 @@ func TestOpenedNotice(t *testing.T) {
 		t.Fatalf("an attach: %q", got)
 	}
 	again := newApp("yellow", false, "idle", NewPlanBrowser(b.plans.Repo), 120, 32)
-	if got := again.notice().Text; got != "Opened Password reset · rex/plans/auth/reset.rex.json" {
-		t.Fatalf("start: %q", got)
+	if got := again.notice().Text; got != "" {
+		t.Fatalf("start opens nothing, so says nothing: %q", got)
+	}
+	if press(again, "\r"); again.notice().Text != "Opened Password reset · rex/plans/auth/reset.rex.json" {
+		t.Fatalf("Continue: %q", again.notice().Text)
 	}
 }
 
@@ -1297,27 +1300,31 @@ func TestOutlineKeysActAtOnce(t *testing.T) {
 	}
 }
 
-// Start reopens the plan last opened in this repo, with no keys, and
-// follows it (docs/ux.md §11, §14); Esc shows it under OPEN.
-func TestOpenGroupAfterRestart(t *testing.T) {
+// Start lands on Plans with Continue, the plan last opened in this repo,
+// selected over a newer plan's Open latest; enter reopens it, following
+// (docs/ux.md §11, §14), and Esc comes back to Continue.
+func TestContinueAfterRestart(t *testing.T) {
 	a, _, path := openDemo(t, demoPlan, 120, 32)
 	// A newer plan doesn't win over the one in ~/.rex/state.json.
 	other := filepath.Join(a.plans.Root, "zz-newer.rex.json")
 	os.WriteFile(other, []byte(demoPlan), 0o644)
+	stampAfter(t, other, path)
 	again := newApp("yellow", false, "idle", NewPlanBrowser(a.plans.Repo), 120, 32)
+	if row := again.plans.Rows[again.plans.Cursor]; again.at != atLibrary || row.Kind != PlanRowContinue || row.Path != path {
+		t.Fatalf("at=%d on %+v", again.at, row)
+	}
+	if frame := again.frame(); !strings.Contains(frame, "❯ Continue        Send-off demo · 1/3 done · pinned card-highlight") || !strings.Contains(frame, "  Open latest     Send-off demo · 1/3 done · changed ") {
+		t.Fatalf("%s", frame)
+	}
+	press(again, "\r")
 	if again.at != atOutline || again.plans.Current != path || !again.follow || again.outline.sel != "card-highlight" {
 		t.Fatalf("at=%d current=%q follow=%v sel=%q", again.at, again.plans.Current, again.follow, again.outline.sel)
 	}
 	if got := textOf(again.frameRows().Rows[0], 120); got != sides("Send-off demo", "1/3 done · following   plan · agent", 78) {
 		t.Fatalf("row 0 names the plan and that Rex follows (docs/ux.md §4): %q", got)
 	}
-	press(again, "esc")
-	row := again.plans.Rows[again.plans.Cursor]
-	if row.Group != groupOpen || row.Path != path {
-		t.Fatalf("cursor on %+v", row)
-	}
-	if frame := again.frame(); !strings.Contains(frame, "OPEN ─") || !strings.Contains(frame, "❯ cuj/demo ") || !strings.Contains(frame, "    pinned  ▸ card-highlight") {
-		t.Fatalf("%s", frame)
+	if press(again, "esc"); again.plans.Rows[again.plans.Cursor].Kind != PlanRowContinue {
+		t.Fatalf("cursor on %+v", again.plans.Rows[again.plans.Cursor])
 	}
 }
 func TestReopeningKeepsTheOpenPlan(t *testing.T) {
@@ -1817,22 +1824,6 @@ func TestListlessPlansScroll(t *testing.T) {
 		if press(a, "esc"); a.at != atLibrary {
 			t.Fatalf("%s: esc is the plan list", src)
 		}
-	}
-}
-
-// docs/ux.md §11: the cold-start scan opens a plan no write brought, so
-// its notice says it opened, never that your agent wrote it.
-func TestColdStartScanSaysOpened(t *testing.T) {
-	a := testApp(t)
-	c := &clock{t: time.Unix(1_800_000_000, 0)}
-	a.now = c.now
-	writePlan(t, a.plans.Repo, "by-hand.rex.json", demoPlan)
-	a.plans.walk = planWalk{}
-	if a.tick(); a.at != atOutline || filepath.Base(a.plans.Current) != "by-hand.rex.json" {
-		t.Fatalf("the scan opens it: at=%d %q", a.at, a.plans.Current)
-	}
-	if got := a.notice().Text; got != "Opened Send-off demo · rex/plans/by-hand.rex.json" {
-		t.Fatalf("notice %q", got)
 	}
 }
 

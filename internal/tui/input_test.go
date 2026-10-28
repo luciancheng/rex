@@ -21,14 +21,11 @@ func browseApp(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
-	press(a, "esc") // start opened seed; Esc is the plan list
-	for i, row := range a.plans.Rows {
-		if row.Kind == PlanRowDir {
-			a.plans.Cursor = i // team/, under FOLDERS
-		}
-	}
+	a.plans.pick(PlanRowOpen) // start is Plans: Open a plan, then team/
 	press(a, "\r")
-	if !a.plans.Browsing() {
+	a.plans.pick(PlanRowDir)
+	press(a, "\r")
+	if !a.plans.Browsing() || filepath.Base(a.plans.Dir) != "team" {
 		t.Fatal("setup: browse")
 	}
 	return a
@@ -55,12 +52,16 @@ func TestEscLadder(t *testing.T) {
 		t.Fatal("then Esc climbs one folder")
 	}
 	press(a, "esc")
-	if a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Name != "team" {
-		t.Fatal("then, from a top folder, to the plan list, on the folder")
+	if !a.plans.Browsing() || !a.plans.topFolder() || a.plans.Rows[a.plans.Cursor].Name != "team" {
+		t.Fatal("then to rex/plans itself, on the folder")
+	}
+	press(a, "esc")
+	if a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Kind != PlanRowOpen {
+		t.Fatal("then to Plans, on the Open a plan card")
 	}
 	press(a, "esc")
 	if a.pane != PanePlans || a.plans.Screen != ScreenHome {
-		t.Fatal("at Home Esc does nothing")
+		t.Fatal("on Plans Esc does nothing")
 	}
 }
 
@@ -68,25 +69,28 @@ func TestBackspaceNeverNavigates(t *testing.T) {
 	a := browseApp(t)
 	press(a, "\x7f", "\x7f", "\x7f")
 	if !a.plans.Browsing() {
-		t.Fatal("backspace on an empty filter must not leave Browse")
+		t.Fatal("backspace on an empty filter must not leave Open a plan")
 	}
 }
 
+// New plan keeps its name across Tab; Esc cancels it, name and all
+// (docs/ux.md §3), and Ctrl+U clears only the name.
 func TestNamePromptKeepsTheNameAcrossTab(t *testing.T) {
 	a := testApp(t)
-	press(a, "esc", "\r") // the plan list, then + New plan
+	press(a, "\r") // Create a plan
 	typeText(a, "half")
 	press(a, "\t", "\t")
 	if a.plans.Screen != ScreenCreate || a.draft != "half" {
 		t.Fatalf("screen=%d draft=%q", a.plans.Screen, a.draft)
 	}
-	press(a, "esc")
+	press(a, "\x15")
 	if a.draft != "" || a.plans.Screen != ScreenCreate {
-		t.Fatal("Esc clears the name first")
+		t.Fatal("Ctrl+U clears the name and stays")
 	}
+	typeText(a, "again")
 	press(a, "esc")
-	if a.plans.Screen != ScreenHome {
-		t.Fatal("then cancels the prompt")
+	if a.draft != "" || a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Kind != PlanRowNew {
+		t.Fatal("Esc cancels, back on the Create a plan card")
 	}
 }
 
@@ -157,7 +161,7 @@ func TestHelpOverlay(t *testing.T) {
 		if m := regexp.MustCompile(`(?m)^  [a-hj-np-z]( |$)`).FindString(body); m != "" {
 			t.Fatalf("help at %d has a one-letter key %q\n%s", width, m, body)
 		}
-		for _, want := range []string{"THIS PAGE", "MARKS", "pinned", "next up", "also active", "cycle", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLAN LIST", "REX NEVER", "FEED", "/breakdance"} {
+		for _, want := range []string{"THIS PAGE", "MARKS", "pinned", "next up", "also active", "cycle", "AGENT TAB", "thinking", "(×N)", "[ASK]", "rex ›", "PLANS", "REX NEVER", "FEED", "/breakdance"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("help at %d lacks %q\n%s", width, want, body)
 			}
@@ -243,12 +247,8 @@ func TestLibraryTextIsLiteralUnlessSlashed(t *testing.T) {
 	}
 }
 
-func TestPlaceholdersAndPromptCap(t *testing.T) {
+func TestPromptCap(t *testing.T) {
 	a := testApp(t)
-	press(a, "esc")
-	if !strings.Contains(a.frame(), "find or create a plan") {
-		t.Fatal("the plan list's placeholder")
-	}
 	press(a, "\t")
 	long := strings.Repeat("word ", 400)
 	a.ingest([]watch.Event{watch.NewEvent("cursor", "user", long, nil)})
@@ -286,7 +286,7 @@ func TestHelpTakesNoTyping(t *testing.T) {
 	a.settle(80, 24)
 	press(a, "esc", "?")
 	if a.overlay[PanePlans] != overlayHelp || strings.Contains(a.frame(), "╭") {
-		t.Fatalf("Help over the plan list hides its composer\n%s", a.frame())
+		t.Fatalf("Help over Plans has no field\n%s", a.frame())
 	}
 	typeText(a, "/breakdance")
 	press(a, "\r", "?")
@@ -335,21 +335,15 @@ func TestFeedLinesCannotPoseAsRex(t *testing.T) {
 	}
 }
 
-func TestDraftCapAndPlaceholderWithoutColor(t *testing.T) {
+func TestDraftCap(t *testing.T) {
 	a := testApp(t)
-	press(a, "esc")
 	typeText(a, strings.Repeat("x", draftCap-4))
 	if !strings.Contains(a.frame(), "252/256") {
 		t.Fatal("near the cap the count shows")
 	}
 	press(a, "\t")
 	if strings.Contains(a.frame(), "252/256") {
-		t.Fatal("the tape has no composer, so no count")
-	}
-	b := testApp(t)
-	press(b, "esc")
-	if !strings.Contains(b.frame(), "(find or create a plan)") {
-		t.Fatal("without color the placeholder is in parentheses")
+		t.Fatal("the tape has no field, so no count")
 	}
 }
 

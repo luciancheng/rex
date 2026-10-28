@@ -39,8 +39,9 @@ func mustReplace(t *testing.T, s, old, new string) string {
 	return strings.Replace(s, old, new, 1)
 }
 
-// cujApp is Rex started in a repo that holds the CUJ plan: start attaches
-// it, so it opens on the outline (docs/ux.md §11).
+// cujApp is Rex started in a repo that holds the CUJ plan, opened from
+// Plans' Open latest card, so it is followed and on its task list
+// (docs/ux.md §11).
 func cujApp(t *testing.T) (*app, *clock, string) {
 	t.Helper()
 	repo := t.TempDir()
@@ -51,6 +52,9 @@ func cujApp(t *testing.T) (*app, *clock, string) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, cujFixture(t), 0o644)
 	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
+	if press(a, "\r"); a.at != atOutline || !a.follow {
+		t.Fatalf("setup: Open latest opens the CUJ plan: at=%d", a.at)
+	}
 	c := &clock{t: time.Unix(1_800_000_000, 0)}
 	a.now = c.now
 	return a, c, path
@@ -73,14 +77,15 @@ func (k *keys) spent(t *testing.T, budget int, what string) {
 	k.n = 0
 }
 
-// The journey (docs/ux.md §14): Rex waits → the agent writes a plan and
-// Rex opens it → the agent pins a task → an off-pin edit shows drift →
-// the agent marks the task done → Tab to the tape and back → Esc to the
-// plan list, where picking a plan latches → the agent writes another
-// plan, which o opens → quit. The agent drives the plan; Rex only shows
-// it and never writes it. At 109×24, a column short of the mascot, the
-// same journey is text-only: every frame gives the text the whole width
-// up to the measure (docs/ux.md §12).
+// The journey (docs/ux.md §14): Rex starts on Plans → the agent writes a
+// plan and Rex opens it → the agent pins a task → an off-pin edit shows
+// drift → the agent marks the task done → Tab to the tape and back → Esc
+// to Plans, where Continue follows and any other pick latches → the agent
+// writes another plan, which o opens → quit → start again on Continue,
+// one enter from last time's plan. The agent drives the plan; Rex only
+// shows it and never writes it. At 109×24, a column short of the mascot,
+// the same journey is text-only: every frame gives the text the whole
+// width up to the measure (docs/ux.md §12).
 func TestCUJWholeLoop(t *testing.T) {
 	for _, tc := range []struct {
 		cols, lines int
@@ -120,11 +125,18 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 		later(a, c)
 	}
 
-	if a.pane != PanePlans || a.at != atWait || !strings.Contains(frame(), "no plan yet · tell your agent to make one") || strings.Contains(frame(), "╭") {
-		t.Fatalf("A. with no plan yet, start waits for one, with no composer\n%s", frame())
+	if a.pane != PanePlans || a.at != atLibrary || !strings.Contains(frame(), "❯ Create a plan ") || !strings.Contains(frame(), "Or ask your agent to plan the work.") || strings.Contains(frame(), "╭") {
+		t.Fatalf("A. with no plan yet, start lands on Plans' first run, with no field open\n%s", frame())
 	}
-	if !strings.Contains(frame(), "agents learn plans from the rex-plan skill · rex ingest --install-skill") {
-		t.Fatalf("A. with the skill nowhere, the wait screen says how to teach the agent\n%s", frame())
+	if !strings.Contains(frame(), "Agents learn the plan format from the rex-plan skill:") || rowWith(rows(), "rex ingest --install-skill") != "  rex ingest --install-skill" {
+		t.Fatalf("A. with the skill nowhere, the first run says how to teach the agent\n%s", frame())
+	}
+	before := a.frame()
+	for i := 0; i < 10; i++ {
+		later(a, c)
+	}
+	if a.at != atLibrary || a.frame() != before {
+		t.Fatalf("A. nothing changes Plans by itself\n%s", frame())
 	}
 
 	// B. The agent writes the plan: a stub first, then its tasks, none
@@ -293,24 +305,33 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 		t.Fatal("F. Tab returns to the task list")
 	}
 
-	// G. The plan list: create a plan there, then open one by name and
-	// one from RECENT. Picking a plan there latches it.
+	// G. Plans: Continue is the plan you left, and enter on it is a round
+	// trip that keeps following; create a plan there, open one by name,
+	// Open latest and a Recent plan. Any pick but Continue and Open latest
+	// latches.
 	k.press("esc")
-	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Group != groupOpen || !strings.Contains(frame(), "╭") {
-		t.Fatalf("G. Esc climbs to the plan list, on OPEN, where the composer is\n%s", frame())
+	if a.at != atLibrary || a.plans.Rows[a.plans.Cursor].Kind != PlanRowContinue || strings.Contains(frame(), "╭") {
+		t.Fatalf("G. Esc climbs to Plans, on Continue, with no field open\n%s", frame())
 	}
-	if frame := frame(); !strings.Contains(frame, "OPEN ─") || !strings.Contains(frame, "─ following") || !strings.Contains(frame, "    done    ✔ card-highlight  the selection bar") {
-		t.Fatalf("G. the open plan opens in place under OPEN\n%s", frame)
+	if row := rowWith(rows(), "❯ Continue"); !strings.HasPrefix(row, "❯ Continue        Send-off demo · 2/3 done") {
+		t.Fatalf("G. Continue names the plan you left: %q\n%s", row, frame())
 	}
 	k.press("\r")
+	k.spent(t, 2, "back to the plan (esc enter)")
 	if !a.follow || a.at != atOutline {
-		t.Fatal("G. enter on the open plan keeps following")
+		t.Fatal("G. enter on Continue keeps following")
 	}
-	k.n = 0
-	k.press("esc")
+	k.press("esc", "down", "\r")
+	if !a.plans.Prompting() || !strings.Contains(frame(), "╭ name ─") {
+		t.Fatalf("G. Create a plan is New plan, its field open\n%s", frame())
+	}
 	k.typ("scratch")
 	k.press("\r")
-	k.spent(t, 1+len("scratch")+1, "create in Rex (Esc, name, enter)")
+	k.spent(t, 3+len("scratch")+1, "create in Rex (esc ↓ enter, name, enter)")
+	// scratch is newer than the demo, the agent's last save, by a clock
+	// tick on any filesystem; the walk sees it at once.
+	stampAfter(t, filepath.Join(a.plans.Root, "scratch.rex.json"), path)
+	a.plans.walk = planWalk{}
 	stub, err := plan.Load(filepath.Join(a.plans.Root, "scratch.rex.json"))
 	if err != nil || len(stub.Problems) != 0 || a.at != atOutline || a.follow || strings.Contains(rows().Rows[0], "following") {
 		t.Fatalf("G. create writes a v1 stub, opens it and latches: %v\n%s", err, frame())
@@ -320,28 +341,35 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	}
 	k.press("esc")
 	k.typ("sendoff-demo")
+	if !strings.Contains(frame(), "╭ find ─") {
+		t.Fatalf("G. typing on Plans opens the find field\n%s", frame())
+	}
 	k.press("\r")
-	k.spent(t, 1+len("sendoff-demo")+1, "open by name (Esc, name, enter)")
+	k.spent(t, 1+len("sendoff-demo")+1, "open by name (esc, name, enter)")
 	if a.plans.Current != path || a.at != atOutline || a.follow || a.outline.sel != "load-outline" {
 		t.Fatalf("G. the plan opens on its pin, latched: sel=%q\n%s", a.outline.sel, frame())
 	}
 	if got := a.notice().Text; got != "Opened Send-off demo · rex/plans/cuj/sendoff-demo.rex.json" {
 		t.Fatalf("G. the notice says which file opened: %q", got)
 	}
-	// The newest other plan is the first under RECENT: Esc ↓ enter goes
-	// there and back.
-	for _, want := range []string{"scratch.rex.json", "sendoff-demo.rex.json"} {
-		k.press("esc", "down", "\r")
-		k.spent(t, 3, "open a recent plan (Esc ↓ enter)")
-		if filepath.Base(a.plans.Current) != want || a.at != atOutline || a.follow {
-			t.Fatalf("G. ↓ enter on RECENT opens %s, latched: %q follow=%v", want, a.plans.Current, a.follow)
-		}
+	// Open latest is the newest plan, scratch, and follows it; then
+	// sendoff-demo, which you had open, leads Recent.
+	k.press("esc", "down", "down", "down", "\r")
+	k.spent(t, 5, "open the newest plan (esc ↓↓↓ enter, Open latest)")
+	if filepath.Base(a.plans.Current) != "scratch.rex.json" || a.at != atOutline || !a.follow {
+		t.Fatalf("G. Open latest opens scratch, following: %q follow=%v", a.plans.Current, a.follow)
+	}
+	k.press("esc", "down", "down", "down", "\r")
+	k.spent(t, 5, "open a recent plan (esc ↓↓↓ enter, the first under Recent)")
+	if a.plans.Current != path || a.at != atOutline || a.follow {
+		t.Fatalf("G. the first under Recent opens sendoff-demo, latched: %q follow=%v", a.plans.Current, a.follow)
 	}
 	// Latched, the agent writes another plan: the notice offers it, enter
 	// keeps its meaning, and o opens it, following again (docs/ux.md §4).
 	c.t = c.t.Add(toastFor) // the open's notice has had its time
 	next := filepath.Join(a.plans.Root, "cuj", "next.rex.json")
 	os.WriteFile(next, plan.Stub("next"), 0o644)
+	stampAfter(t, next, filepath.Join(a.plans.Root, "scratch.rex.json")) // the newest plan
 	a.ingest([]watch.Event{at(c, 0, watch.Event{Source: "claude", Kind: "result", Text: "wrote " + next, Meta: map[string]any{"tool": "Write", "path": next, "ok": true, "cwd": repo}})})
 	if got := a.notice().Text; got != "Your agent wrote cuj/next · o opens it" || a.plans.Current != path {
 		t.Fatalf("G. a latched plan stays, and the notice offers the new one: %q current=%q", got, a.plans.Current)
@@ -355,10 +383,10 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 	if a.plans.Current != next || !a.follow || a.at != atOutline {
 		t.Fatalf("G. o opens it, following: %q follow=%v", a.plans.Current, a.follow)
 	}
-	k.press("esc", "down", "\r")
-	k.spent(t, 3, "back to a recent plan (Esc ↓ enter)")
+	k.press("esc", "down", "down", "down", "\r")
+	k.spent(t, 5, "back to a recent plan (esc ↓↓↓ enter)")
 	if a.plans.Current != path || a.follow {
-		t.Fatalf("G. ↓ enter on RECENT opens the demo again, latched: %q follow=%v", a.plans.Current, a.follow)
+		t.Fatalf("G. the first under Recent opens the demo again, latched: %q follow=%v", a.plans.Current, a.follow)
 	}
 
 	// H. Quit.
@@ -375,10 +403,17 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 		t.Fatalf("Rex never wrote the plan: the file is what the agent wrote\n%s", got)
 	}
 
+	// I. The next start lands on Plans, Continue last time's plan: one
+	// enter opens it, following, on its pin (docs/ux.md §14).
 	b := newApp("yellow", false, "idle", NewPlanBrowser(repo), cols, lines)
-	(&keys{a: b}).spent(t, 0, "open last time's plan")
-	if b.pane != PanePlans || b.at != atOutline || b.plans.Current != path || !b.follow || b.outline.sel != "load-outline" {
-		t.Fatalf("I. the next start opens it again, following: at=%d current=%q sel=%q", b.at, b.plans.Current, b.outline.sel)
+	if row := b.plans.Rows[b.plans.Cursor]; b.pane != PanePlans || b.at != atLibrary || b.plans.Current != "" || row.Kind != PlanRowContinue || row.Path != path {
+		t.Fatalf("I. the next start is Plans, on Continue: at=%d on %+v", b.at, row)
+	}
+	kb := &keys{a: b}
+	kb.press("\r")
+	kb.spent(t, 1, "open last time's plan (enter on Continue)")
+	if b.at != atOutline || b.plans.Current != path || !b.follow || b.outline.sel != "load-outline" {
+		t.Fatalf("I. enter opens it again, following: at=%d current=%q sel=%q", b.at, b.plans.Current, b.outline.sel)
 	}
 }
 
@@ -405,7 +440,7 @@ type matrixScreen struct {
 // matrixScreens is every screen and overlay Rex draws (AGENTS.md, Commands
 // and tests): a new one joins the list.
 func matrixScreens(t *testing.T) []matrixScreen {
-	list := func(a *app) { press(a, "esc") } // the task list at start, Esc to the plan list
+	list := func(a *app) { press(a, "esc") } // the CUJ plan's task list, Esc to Plans
 	lib := func(sc PlanScreen) func(a *app) bool {
 		return func(a *app) bool { return a.pane == PanePlans && a.at == atLibrary && a.plans.Screen == sc }
 	}
@@ -415,8 +450,8 @@ func matrixScreens(t *testing.T) []matrixScreen {
 	over := func(o overlayKind) func(a *app) bool { return func(a *app) bool { return a.overlay[a.pane] == o } }
 	browse := func(a *app) {
 		list(a)
-		a.plans.Screen, a.plans.Dir, a.plans.fresh = ScreenBrowse, filepath.Join(a.plans.Root, "cuj"), true
-		a.plans.Rebuild()
+		a.plans.pick(PlanRowOpen)
+		press(a, "\r")
 	}
 	pick := func(a *app, kind PlanRowKind) {
 		for i, row := range a.plans.Rows {
@@ -453,40 +488,75 @@ func matrixScreens(t *testing.T) []matrixScreen {
 		a.ingest([]watch.Event{{Source: "claude", Kind: "result", Text: "wrote " + other, Meta: map[string]any{"tool": "Write", "path": other, "ok": true}}})
 	}
 	return []matrixScreen{
-		{"wait", true, func(a *app) {}, func(a *app) bool { return a.at == atWait && a.plans.Current == "" }},
-		{"wait, skill installed", true, func(a *app) {
+		// Plans (docs/ux.md §11): a first run, with the skill missing and
+		// installed, plans off and outside git; back from a plan, on
+		// Continue; every kind of plan under Recent; Find; Open a plan and
+		// a folder in it; New plan, empty, named and refused.
+		{"plans, first run", true, func(a *app) {}, func(a *app) bool {
+			return lib(ScreenHome)(a) && a.plans.total == 0 && len(a.plans.Rows) == 1 && a.plans.Current == ""
+		}},
+		{"plans, first run, skill installed", true, func(a *app) {
 			home, _ := os.UserHomeDir()
 			for _, dir := range skill.Dirs(home, a.plans.Repo, true) {
 				if err := skill.Install(dir, io.Discard); err != nil {
 					t.Fatal(err)
 				}
 			}
-		}, func(a *app) bool { return a.at == atWait && skillHint(a.skill.look(a.plans.Repo, a.now())) == "" }},
-		{"wait plans off", true, func(a *app) {
+		}, func(a *app) bool { return lib(ScreenHome)(a) && skillHint(a.skill.look(a.plans.Repo, a.now())) == "" }},
+		{"plans off", true, func(a *app) {
 			os.WriteFile(filepath.Join(a.plans.Repo, "rex"), []byte("x"), 0o644)
 			a.plans.Rebuild()
-		}, func(a *app) bool { return a.at == atWait && a.plans.Notice == rexFileNotice }},
-		{"home no plans", true, list, func(a *app) bool { return lib(ScreenHome)(a) && a.plans.total == 0 }},
-		{"home", false, list, func(a *app) bool { return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Group == groupOpen }},
-		// Every kind of row: a recent, a finished, an empty and an
-		// unreadable plan, folders and root plans, the accordion on a
-		// recent one (docs/ux.md §11).
-		{"home, every kind of plan", false, func(a *app) { seedKinds(t, a); list(a); press(a, "down", "down", "down", "down") }, func(a *app) bool {
-			return lib(ScreenHome)(a) && strings.HasPrefix(a.plans.Rows[a.plans.Cursor].Name, "ux/") && len(a.plans.Rows) > 8
+		}, func(a *app) bool {
+			return lib(ScreenHome)(a) && a.plans.Notice == rexFileNotice && len(a.plans.Rows) == 0
 		}},
-		{"home, an unreadable plan", false, func(a *app) { seedKinds(t, a); list(a); press(a, "down") }, func(a *app) bool {
-			return lib(ScreenHome)(a) && a.plans.sums[a.plans.Rows[a.plans.Cursor].Path].err != ""
+		{"plans, outside git", true, func(a *app) {
+			*a = *newApp("yellow", false, "idle", NewPlanBrowser(t.TempDir()), 120, 32) // no .git
+		}, func(a *app) bool {
+			return lib(ScreenHome)(a) && !a.plans.inGit && a.plans.Rows[a.plans.Cursor].Kind == PlanRowNew
 		}},
-		{"home, on a folder", false, func(a *app) { seedKinds(t, a); list(a); pick(a, PlanRowDir) }, func(a *app) bool {
-			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowDir
+		{"plans, back from a plan", false, list, func(a *app) bool {
+			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowContinue
+		}},
+		// Every kind of plan under Recent: a finished, an empty and an
+		// unreadable plan, and long names (docs/ux.md §11).
+		{"plans, every kind of plan", false, func(a *app) { seedKinds(t, a); list(a); press(a, "end") }, func(a *app) bool {
+			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan && a.plans.rowOf(PlanRowPlan) > 0
+		}},
+		{"plans, on Open latest", false, func(a *app) {
+			seedKinds(t, a)
+			newest := time.Now().Add(time.Hour)
+			os.Chtimes(filepath.Join(a.plans.Root, "ux", "redesign.rex.json"), newest, newest)
+			list(a)
+			pick(a, PlanRowLatest)
+		}, func(a *app) bool {
+			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowLatest
 		}},
 		{"find", false, func(a *app) { list(a); typeText(a, "send") }, func(a *app) bool {
-			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan
+			return lib(ScreenHome)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan && a.fieldOpen()
 		}},
-		{"browse", false, browse, func(a *app) bool { return lib(ScreenBrowse)(a) && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan }},
-		{"create", false, func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
-		{"new folder", false, func(a *app) { browse(a); pick(a, PlanRowMkdir); press(a, "\r"); typeText(a, "notes") }, lib(ScreenFolder)},
+		{"find, no match", false, func(a *app) { list(a); typeText(a, "zzz-nothing") }, func(a *app) bool {
+			return lib(ScreenHome)(a) && len(a.plans.Rows) == 1 && a.plans.Rows[0].Kind == PlanRowCreateNamed
+		}},
+		{"open a plan", false, browse, func(a *app) bool {
+			return lib(ScreenBrowse)(a) && a.plans.topFolder() && a.plans.Rows[a.plans.Cursor].Kind == PlanRowDir
+		}},
+		{"open a plan, a folder", false, func(a *app) { seedKinds(t, a); browse(a); press(a, "\r") }, func(a *app) bool {
+			return lib(ScreenBrowse)(a) && !a.plans.topFolder() && a.plans.Rows[a.plans.Cursor].Kind == PlanRowPlan
+		}},
+		{"open a plan, filtered", false, func(a *app) { seedKinds(t, a); browse(a); typeText(a, "old") }, func(a *app) bool {
+			return lib(ScreenBrowse)(a) && a.fieldOpen() && a.plans.Filter == "old"
+		}},
+		{"new plan", false, func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r"); typeText(a, "x/y") }, lib(ScreenCreate)},
 		{"new plan, empty", false, func(a *app) { list(a); pick(a, PlanRowNew); press(a, "\r") }, lib(ScreenCreate)},
+		{"new plan, a name taken", false, func(a *app) {
+			list(a)
+			pick(a, PlanRowNew)
+			press(a, "\r")
+			typeText(a, "cuj/sendoff-demo")
+			press(a, "\r")
+		}, func(a *app) bool {
+			return lib(ScreenCreate)(a) && a.plans.Err != "" && noticeKindOf(a) == noticeError
+		}},
 		// The task list (docs/ux.md §6): on the agent's pin, on what Rex
 		// would pin, with nothing to pin, on a done row, with groups, long
 		// enough to scroll (↑ N more on row 2), and a plan with problems.
@@ -547,7 +617,7 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			a.reloadDoc()
 			a.reloadDoc()
 		}, func(a *app) bool { return at(atOutline)(a) && a.doc.plan != nil && noticeKindOf(a) == noticeError }},
-		{"plan list, an error", false, func(a *app) { list(a); typeText(a, "/nope"); press(a, "\r") }, func(a *app) bool {
+		{"plans, an error", false, func(a *app) { list(a); typeText(a, "/nope"); press(a, "\r") }, func(a *app) bool {
 			return lib(ScreenHome)(a) && a.plans.Err != "" && noticeKindOf(a) == noticeError
 		}},
 		{"tasks, your agent asks", false, func(a *app) {
@@ -556,13 +626,13 @@ func matrixScreens(t *testing.T) []matrixScreen {
 		{"held attach", false, func(a *app) {
 			list(a)
 			typeText(a, "zz")
-			press(a, "\t") // the list's find holds it, seen from AGENT
+			press(a, "\t") // Plans' find holds it, seen from AGENT
 			write(a)
 		}, func(a *app) bool { return a.pane == PaneChat && a.pending != "" }},
 		{"new plan offer", false, func(a *app) {
 			list(a)
 			typeText(a, "scratch")
-			press(a, "\r") // made in the list: latched
+			press(a, "\r") // made on Plans: latched
 			write(a)
 		}, func(a *app) bool { return at(atOutline)(a) && a.offer != "" && !a.follow }},
 		// Details on a page of their own (docs/ux.md §6): the pin's, a
@@ -627,7 +697,7 @@ func matrixScreens(t *testing.T) []matrixScreen {
 			return at(atOutline)(a) && len(a.doc.plan.Tasks) == 0
 		}},
 		{"help", false, func(a *app) { press(a, "\t", "?") }, over(overlayHelp)},
-		{"help over the list", false, func(a *app) { list(a); press(a, "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atLibrary }},
+		{"help over Plans", false, func(a *app) { list(a); press(a, "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atLibrary }},
 		{"help over a task", false, func(a *app) { press(a, "\r", "?") }, func(a *app) bool { return over(overlayHelp)(a) && a.at == atTaskDetail }},
 	}
 }
@@ -693,7 +763,7 @@ func agentTurn(a *app) []watch.Event {
 func matrixApp(t *testing.T, s matrixScreen, cols, lines int) *app {
 	var a *app
 	if s.empty {
-		a = testApp(t) // the wait screen
+		a = testApp(t) // Plans' first run
 	} else {
 		a, _, _ = cujApp(t)
 	}
@@ -805,7 +875,7 @@ var moreUp = regexp.MustCompile(`^ +↑ [0-9]+ more$`)
 
 // docs/ux.md §5, rule 4: color never changes the characters. Every
 // screen's text column in color, stripped of its SGR, is its NO_COLOR
-// frame; only the composer's placeholder differs, in parentheses.
+// frame.
 func TestColorFrameSameText(t *testing.T) {
 	for _, size := range [][2]int{{38, 24}, {80, 24}, {120, 24}, {80, 10}} {
 		for _, s := range matrixScreens(t) {
@@ -815,9 +885,6 @@ func TestColorFrameSameText(t *testing.T) {
 			color := a.frameRows().Rows
 			l := a.layout()
 			for i := range plain {
-				if top := len(plain) - FooterRows - l.notice - l.composer; i >= top && i < top+l.composer {
-					continue // the composer
-				}
 				if got, want := tailCells(stripSGR(color[i]), l.textW), tailCells(plain[i], l.textW); got != want {
 					t.Errorf("%s %d×%d row %d:\ncolor    %q\nno color %q", s.name, size[0], size[1], i, got, want)
 				}

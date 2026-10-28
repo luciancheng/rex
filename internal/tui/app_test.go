@@ -46,23 +46,23 @@ func typeText(a *app, text string) {
 	}
 }
 
-// With no plan yet, start waits for the agent to write one (docs/ux.md
-// §11); Create is in the plan list, not the front door.
-func TestAppStartsOnTheWaitScreen(t *testing.T) {
+// docs/ux.md §11: start lands on Plans, every time; with no plan yet it is
+// the first run, the Create a plan card selected, and Esc goes nowhere.
+func TestAppStartsOnPlans(t *testing.T) {
 	a := testApp(t)
-	if a.pane != PanePlans || a.at != atWait || a.plans.Current != "" {
+	if a.pane != PanePlans || a.at != atLibrary || a.plans.Current != "" {
 		t.Fatalf("pane=%d at=%d current=%q", a.pane, a.at, a.plans.Current)
 	}
 	frame := a.frame()
-	if !strings.Contains(frame, "no plan yet · tell your agent to make one") || strings.Contains(frame, "Create a plan") {
+	if !strings.Contains(frame, "❯ Create a plan ") || !strings.Contains(frame, "Or ask your agent to plan the work.") {
 		t.Fatalf("%s", frame)
 	}
-	if !strings.Contains(frame, "esc plans · tab agent · ? help") || !strings.Contains(frame, "Plans › Waiting for a plan") {
-		t.Fatalf("the footer says where to go\n%s", frame)
+	if !strings.Contains(frame, "enter create · tab agent · ? help") || !strings.Contains(frame, "No plans here yet.") {
+		t.Fatalf("the footer says what enter does\n%s", frame)
 	}
-	press(a, "esc")
-	if a.at != atLibrary || !strings.Contains(a.frame(), "❯ + New plan") {
-		t.Fatalf("Esc is the plan list, + New plan in it\n%s", a.frame())
+	press(a, "esc", "left")
+	if a.at != atLibrary || a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Kind != PlanRowNew {
+		t.Fatalf("Plans is the top: Esc and ← go nowhere\n%s", a.frame())
 	}
 }
 
@@ -321,24 +321,29 @@ func TestAppAgentHasNoComposer(t *testing.T) {
 	}
 }
 
-// The plan list holds the only composer (docs/ux.md §2): / finds or
-// filters, + names; the screens without one draw no box at all.
-func TestThePlanListsComposerPrefix(t *testing.T) {
+// Plans holds the only text field (docs/ux.md §2), shown only while it
+// is open: find while you type, name in New plan; no screen draws an empty
+// one.
+func TestTheFieldOpensOnlyWhileTyping(t *testing.T) {
 	a := testApp(t)
 	if f := a.frame(); strings.Contains(f, "╭") {
-		t.Fatalf("the wait screen has no composer\n%s", f)
+		t.Fatalf("Plans with no text has no field\n%s", f)
+	}
+	typeText(a, "x")
+	if f := a.frame(); !strings.Contains(f, "╭ find ─") || !strings.Contains(f, "│ x ") {
+		t.Fatalf("typing opens the find field\n%s", f)
 	}
 	press(a, "esc")
-	if f := a.frame(); !strings.Contains(f, "│ / ") {
-		t.Fatalf("Home finds\n%s", f)
+	if f := a.frame(); strings.Contains(f, "╭") {
+		t.Fatalf("esc closes it\n%s", f)
 	}
 	press(a, "\r")
-	if f := a.frame(); a.plans.Screen != ScreenCreate || !strings.Contains(f, "│ + ") {
-		t.Fatalf("the Name prompt names\n%s", f)
+	if f := a.frame(); a.plans.Screen != ScreenCreate || !strings.Contains(f, "╭ name ─") {
+		t.Fatalf("New plan has its name field, empty or not\n%s", f)
 	}
 	press(a, "\t")
 	if f := a.frame(); a.pane != PaneChat || strings.Contains(f, "╭") {
-		t.Fatalf("the tape has no composer\n%s", f)
+		t.Fatalf("the tape has no field\n%s", f)
 	}
 }
 

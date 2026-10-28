@@ -58,10 +58,10 @@ func TestComposeFrameStringMatchesRows(t *testing.T) {
 	if got := ComposeFrame("idle", "yellow", opt); !strings.Contains(got, strings.Join(f.Rows, "\r\n")) {
 		t.Fatal("string frame and rows disagree")
 	}
-	if len(f.Rows) != 24 || f.CursorRow != 21 { // the composer's middle row, over the notice row and the footer
+	if len(f.Rows) != 24 || f.CursorRow != 5 { // the field's middle row, at the top of the body
 		t.Fatalf("rows=%d cursor=%d", len(f.Rows), f.CursorRow)
 	}
-	opt.Pane, opt.Composer = PaneChat, false // no composer, so no cursor
+	opt.Pane, opt.Composer = PaneChat, false // no field, so no cursor
 	if f := composeRows("idle", "yellow", opt); f.CursorRow != 0 || !strings.HasSuffix(ComposeFrame("idle", "yellow", opt), HideCursor) {
 		t.Fatalf("the tape hides the cursor: row %d", f.CursorRow)
 	}

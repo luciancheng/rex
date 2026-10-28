@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,16 +12,14 @@ import (
 	"github.com/luciancheng/rex/internal/watch"
 )
 
-// libraryApp is the plan list as Esc from the wait screen shows it, with
-// plans that appeared after start (no tick ran, so none was attached).
+// libraryApp is Rex started on Plans in a repo with plans (docs/ux.md
+// §11), none opened yet.
 func libraryApp(t *testing.T, plans ...string) (*app, string) {
 	t.Helper()
 	repo := t.TempDir()
 	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
-	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
 	root := seedPlans(t, repo, plans...)
-	a.plans.walk = planWalk{}
-	press(a, "esc")
+	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 120, 32)
 	return a, root
 }
 
@@ -37,9 +34,14 @@ func pickRow(a *app, kind PlanRowKind, name string) {
 	}
 }
 
-// browseTo enters the folder named name from the list or a folder.
+// browseTo goes into the folder named name: from Plans through the Open a
+// plan card, or from a folder in it.
 func browseTo(t *testing.T, a *app, name string) {
 	t.Helper()
+	if !a.plans.Browsing() {
+		pickRow(a, PlanRowOpen, "")
+		press(a, "\r")
+	}
 	pickRow(a, PlanRowDir, name)
 	press(a, "\r")
 	if !a.plans.Browsing() || filepath.Base(a.plans.Dir) != name {
@@ -48,19 +50,20 @@ func browseTo(t *testing.T, a *app, name string) {
 }
 
 // listRepo is the CUJ plan, open and followed, and the other plans of the
-// mockups in docs/ux.md §11: RECENT newest first, a finished plan, a folder
-// for each.
+// mockups in docs/ux.md §11: a finished plan, one with no title, and the
+// newest, each in a folder or at the root.
 func listRepo(t *testing.T) *app {
 	t.Helper()
 	a, _, _ := cujApp(t)
 	repo := a.plans.Repo
 	var done []string
-	for i := 0; i < 13; i++ {
+	for i := 0; i < 12; i++ {
 		done = append(done, fmt.Sprintf(`{"id": "t%d", "status": "done"}`, i))
 	}
+	done = append(done, `{"id": "t12", "status": "skipped"}`) // finished, never done
 	writePlan(t, repo, "rex/v1-sendoff-loop.rex.json", `{"version": 1, "title": "Rex v1: the send-off loop", "status": "done", "tasks": [`+strings.Join(done, ", ")+`]}`)
-	writePlan(t, repo, "auth-flow.rex.json", `{"version": 1, "title": "Sign-in and first run", "tasks": [{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "d"}]}`)
-	writePlan(t, repo, "ux/redesign.rex.json", `{"version": 1, "title": "Rex visual redesign", "status": "active", "tasks": [{"id": "a", "status": "done"}, {"id": "b"}, {"id": "c"}, {"id": "d"}, {"id": "e"}, {"id": "f"}]}`)
+	writePlan(t, repo, "auth-flow.rex.json", `{"version": 1, "tasks": [{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "d"}]}`)
+	writePlan(t, repo, "ux/redesign.rex.json", `{"version": 1, "title": "Rex visual redesign", "status": "active", "tasks": [{"id": "a", "status": "done"}, {"id": "b", "status": "skipped"}, {"id": "c"}, {"id": "d"}, {"id": "e"}, {"id": "f"}]}`)
 	a.plans.walk = planWalk{}
 	return a
 }
@@ -76,527 +79,176 @@ func body(a *app) string {
 	return strings.Join(out, "\n")
 }
 
-// docs/ux.md §11: the plan list is OPEN, RECENT and FOLDERS, in that
-// order, and every plan is on it exactly once: the open one under OPEN,
-// the newest others under RECENT, and the root plans RECENT leaves out
-// under FOLDERS.
-func TestPlanListGroups(t *testing.T) {
+// docs/ux.md §11 (A2): Plans is its cards, one row each, the label bold
+// in a 16-cell column and what it does muted, in #70's order and each only
+// when it does something; then a blank row, Recent and its rows. Under 12
+// rows the blank rows go, and the cards never drop below Recent; the list
+// says how many rows it hides.
+func TestPlansMockups(t *testing.T) {
 	a := listRepo(t)
-	for i := 0; i < 6; i++ {
-		old := writePlan(t, a.plans.Repo, fmt.Sprintf("old-%d.rex.json", i), demoPlan)
-		at := time.Now().Add(time.Duration(i)*time.Second - 2*time.Hour) // older than the rest
-		os.Chtimes(old, at, at)
-	}
+	latest := writePlan(t, a.plans.Repo, "auth/login.rex.json", `{"version": 1, "title": "Login flow", "tasks": [{"id": "a", "status": "done"}, {"id": "b"}, {"id": "c"}]}`)
+	when := a.now().Add(-8 * time.Minute) // newer than the rest, on Rex's clock
+	os.Chtimes(latest, when, when)
 	a.plans.walk = planWalk{}
 	press(a, "esc")
-	var heads []string
-	for _, line := range BuildPlanView(a.plans, 78) {
-		if label, _, ok := strings.Cut(line.Text, " ─"); ok && label == strings.ToUpper(label) && !strings.HasPrefix(label, " ") {
-			heads = append(heads, line.Text)
+	a.settle(80, 24)
+	want := `❯ Continue        Send-off demo · 1/3 done · pinned card-highlight
+  Create a plan   name it; you or your agent fill in the tasks
+  Open a plan     browse rex/plans/ · 4 folders · 5 plans
+  Open latest     Login flow · 1/3 done · changed 8m ago
+
+  Recent
+  ux/redesign          Rex visual redesign                             1/6 done
+  auth-flow            untitled                                        0/4 done
+  rex/v1-sendoff-loop  Rex v1: the send-off loop                   ✔ 12/13 done`
+	if got := body(a); !strings.HasPrefix(got, want+"\n\n") {
+		t.Fatalf("80×24:\n%s\nwant\n%s", got, want)
+	}
+	rows := a.frameRows().Rows
+	if head, ctx := textOf(rows[0], 80), textOf(rows[1], 80); !strings.HasPrefix(head, "Plans ") || !strings.HasSuffix(head, " · 5 plans   plan · agent") || ctx != "Pick up where you left off, or start a new plan." {
+		t.Fatalf("row 0 %q, row 1 %q", head, ctx)
+	}
+	a.settle(80, 10)
+	want = `❯ Continue        Send-off demo · 1/3 done · pinned card-highlight
+  Create a plan   name it; you or your agent fill in the tasks
+  Open a plan     browse rex/plans/ · 4 folders · 5 plans
+  Open latest     Login flow · 1/3 done · changed 8m ago
+  Recent
+  ux/redesign          Rex visual redesign                             1/6 done
+  ↓ 2 more`
+	if got := strings.Join(strings.Split(body(a), "\n")[:7], "\n"); got != want {
+		t.Fatalf("80×10:\n%s\nwant\n%s", got, want)
+	}
+	a.settle(38, 12)
+	want = `❯ Continue        Send-off demo · 1/…
+  Create a plan   name it; you or yo…
+  Open a plan     browse rex/plans/ …
+  Open latest     Login flow · 1/3 d…
+  ↓ 3 more`
+	if got := strings.Join(strings.Split(body(a), "\n")[:5], "\n"); got != want {
+		t.Fatalf("38×12:\n%s\nwant\n%s", got, want)
+	}
+	// A skipped task is finished, never done: a plan counts as its task
+	// list's row 0 does, once opened (docs/ux.md §4, §11).
+	a.settle(80, 24)
+	for name, meta := range map[string]string{"ux/redesign.rex.json": "1/6 done", "rex/v1-sendoff-loop.rex.json": "12/13 done"} {
+		press(a, "esc")
+		pickRow(a, PlanRowPlan, name)
+		press(a, "\r")
+		if head := textOf(a.frameRows().Rows[0], 80); !strings.Contains(head, " "+meta+"   plan · agent") {
+			t.Errorf("%s: row 0 %q, Plans said %s", name, head, meta)
 		}
 	}
-	if len(heads) != 3 || !strings.HasPrefix(heads[0], "OPEN ") || !strings.HasSuffix(heads[0], "─") || !strings.HasPrefix(heads[1], "RECENT ") || !strings.HasPrefix(heads[2], "FOLDERS ") || !strings.HasSuffix(heads[2], " rex/plans/") {
-		t.Fatalf("H2s %q", heads)
-	}
-	// The OPEN H2's meta is the follow word (docs/ux.md §11).
-	if f := a.frame(); !strings.Contains(f, "─ following") {
-		t.Fatalf("OPEN says following\n%s", f)
-	}
-	seen := map[string]int{}
-	groups := map[string]string{}
-	recent := 0
-	for _, row := range a.plans.Rows {
-		if row.Kind == PlanRowPlan {
-			seen[row.Path]++
-			groups[row.Name] = row.Group
-			if row.Group == groupRecent {
-				recent++
+}
+
+// docs/ux.md §11: Continue's plan is on no other card and nowhere under
+// Recent; Open latest is hidden when it is Continue's plan, and is never
+// under Recent either. Every plan Plans names is named once.
+func TestContinueIsDedupedAgainstOpenLatestAndRecent(t *testing.T) {
+	once := func(t *testing.T, a *app) {
+		t.Helper()
+		seen := map[string]int{}
+		for _, row := range a.plans.Rows {
+			if row.Path != "" {
+				for p := range seen {
+					if samePlan(p, row.Path) {
+						t.Fatalf("%s named twice: %+v", row.Name, a.plans.Rows)
+					}
+				}
+				seen[row.Path]++
 			}
 		}
 	}
-	// A plan in a folder is listed once or reached through its folder; a
-	// root plan is always listed, once.
-	all := a.plans.plans()
-	if len(all) != 10 {
-		t.Fatalf("%d plans", len(all))
+	// Continue is the newest: no Open latest.
+	a := listRepo(t)
+	press(a, "esc")
+	once(t, a)
+	if a.plans.rowOf(PlanRowLatest) >= 0 || a.plans.Rows[0].Kind != PlanRowContinue {
+		t.Fatalf("Continue is the newest plan, so there is no Open latest: %+v", a.plans.Rows)
 	}
-	for _, p := range all {
-		top, _, nested := strings.Cut(p.rel, "/")
-		switch {
-		case seen[p.path] > 1:
-			t.Errorf("%s listed %d times", p.rel, seen[p.path])
-		case seen[p.path] == 0 && (!nested || groups[top] != ""):
-			t.Errorf("%s isn't on the list", p.rel)
-		}
-	}
-	if groups["cuj/sendoff-demo.rex.json"] != groupOpen || recent != maxRecent {
-		t.Fatalf("the open plan under OPEN, %d under RECENT: %v", recent, groups)
-	}
-	for _, name := range []string{"ux/redesign.rex.json", "auth-flow.rex.json", "rex/v1-sendoff-loop.rex.json", "old-5.rex.json", "old-4.rex.json"} {
-		if groups[name] != groupRecent {
-			t.Errorf("%s is one of the newest, under RECENT: %q", name, groups[name])
-		}
-	}
-	for _, name := range []string{"old-0.rex.json", "old-3.rex.json"} {
-		if groups[name] != groupFolders {
-			t.Errorf("root plan %s RECENT leaves out goes under FOLDERS: %q", name, groups[name])
-		}
-	}
-	var folders []string
+	// Another plan is the newest: Open latest names it, and Recent the
+	// rest, the plan you had open earlier first.
+	pickRow(a, PlanRowPlan, "auth-flow.rex.json")
+	press(a, "\r", "esc")
+	once(t, a)
+	var kinds []string
 	for _, row := range a.plans.Rows {
-		if row.Group == groupFolders && row.Kind != PlanRowPlan {
-			folders = append(folders, fmt.Sprintf("%d %s %d", row.Kind, row.Name, row.Plans))
-		}
+		kinds = append(kinds, fmt.Sprintf("%d %s", row.Kind, planStem(row.Name)))
 	}
-	want := []string{fmt.Sprintf("%d cuj 1", PlanRowDir), fmt.Sprintf("%d rex 1", PlanRowDir), fmt.Sprintf("%d ux 1", PlanRowDir), fmt.Sprintf("%d New plan 0", PlanRowNew), fmt.Sprintf("%d New folder 0", PlanRowMkdir)}
-	if strings.Join(folders, ",") != strings.Join(want, ",") {
-		t.Fatalf("FOLDERS: the top folders, then + New plan and + New folder: %v", folders)
+	want := []string{
+		fmt.Sprintf("%d auth-flow", PlanRowContinue), fmt.Sprintf("%d ", PlanRowNew), fmt.Sprintf("%d ", PlanRowOpen),
+		fmt.Sprintf("%d cuj/sendoff-demo", PlanRowLatest), fmt.Sprintf("%d ux/redesign", PlanRowPlan), fmt.Sprintf("%d rex/v1-sendoff-loop", PlanRowPlan),
 	}
-}
-
-// The plan list as docs/ux.md §11 draws it under its title and row 1
-// (§4): groups with a blank row above each H2 but the first (row 2 is its
-// blank) at 24 rows, the accordion on the selected plan, no blank rows at
-// 12 rows and the accordion's pin alone, nothing but rows at 7.
-func TestPlanListMockups(t *testing.T) {
-	cases := []struct {
-		cols, lines int
-		keys        []string
-		want        string
-	}{
-		{38, 24, nil, `
-OPEN ─────────────────────── following
-❯ cuj/sendoff-demo                 1/3
-    Send-off demo · active
-    goal    A teammate opens this pla…
-    pinned  ▸ card-highlight  Selecte…
-    then    · load-outline
-    done    ✔ plans-ui  Home cards, f…
-
-RECENT ───────────────────────────────
-  ux/redesign                      1/6
-  auth-flow                        0/4
-  rex/v1-sendoff-loop          ✔ 13/13
-
-FOLDERS ─────────────────── rex/plans/
-  cuj/                          1 plan
-  ↓ more`},
-		// At 16 rows the accordion keeps 3 lines, over the blank rows. One
-		// ↓ scrolls the open plan away: ↑ more stands on its row, not on
-		// a heading.
-		{38, 16, []string{"down"}, `
-  ↑ more
-RECENT ───────────────────────────────
-❯ ux/redesign                      1/6
-    Rex visual redesign · active
-    next up ▸ b
-    done    ✔ a
-  auth-flow                        0/4
-  ↓ more`},
-		{38, 12, nil, `
-OPEN ─────────────────────── following
-❯ cuj/sendoff-demo                 1/3
-    pinned  ▸ card-highlight  Selecte…
-RECENT ───────────────────────────────
-  ux/redesign                      1/6
-  ↓ more`},
-		{38, 7, nil, `
-❯ cuj/sendoff-demo          open · 1/3
-  ux/redesign                      1/6
-  ↓ more`},
-		{24, 12, nil, `
-OPEN ───────── following
-❯ cuj/sendoff-demo   1/3
-    ▸ card-highlight
-RECENT ─────────────────
-  ux/redesign        1/6
-  ↓ more`},
+	if strings.Join(kinds, ",") != strings.Join(want, ",") {
+		t.Fatalf("rows %v\nwant %v", kinds, want)
 	}
-	for _, tc := range cases {
-		a := listRepo(t)
-		press(a, "esc")
-		a.settle(tc.cols, tc.lines)
-		press(a, tc.keys...)
-		l := a.layout()
-		got := strings.Join(strings.Split(body(a), "\n")[:l.bodyH], "\n")
-		if want := strings.TrimPrefix(tc.want, "\n"); got != want {
-			t.Errorf("%d×%d %v:\n%s\nwant\n%s", tc.cols, tc.lines, tc.keys, got, want)
-		}
-		// Over it, row 0 names the page and counts the plans, and row 1
-		// says what it is for (docs/ux.md §4).
-		rows := a.frameRows().Rows
-		if head := textOf(rows[0], tc.cols); !strings.HasPrefix(head, "Plans ") || !strings.Contains(head, "4 plans") {
-			t.Errorf("%d×%d: row 0 %q", tc.cols, tc.lines, head)
-		}
-		if ctx := textOf(rows[1], tc.cols); !strings.HasPrefix(ctx, "Pick up where you left") {
-			t.Errorf("%d×%d: row 1 %q", tc.cols, tc.lines, ctx)
-		}
-	}
-
-	// From 60 cells a row has the plan's title in a column, and the
-	// accordion's first line says the status and when the file changed.
-	a := listRepo(t)
-	press(a, "esc")
-	a.settle(120, 24)
-	got := body(a)
-	for _, want := range []string{
-		"❯ cuj/sendoff-demo      Send-off demo                                      1/3",
-		"    active · changed ",
-		"    then    · load-outline  Outline view",
-		"  rex/v1-sendoff-loop   Rex v1: the send-off loop                      ✔ 13/13",
-		"  cuj/                                                                  1 plan",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("120×24 lacks %q\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "Send-off demo · active") {
-		t.Errorf("from 60 cells the title is on the row, not in the accordion\n%s", got)
+	if i := a.plans.rowOf(PlanRowPlan); i < 0 || planStem(a.plans.Rows[i].Name) != "ux/redesign" {
+		t.Fatal("Recent never repeats Open latest's plan, which you had open")
 	}
 }
 
-// docs/ux.md §11: the cursor starts on the open plan, else the newest
-// plan, else + New plan; Esc from the outline lands on OPEN, enter there
-// keeps following, and enter on another plan latches.
-func TestPlanListCursor(t *testing.T) {
+// docs/ux.md §11: the cursor starts on Continue, else Open latest, else
+// Create a plan; back from a plan it is on Continue, the plan you left.
+func TestPlansCursorStart(t *testing.T) {
 	a := listRepo(t)
 	press(a, "esc")
-	if row := a.plans.Rows[a.plans.Cursor]; row.Group != groupOpen || row.Path != a.plans.Current {
-		t.Fatalf("on OPEN: %+v", row)
+	if row := a.plans.Rows[a.plans.Cursor]; row.Kind != PlanRowContinue || row.Path != a.plans.Current {
+		t.Fatalf("on Continue: %+v", row)
 	}
-	press(a, "\r")
-	if !a.follow || a.at != atOutline {
-		t.Fatal("enter on OPEN keeps following")
-	}
-	press(a, "esc", "down")
-	if row := a.plans.Rows[a.plans.Cursor]; row.Group != groupRecent || row.Name != "ux/redesign.rex.json" {
-		t.Fatalf("↓ is the newest other plan: %+v", row)
-	}
-	press(a, "\r")
-	// Latched shows no word: row 0's meta drops "following" (docs/ux.md §4).
-	if a.follow || filepath.Base(a.plans.Current) != "redesign.rex.json" || strings.Contains(a.frameRows().Rows[0], "following") {
-		t.Fatalf("enter on another plan latches\n%s", a.frame())
-	}
-
 	none, _ := libraryApp(t, "older.rex.json", "newer.rex.json")
-	if row := none.plans.Rows[none.plans.Cursor]; row.Group != groupRecent || row.Name != "newer.rex.json" {
-		t.Fatalf("with no plan open, on the newest: %+v", row)
+	if row := none.plans.Rows[none.plans.Cursor]; row.Kind != PlanRowLatest || row.Name != "newer.rex.json" {
+		t.Fatalf("with nothing to continue, on Open latest: %+v", row)
 	}
 	empty := testApp(t)
 	os.MkdirAll(filepath.Join(empty.plans.Root, "team"), 0o755)
-	press(empty, "esc")
-	if row := empty.plans.Rows[empty.plans.Cursor]; row.Kind != PlanRowNew {
-		t.Fatalf("with no plans, on + New plan: %+v", row)
+	if row := empty.plans.Rows[empty.plans.Cursor]; row.Kind != PlanRowNew || len(empty.plans.Rows) != 1 {
+		t.Fatalf("with no plans, on Create a plan alone: %+v", empty.plans.Rows)
 	}
 }
 
-// docs/ux.md §11: the selected plan opens in place. Only the plan's own
-// row has ❯ and the selection's purple, nothing is filled, and its lines
-// give way as rows run short. Moving the cursor reads no files: every summary was
-// read when the list was built.
-// docs/ux.md §5 on the plan list: the selected row is purple through and
-// through but for the marks that keep their meaning (the pin's yellow, an
-// error's red, done's green), and only the agent's pin is yellow in the
-// accordion: next up is never sent, so never yellow.
-func TestPlanListRoles(t *testing.T) {
+// docs/ux.md §5 (A2) on Plans: a card's label is bold in the bright title
+// role and what it does muted; the selected card is purple through and
+// through but for the marks that keep their meaning; Recent is a bold
+// label, its names plain text, not bold. Nothing on Plans is yellow.
+func TestPlansRoles(t *testing.T) {
 	a := listRepo(t)
-	press(a, "esc")
-	var row *LogLine
-	lines := planList(a.plans, a.layout().textW, listFit{body: a.layout().bodyH, tall: a.lines >= 16, short: a.lines < blankFrom})
-	for i := range lines {
-		if lines[i].Selected {
-			row = &lines[i]
-			break
-		}
-	}
-	if row == nil || row.Kind != "pick" || !strings.HasPrefix(row.Text, selMark) {
-		t.Fatalf("the selected row: %+v", row)
-	}
-	for _, sp := range row.Spans {
-		if sp.Role != "" && sp.Role != "accent" && sp.Role != "error" && sp.Role != "action" {
-			t.Errorf("the selected row keeps %q in %q, not the selection's purple", sp.Text, sp.Role)
-		}
-	}
-
-	accent := func(lines []LogLine) bool {
-		for _, l := range lines {
-			if l.Kind == "accent" || slices.ContainsFunc(l.Spans, func(sp Span) bool { return sp.Role == "accent" }) {
-				return true
+	press(a, "esc", "down")
+	lines := planList(a.plans, 78, listFit{body: 19, tall: true})
+	for _, line := range lines {
+		for _, sp := range line.Spans {
+			if sp.Role == "accent" {
+				t.Errorf("yellow on Plans: %q", line.Text)
 			}
 		}
-		return false
-	}
-	nextUp, err := plan.Parse([]byte(`{"version": 1, "title": "Later", "tasks": [{"id": "a", "status": "pending"}, {"id": "b", "status": "pending"}]}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if accent(accordion(summarize(nextUp), 78, 5, time.Now())) {
-		t.Error("next up's ▸ is yellow in the accordion; only the agent's pin is")
-	}
-	pinned, _ := plan.Parse([]byte(`{"version": 1, "title": "Now", "tasks": [{"id": "a", "status": "active"}, {"id": "b", "status": "pending"}]}`))
-	if !accent(accordion(summarize(pinned), 78, 5, time.Now())) {
-		t.Error("the agent's pin is yellow in the accordion")
-	}
-}
-
-func TestAccordion(t *testing.T) {
-	a := listRepo(t)
-	press(a, "esc")
-	block := func() []LogLine {
-		var out []LogLine
-		for _, line := range planList(a.plans, a.layout().textW, listFit{body: a.layout().bodyH, tall: a.lines >= 16, short: a.lines < blankFrom}) {
-			if line.Selected {
-				out = append(out, line)
+		switch {
+		case strings.HasPrefix(line.Text, "  Continue "):
+			if line.Spans[1].Role != "title" || !line.Spans[1].Bold || line.Spans[len(line.Spans)-1].Role != "muted" || line.Selected {
+				t.Errorf("an unselected card: %+v", line.Spans)
 			}
-		}
-		return out
-	}
-	labels := func() string {
-		var out []string
-		for _, line := range block()[1:] {
-			out = append(out, strings.TrimSpace(cutCells(strings.TrimPrefix(line.Text, "  "), 10)))
-		}
-		return strings.Join(out, ",")
-	}
-	for _, tc := range []struct {
-		cols, lines int
-		want        string
-	}{
-		{38, 24, "Send-off,goal,pinned,then,done"},
-		{38, 20, "Send-off,goal,pinned,then,done"},
-		{38, 16, "Send-off,pinned,done"},
-		{38, 15, "Send-off,pinned,done"},
-		{38, 12, "pinned"},
-		{38, 11, "pinned"}, // sized as 12 rows, where row 2 and the notice row take two (docs/ux.md §4)
-		{120, 16, "active ·,pinned,done"},
-		{120, 12, "pinned"},
-		{120, 24, "active ·,goal,pinned,then,done"},
-		{24, 24, "Send-off,▸ card-h"},
-	} {
-		a.settle(tc.cols, tc.lines)
-		if got := labels(); got != tc.want {
-			t.Errorf("%d×%d: %q, want %q", tc.cols, tc.lines, got, tc.want)
-		}
-	}
-	a.settle(38, 7)
-	if n := len(block()); n != 1 {
-		t.Fatalf("at 7 rows only the row: %d lines", n)
-	}
-
-	a.settle(38, 24)
-	for i, line := range block() {
-		if marked := strings.HasPrefix(line.Text, "❯ "); marked != (i == 0) || strings.Contains(line.Text, "▌") {
-			t.Errorf("line %d ❯=%v: only the plan's row has it: %q", i, marked, line.Text)
-		}
-		if picked := line.Kind == "pick"; picked != (i == 0) {
-			t.Errorf("line %d purple=%v: only the plan's row is", i, picked)
-		}
-	}
-	// The pin keeps its yellow inside the block.
-	pinned := false
-	for _, line := range block() {
-		for _, s := range line.Spans {
-			if s.Text == "▸ card-highlight" && s.Role == "accent" && s.Bold {
-				pinned = true
+		case strings.HasPrefix(line.Text, "❯ Create a plan "):
+			if line.Kind != "pick" || !line.Selected || !line.Spans[1].Bold {
+				t.Errorf("the selected card: %+v", line)
+			}
+			for _, sp := range line.Spans[1:] {
+				if sp.Role != "" {
+					t.Errorf("the selected card keeps %q in %q, not the selection's purple", sp.Text, sp.Role)
+				}
+			}
+		case line.Text == "  Recent":
+			if line.Kind != "h2" || !line.Spans[1].Bold || line.Selected {
+				t.Errorf("Recent: %+v", line)
+			}
+		case strings.HasPrefix(line.Text, "  ux/redesign "):
+			if line.Kind != "text" || line.Spans[1].Bold || line.Spans[1].Role != "" {
+				t.Errorf("a Recent row's name is plain text: %+v", line.Spans)
 			}
 		}
 	}
-	if !pinned {
-		t.Error("the pin's ▸ id is bold yellow in the accordion")
-	}
-
-	loads := 0
-	defer func(was func(string) (*plan.Plan, error)) { loadPlan = was }(loadPlan)
-	loadPlan = func(path string) (*plan.Plan, error) { loads++; return plan.Load(path) }
-	for _, key := range []string{"down", "down", "down", "up", "end", "home", "pagedown"} {
-		press(a, key)
-		a.frameRows()
-	}
-	if loads != 0 {
-		t.Fatalf("moving the cursor read %d plans", loads)
-	}
-	press(a, "home")
-	a.frameRows()
-	other := filepath.Join(a.plans.Root, "ux", "redesign.rex.json")
-	data, _ := os.ReadFile(other)
-	os.WriteFile(other, data, 0o644) // same bytes, a new mtime
-	os.Chtimes(other, a.now().Add(time.Hour), a.now().Add(time.Hour))
-	os.WriteFile(a.plans.Current, cujFixture(t), 0o644)
-	os.Chtimes(a.plans.Current, a.now().Add(time.Hour), a.now().Add(time.Hour))
-	a.plans.walk = planWalk{}
-	a.plans.Rebuild()
-	if loads != 1 {
-		t.Fatalf("a rebuild reads the one plan that changed, the open one being the outline's: %d reads", loads)
-	}
 }
 
-// The accordion's lines for a plan with nothing pinned, no tasks, or a
-// file that doesn't parse (docs/ux.md §11).
-func TestAccordionStates(t *testing.T) {
-	cases := []struct{ body, want string }{
-		{`{"version": 1, "title": "Shipped", "tasks": [{"id": "a", "status": "done", "accomplished": ["the thing"]}]}`, "✔ all done"},
-		{`{"version": 1, "title": "Stuck", "tasks": [{"id": "a", "status": "blocked"}]}`, "no pin · nothing unblocked"},
-		{`{"version": 1, "title": "Fresh", "tasks": []}`, "no tasks yet · the agent adds them"},
-		{`{"version": 1, "tasks": [`, "can't read: "},
-	}
-	for _, tc := range cases {
-		a, root := libraryApp(t)
-		os.MkdirAll(root, 0o755)
-		os.WriteFile(filepath.Join(root, "p.rex.json"), []byte(tc.body), 0o644)
-		a.plans.walk = planWalk{}
-		a.plans.Rebuild()
-		pickRow(a, PlanRowPlan, "p.rex.json")
-		if v := viewText(BuildPlanView(a.plans, 38)); !strings.Contains(v, "❯ ") || !strings.Contains(v, tc.want) {
-			t.Errorf("%s: want %q\n%s", tc.body, tc.want, v)
-		}
-	}
-	a, root := libraryApp(t)
-	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "p.rex.json"), []byte(`{"tasks": [`), 0o644)
-	a.plans.walk = planWalk{}
-	a.plans.Rebuild()
-	pickRow(a, PlanRowPlan, "p.rex.json")
-	v := viewText(BuildPlanView(a.plans, 38))
-	if !strings.Contains(v, "❯ p                         can't read\n    can't read: ") {
-		t.Fatalf("an unreadable plan's row says so, and its accordion why\n%s", v)
-	}
-	if line := lineWith(BuildPlanView(a.plans, 78), "❯ p "); strings.Join(strings.Fields(line), " ") != "❯ p can't read" {
-		t.Fatalf("an unreadable plan has no title beside its name: %q", line)
-	}
-}
-
-// lineWith is the first line of view that starts with prefix.
-func lineWith(view []LogLine, prefix string) string {
-	for _, line := range strings.Split(viewText(view), "\n") {
-		if strings.HasPrefix(line, prefix) {
-			return line
-		}
-	}
-	return ""
-}
-
-// A plan with no title, as every new stub is, doesn't repeat its name: the
-// title column is blank and the accordion's first line is its status. A
-// finished plan's ✔ all done sits under the other values (docs/ux.md §11).
-func TestAccordionUntitledAndFinished(t *testing.T) {
-	a, root := libraryApp(t)
-	os.MkdirAll(filepath.Join(root, "cuj"), 0o755)
-	os.WriteFile(filepath.Join(root, "cuj", "fresh.rex.json"), plan.Stub("fresh"), 0o644)
-	os.WriteFile(filepath.Join(root, "shipped.rex.json"), []byte(`{"version": 1, "title": "Shipped", "status": "done", "tasks": [{"id": "a", "status": "done"}, {"id": "b", "status": "done", "accomplished": ["Tagged v1.0"]}]}`), 0o644)
-	a.plans.walk = planWalk{}
-	a.plans.Rebuild()
-	pickRow(a, PlanRowPlan, "cuj/fresh.rex.json")
-	if v := viewText(BuildPlanView(a.plans, 38)); !strings.Contains(v, "    pending\n    no tasks yet · the agent adds them\n") {
-		t.Fatalf("38 cells: the status alone, then what's next\n%s", v)
-	}
-	if line := lineWith(BuildPlanView(a.plans, 78), "❯ cuj/fresh"); strings.Join(strings.Fields(line), " ") != "❯ cuj/fresh no tasks" {
-		t.Fatalf("78 cells: no title beside the name: %q", line)
-	}
-	pickRow(a, PlanRowPlan, "shipped.rex.json")
-	if v := viewText(BuildPlanView(a.plans, 78)); !strings.Contains(v, "\n            ✔ all done\n    done    ✔ b  Tagged v1.0") {
-		t.Fatalf("✔ all done in the value column\n%s", v)
-	}
-}
-
-// docs/ux.md §11: OPEN's row and accordion are the plan the outline shows
-// (§6). A save caught half-written by a rebuild keeps the last good copy
-// there, as it does on the outline, and only an error the notice row
-// shows (§4) reaches the list.
-func TestOpenRowFollowsTheOutline(t *testing.T) {
-	a, c, path := cujApp(t)
-	press(a, "esc")
-	write := func(data []byte, after time.Duration) {
-		os.WriteFile(path, data, 0o644)
-		at := c.t.Add(after)
-		os.Chtimes(path, at, at)
-	}
-	polls := func(n int) {
-		for i := 0; i < n; i++ {
-			c.t = c.t.Add(docPollEvery)
-			a.tick()
-		}
-	}
-	torn := []byte(`{"tasks": [`)
-	write(torn, time.Hour)
-	typeText(a, "s") // a find key rebuilds the list while the save is torn
-	if f := a.frame(); strings.Contains(f, "can't read") || !strings.Contains(f, "open · 1/3") {
-		t.Fatalf("a torn save shows the last good copy\n%s", f)
-	}
-	write(cujFixture(t), 2*time.Hour) // the same bytes as before the tear
-	polls(4)
-	press(a, "down", "up")
-	if f := a.frame(); strings.Contains(f, "can't read") || !strings.Contains(f, "Send-off demo") {
-		t.Fatalf("the save done, the list shows the plan\n%s", f)
-	}
-	write(torn, 3*time.Hour)
-	polls(3)
-	if f := a.frame(); !strings.Contains(f, "plan JSON error") || !strings.Contains(f, "can't read: 1:") {
-		t.Fatalf("an error the outline shows, the list shows\n%s", f)
-	}
-}
-
-// docs/ux.md §4, §11: a plan Rex can't open says why on the notice row
-// and in the accordion, the open plan's and another's alike: the cause,
-// never the absolute path an open error leads with, which pushed the cause
-// off.
-func TestUnreadablePlansSayWhy(t *testing.T) {
-	a, c, path := cujApp(t)
-	other := writePlan(t, a.plans.Repo, "other.rex.json", demoPlan)
-	for _, p := range []string{path, other} {
-		if err := os.Chmod(p, 0); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { os.Chmod(p, 0o644) })
-	}
-	if _, err := os.ReadFile(path); err == nil {
-		t.Skip("this user reads a file with no permissions (root, or Windows)")
-	}
-	c.t = c.t.Add(docPollEvery)
-	a.tick()
-	if got, want := a.notice().Text, "✗ plan error: permission denied · showing last good"; got != want {
-		t.Fatalf("the notice row: %q, want %q", got, want)
-	}
-	a.plans.walk = planWalk{}
-	press(a, "esc")
-	for _, name := range []string{"cuj/sendoff-demo.rex.json", "other.rex.json"} {
-		pickRow(a, PlanRowPlan, name)
-		view := BuildPlanView(a.plans, 78)
-		if line := strings.TrimRight(lineWith(view, "    can't read"), " "); line != "    can't read: permission denied" {
-			t.Errorf("%s: %q\n%s", name, line, viewText(view))
-		}
-	}
-	if f := a.frame(); strings.Contains(f, "open /") || !strings.Contains(f, "can't read: permission denied") {
-		t.Fatalf("the cause, not the path\n%s", f)
-	}
-}
-
-// docs/ux.md §4, §11: a name the filesystem refuses says why on the Name
-// prompt's notice row, not the absolute path the error leads with.
-func TestNamePromptSaysWhyCreateFails(t *testing.T) {
-	long := strings.Repeat("x", draftCap) // over any filesystem's 255
-	for kind, made := range map[PlanRowKind]func(string) error{
-		PlanRowNew:   func(dir string) error { return writeNew(filepath.Join(dir, long+".rex.json"), nil) },
-		PlanRowMkdir: func(dir string) error { return os.Mkdir(filepath.Join(dir, long), 0o755) },
-	} {
-		err := made(t.TempDir())
-		pe, ok := err.(*os.PathError)
-		if !ok {
-			t.Fatalf("setup: %v", err)
-		}
-		a, _ := libraryApp(t)
-		pickRow(a, kind, "")
-		press(a, "\r")
-		typeText(a, long)
-		press(a, "\r")
-		if !a.plans.Prompting() || a.plans.Err != pe.Err.Error() || a.notice().Text != "✗ "+pe.Err.Error() || !strings.Contains(a.frame(), "✗ "+pe.Err.Error()) {
-			t.Errorf("row %d: %q, want %q\n%s", kind, a.plans.Err, pe.Err, a.frame())
-		}
-	}
-}
-
-// docs/ux.md §11: RECENT starts with the plans opened earlier in this run,
+// docs/ux.md §11: Recent starts with the plans opened earlier in this run,
 // the latest first, then the newest: the plan you just left leads it,
-// however old its file. Each plan is still listed once.
+// however old its file. Each plan is still named once.
 func TestRecentLeadsWithPlansOpenedThisRun(t *testing.T) {
 	a := listRepo(t)
 	for i := 0; i < maxRecent+1; i++ {
@@ -607,7 +259,7 @@ func TestRecentLeadsWithPlansOpenedThisRun(t *testing.T) {
 	os.Chtimes(auth, old, old) // the oldest plan there is
 	a.plans.walk = planWalk{}
 	press(a, "esc")
-	pickRow(a, PlanRowPlan, "auth-flow.rex.json")
+	typeText(a, "auth-flow")
 	press(a, "\r", "esc")
 	typeText(a, "redesign")
 	press(a, "\r", "esc")
@@ -615,165 +267,22 @@ func TestRecentLeadsWithPlansOpenedThisRun(t *testing.T) {
 		t.Fatalf("setup: opened %q", a.plans.Current)
 	}
 	var recent []string
-	seen := map[string]int{}
 	for _, row := range a.plans.Rows {
-		if row.Group == groupRecent {
+		if row.Kind == PlanRowPlan {
 			recent = append(recent, row.Name)
 		}
-		if row.Kind == PlanRowPlan {
-			seen[row.Name]++
-		}
 	}
-	want := []string{"auth-flow.rex.json", "cuj/sendoff-demo.rex.json", "new-5.rex.json", "new-4.rex.json", "new-3.rex.json"}
-	if strings.Join(recent, ",") != strings.Join(want, ",") {
-		t.Fatalf("RECENT %v, want %v", recent, want)
-	}
-	for name, n := range seen {
-		if n > 1 {
-			t.Errorf("%s listed %d times", name, n)
-		}
+	// The CUJ plan's file is the newest: it is Open latest, not Recent.
+	want := []string{"auth-flow.rex.json", "new-5.rex.json", "new-4.rex.json", "new-3.rex.json", "new-2.rex.json"}
+	if strings.Join(recent, ",") != strings.Join(want, ",") || a.plans.Rows[a.plans.rowOf(PlanRowLatest)].Name != "cuj/sendoff-demo.rex.json" {
+		t.Fatalf("Recent %v, want %v", recent, want)
 	}
 }
 
-// docs/ux.md §12: the accordion takes the rows the screen leaves, so a
-// taller terminal never shows fewer of its lines: not at 12 rows, where
-// row 2 and the notice row come in (§4), not at 16 rows, where the
-// composer becomes its box, and not for the blank rows, which go in only
-// where the accordion keeps its lines. The block always fits.
-func TestAccordionNeverShrinksAsRowsGrow(t *testing.T) {
-	for _, screen := range []string{"list", "find", "browse"} {
-		for _, cols := range []int{80, 120} {
-			a := listRepo(t)
-			press(a, "esc")
-			switch screen {
-			case "find":
-				typeText(a, "demo")
-			case "browse":
-				browseTo(t, a, "cuj")
-			}
-			was := 0
-			for rows := 7; rows <= 30; rows++ {
-				a.settle(cols, rows)
-				// The block is the ❯ row and the indented lines under it.
-				n, in := 0, false
-				for _, r := range a.frameRows().Rows {
-					switch text := textOf(r, cols); {
-					case strings.HasPrefix(text, "❯ "):
-						in = true
-					case in && strings.HasPrefix(text, "    "):
-						n++
-					default:
-						in = false
-					}
-				}
-				if n < was {
-					t.Errorf("%s at %d cells: %d lines at %d rows, %d at %d\n%s", screen, PaneTextWidth(cols, rows), n, rows, was, rows-1, body(a))
-				}
-				if fold := len(accordion(a.plans.sums[a.plans.Rows[a.plans.Cursor].Path], PaneTextWidth(cols, rows), 5, a.now())); rows >= 18 && n != fold {
-					t.Errorf("%s at %d×%d: %d of the accordion's %d lines", screen, cols, rows, n, fold)
-				}
-				was = n
-			}
-		}
-	}
-}
-
-// Outside git Browse has no head over its rows: the notice is row 1 on
-// every plan list screen (docs/ux.md §4), not a line of the list. The accordion takes the rows
-// the rest leaves, so no row is left empty under a cut accordion
-// (docs/ux.md §12).
-func TestBrowseAccordionFillsItsRows(t *testing.T) {
-	repo := t.TempDir() // no .git: the notice
-	writePlan(t, repo, "cuj/a.rex.json", demoPlan)
-	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 38, 16)
-	press(a, "esc")
-	browseTo(t, a, "cuj")
-	pickRow(a, PlanRowPlan, "a.rex.json")
-	// All 8 body rows used at 16 rows, and from 20 the whole accordion.
-	for _, tc := range []struct {
-		rows int
-		want string
-	}{
-		{16, `  ../
-❯ a                         open · 1/3
-    Send-off demo · active
-    pinned  ▸ card-highlight  Selecte…
-    done    ✔ plans-ui  Home cards, b…
-  ──────────────────────────────────
-  + New plan
-  + New folder`},
-		{20, `  ../
-❯ a                         open · 1/3
-    Send-off demo · active
-    goal    Show a plan, pin a task, …
-    pinned  ▸ card-highlight  Selecte…
-    then    · load-outline
-    done    ✔ plans-ui  Home cards, b…
-  ──────────────────────────────────
-  + New plan
-  + New folder
-
-`},
-	} {
-		a.settle(38, tc.rows)
-		lines := strings.Split(body(a), "\n")
-		if got, row1 := strings.Join(lines[:a.layout().bodyH], "\n"), textOf(a.frameRows().Rows[1], 38); got != tc.want || !strings.HasPrefix(row1, "not in git · plans go to") || !strings.HasSuffix(row1, "/rex/plans") {
-			t.Errorf("38×%d:\n%s\nwant\n%s", tc.rows, strings.Join(lines, "\n"), tc.want)
-		}
-	}
-}
-
-// docs/ux.md §11: the list's window never scrolls only to hide blank
-// rows, ↑ more never stands where an H2 is, and ↓ more comes right under
-// the last row, never under a blank row or a heading left alone.
-func TestListWindowEdges(t *testing.T) {
-	for _, cols := range []int{80, 120, 24} {
-		for rows := 12; rows <= 26; rows++ {
-			a := listRepo(t)
-			for i := 0; i < 8; i++ {
-				writePlan(t, a.plans.Repo, fmt.Sprintf("p%d.rex.json", i), demoPlan)
-			}
-			a.plans.walk = planWalk{}
-			press(a, "esc")
-			a.settle(cols, rows)
-			for step := 0; step < 2*len(a.plans.Rows); step++ {
-				key := "down"
-				if step >= len(a.plans.Rows) {
-					key = "up"
-				}
-				where := fmt.Sprintf("%d×%d %s %d", cols, rows, key, step)
-				frame := a.frameRows().Rows
-				l := a.layout()
-				all := planList(a.plans, l.textW, listFit{body: l.bodyH, tall: rows >= 16, short: rows < blankFrom, follow: a.followWord()})
-				list, start := all[headOf(all):], a.plans.View
-				if start > 0 && !slices.ContainsFunc(list[:start], notGap) {
-					t.Errorf("%s: scrolled only to hide blank rows\n%s", where, body(a))
-				}
-				var text []string
-				for _, r := range frame[3 : 3+l.bodyH] {
-					text = append(text, textOf(r, cols))
-				}
-				if text[0] == "  ↑ more" && strings.Contains(list[start].Text, " ──") {
-					t.Errorf("%s: ↑ more covers %q\n%s", where, list[start].Text, body(a))
-				}
-				if start > 0 && text[0] != "  ↑ more" && !list[start].Selected {
-					t.Errorf("%s: rows hidden above, and no ↑ more\n%s", where, body(a))
-				}
-				for i, line := range text {
-					if line == "  ↓ more" && i > 0 && (text[i-1] == "" || strings.Contains(text[i-1], " ──")) {
-						t.Errorf("%s: ↓ more under %q\n%s", where, text[i-1], body(a))
-					}
-				}
-				press(a, key)
-			}
-		}
-	}
-}
-
-// docs/ux.md §11: plans under a hidden folder are left out, as Browse and
-// FOLDERS leave the folder out, so every plan the page counts is on the
-// list or in a folder on it; the open plan is listed wherever it lives.
-// A folder counts its plans as the page does, each file once.
+// docs/ux.md §11: plans under a hidden folder are left out, as Open a plan
+// leaves the folder out, so every plan the page counts is one it can
+// reach; Continue's plan is counted wherever it lives. A folder counts its
+// plans as the page does, each file once.
 func TestOnePlanSetForEveryCount(t *testing.T) {
 	a := listRepo(t)
 	hidden := writePlan(t, a.plans.Repo, ".archive/old.rex.json", demoPlan)
@@ -782,32 +291,17 @@ func TestOnePlanSetForEveryCount(t *testing.T) {
 	if meta := spanText(libraryPage(a.plans).Short); meta != "4 plans" || strings.Contains(body(a), ".archive") {
 		t.Fatalf("a hidden folder's plans are left out: %q\n%s", meta, body(a))
 	}
-	// Left off the list, not out of reach: a find matches it, and start
-	// still lands on it as the newest plan.
+	// Left off Plans, not out of reach: a find matches it, and your
+	// agent's write of it opens it.
 	typeText(a, "old")
 	if !strings.Contains(body(a), ".archive/old") {
 		t.Fatalf("a find reaches a hidden folder's plan:\n%s", body(a))
 	}
 	press(a, "esc")
-	later := time.Now()
-	for _, p := range walkPlans(a.plans.Root) {
-		if p.mod.After(later) {
-			later = p.mod // writePlan's clock runs ahead of the wall's
-		}
-	}
-	later = later.Add(time.Second)
-	if err := os.Chtimes(hidden, later, later); err != nil {
-		t.Fatal(err)
-	}
-	got, err1 := os.Stat(a.newestPlan())
-	want, err2 := os.Stat(hidden)
-	if err1 != nil || err2 != nil || !os.SameFile(got, want) {
-		t.Fatalf("start's newest plan is %q, want %q", a.newestPlan(), hidden)
-	}
 	a.ingest([]watch.Event{wrote(a.plans.Repo, hidden)})
 	press(a, "esc")
-	if row := a.plans.Rows[a.plans.Cursor]; row.Group != groupOpen || row.Name != ".archive/old.rex.json" || spanText(libraryPage(a.plans).Short) != "5 plans" {
-		t.Fatalf("the open plan is under OPEN wherever it lives: %+v %q", row, spanText(libraryPage(a.plans).Short))
+	if row := a.plans.Rows[a.plans.Cursor]; row.Kind != PlanRowContinue || row.Name != ".archive/old.rex.json" || spanText(libraryPage(a.plans).Short) != "5 plans" {
+		t.Fatalf("Continue's plan is counted wherever it lives: %+v %q", row, spanText(libraryPage(a.plans).Short))
 	}
 
 	b := listRepo(t)
@@ -816,236 +310,76 @@ func TestOnePlanSetForEveryCount(t *testing.T) {
 	}
 	b.plans.walk = planWalk{}
 	press(b, "esc")
+	if meta := spanText(libraryPage(b.plans).Short); meta != "4 plans" {
+		t.Fatalf("page %q", meta)
+	}
+	browseTo(t, b, "cuj")
+	press(b, "esc")
 	for _, row := range b.plans.Rows {
 		if row.Kind == PlanRowDir && row.Name == "cuj" && row.Plans != 1 {
 			t.Fatalf("cuj/ counts the plan and its link once: %d", row.Plans)
 		}
 	}
-	if meta := spanText(libraryPage(b.plans).Short); meta != "4 plans" {
-		t.Fatalf("page %q", meta)
-	}
-	browseTo(t, b, "cuj")
-	if meta := spanText(libraryPage(b.plans).Meta); meta != "1 plan" {
-		t.Fatalf("Browse cuj/ %q", meta)
-	}
 }
 
-// Opened by a link's name, the plan's own row in Browse and in a find
-// still says it is open: the open plan is marked by file (docs/ux.md §11).
-func TestOpenMarkGoesByFile(t *testing.T) {
-	a, _, demo := cujApp(t)
-	alias := filepath.Join(a.plans.Root, "alias.rex.json")
-	if err := os.Symlink(demo, alias); err != nil {
-		t.Skip("no symlinks here (Windows without the privilege)")
-	}
-	a.plans.walk = planWalk{}
-	press(a, "esc")
-	typeText(a, "alias")
-	press(a, "\r", "esc")
-	if a.plans.Current != alias {
-		t.Fatalf("setup: open %q", a.plans.Current)
-	}
-	marked := func(where string) {
-		t.Helper()
-		for _, line := range strings.Split(body(a), "\n") {
-			if strings.Contains(line, "sendoff-demo ") && !strings.HasSuffix(line, "open · 1/3") {
-				t.Fatalf("%s: %q isn't marked open\n%s", where, line, body(a))
-			}
-		}
-	}
-	browseTo(t, a, "cuj")
-	marked("browse")
-	press(a, "esc")
-	typeText(a, "sendoff")
-	marked("find")
-}
-
-// docs/ux.md §4, §11: a find is one flat list under Plans › Find on row
-// 0, which counts its matches, and row 1 says what it finds; the open
-// plan's meta says it is open, the selected match keeps its accordion,
-// and + Create 'x' comes last.
-func TestFindFlat(t *testing.T) {
+// docs/ux.md §4, §11: Find is one flat list under Plans › Find on row 0,
+// which counts its matches; row 1 says what it finds; the field is a box
+// titled find at the top of the body from 16 rows, one row under that;
+// + Create <name> comes last, a blank row above it from 12 rows.
+func TestFindMockups(t *testing.T) {
 	a := listRepo(t)
 	press(a, "esc")
-	a.settle(38, 12)
-	typeText(a, "demo")
-	frame := a.frameRows().Rows
-	if head, ctx := textOf(frame[0], 38), textOf(frame[1], 38); !strings.HasPrefix(head, "Plans › Find ") || !strings.Contains(head, " 1 match ") || ctx != `Plans whose name or title has "demo".` {
+	a.settle(80, 24)
+	typeText(a, "re")
+	rows := a.frameRows()
+	if head, ctx := textOf(rows.Rows[0], 80), textOf(rows.Rows[1], 80); !strings.HasPrefix(head, "Plans › Find ") || !strings.Contains(head, " 2 matches ") || ctx != `Plans whose name or title has "re".` {
 		t.Fatalf("row 0 %q, row 1 %q", head, ctx)
 	}
-	got := body(a)
-	// A find has no H2s: the accordion takes every row the rest leaves.
-	want := `❯ cuj/sendoff-demo          open · 1/3
-    Send-off demo · active
-    goal    A teammate opens this pla…
-    pinned  ▸ card-highlight  Selecte…
-    done    ✔ plans-ui  Home cards, f…
-  + Create 'demo'`
-	if !strings.HasPrefix(got, want) {
-		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	want := `  ╭ find ─────────────────────────────────────────────────────────────────────╮
+  │ re                                                                        │
+  ╰───────────────────────────────────────────────────────────────────────────╯
+
+❯ ux/redesign          Rex visual redesign                             1/6 done
+  rex/v1-sendoff-loop  Rex v1: the send-off loop                   ✔ 12/13 done
+
+  + Create re`
+	if got := body(a); !strings.HasPrefix(got, want+"\n\n") {
+		t.Fatalf("80×24:\n%s\nwant\n%s", got, want)
 	}
-	press(a, "\x15")
-	typeText(a, "r")
-	rows := a.plans.Rows
-	if last := rows[len(rows)-1]; last.Kind != PlanRowCreateNamed || last.Name != "r" {
-		t.Fatalf("+ Create 'x' is last: %+v", last)
+	if rows.CursorRow != 5 || rows.CursorCol != 7 {
+		t.Fatalf("the cursor sits after the text in the field: %d,%d", rows.CursorRow, rows.CursorCol)
 	}
-	for _, line := range BuildPlanView(a.plans, 38) {
-		if strings.Contains(line.Text, "─") {
-			t.Fatalf("a find has no group heads: %q", line.Text)
-		}
+	a.settle(80, 10)
+	want = `  find  re
+❯ ux/redesign          Rex visual redesign                             1/6 done
+  rex/v1-sendoff-loop  Rex v1: the send-off loop                   ✔ 12/13 done
+  + Create re`
+	if got := body(a); !strings.HasPrefix(got, want+"\n") {
+		t.Fatalf("80×10:\n%s\nwant\n%s", got, want)
+	}
+	if rows := a.frameRows(); rows.CursorRow != 3 || rows.CursorCol != 11 {
+		t.Fatalf("the cursor in the one-row field: %d,%d", rows.CursorRow, rows.CursorCol)
+	}
+	press(a, "esc")
+	if a.draft != "" || a.plans.Find != "" || strings.Contains(body(a), "  find  ") || strings.Contains(body(a), "╭") || a.frameRows().CursorRow != 0 {
+		t.Fatalf("esc clears the field and the cards come back\n%s", body(a))
 	}
 }
 
-// docs/ux.md §11: there is no Browse root. → or enter on a folder under
-// FOLDERS browses it (§3). From a top folder ../, Esc and ← each go back
-// to the plan list, on the folder; deeper they go up one.
-func TestBrowseUpFromTopFolder(t *testing.T) {
-	right := listRepo(t)
-	press(right, "esc")
-	pickRow(right, PlanRowDir, "cuj")
-	if press(right, "right"); !right.plans.Browsing() || right.plans.Dir != filepath.Join(right.plans.Root, "cuj") {
-		t.Fatalf("→ on cuj/ browses it: screen=%d dir=%q", right.plans.Screen, right.plans.Dir)
+// docs/ux.md §11: a find matches a plan's title as well as its name,
+// after every name match.
+func TestFindMatchesTitles(t *testing.T) {
+	a, _ := libraryApp(t)
+	writePlan(t, a.plans.Repo, "q3.rex.json", `{"version": 1, "title": "Billing revamp", "tasks": []}`)
+	writePlan(t, a.plans.Repo, "billing-old.rex.json", `{"version": 1, "tasks": []}`)
+	a.plans.walk = planWalk{}
+	typeText(a, "billing")
+	var got []string
+	for _, row := range a.plans.Rows {
+		got = append(got, row.Name)
 	}
-	for _, key := range []string{"../", "esc", "left"} {
-		a := listRepo(t)
-		os.MkdirAll(filepath.Join(a.plans.Root, "cuj", "sub"), 0o755)
-		press(a, "esc")
-		browseTo(t, a, "cuj")
-		browseTo(t, a, "sub")
-		for i := 0; i < 2; i++ {
-			if key == "../" {
-				pickRow(a, PlanRowUp, "")
-				press(a, "\r")
-			} else {
-				press(a, key)
-			}
-		}
-		if a.at != atLibrary || a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Name != "cuj" {
-			t.Fatalf("%s twice: screen=%d on %+v", key, a.plans.Screen, a.plans.Rows[a.plans.Cursor])
-		}
-		if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans ") {
-			t.Fatalf("%s: %q", key, title)
-		}
-	}
-	a := listRepo(t)
-	press(a, "esc")
-	browseTo(t, a, "cuj")
-	if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans › cuj/ ") {
-		t.Errorf("Browse's row 0: %q", title)
-	}
-	got := body(a)
-	for _, want := range []string{"  ../\n❯ sendoff-demo ", "open · 1/3", "\n  ────", "\n  + New plan\n  + New folder"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("Browse lacks %q\n%s", want, got)
-		}
-	}
-	if !strings.Contains(a.frame(), "esc plans") {
-		t.Fatalf("from a top folder Esc is the plan list\n%s", a.frame())
-	}
-}
-
-// docs/ux.md §11: the plan list's actions read as actions, without
-// brackets, wherever they show.
-func TestNoBracketedActions(t *testing.T) {
-	a := listRepo(t)
-	press(a, "esc")
-	frames := []string{a.frame()}
-	typeText(a, "brand-new")
-	frames = append(frames, a.frame())
-	press(a, "\x15")
-	browseTo(t, a, "cuj")
-	frames = append(frames, a.frame())
-	empty := testApp(t)
-	press(empty, "esc")
-	frames = append(frames, empty.frame())
-	for i, f := range frames {
-		if strings.Contains(f, "[ + ") || strings.Contains(f, " ]") {
-			t.Errorf("frame %d has brackets\n%s", i, f)
-		}
-		if !strings.Contains(f, "+ New plan") && !strings.Contains(f, "+ Create 'brand-new'") {
-			t.Errorf("frame %d has no action\n%s", i, f)
-		}
-	}
-}
-
-// docs/ux.md §4, §11: with no plans, row 0 says there are none yet, and
-// under it one sentence and the two actions, + New plan selected; Esc
-// goes back to Wait.
-func TestNoPlansYet(t *testing.T) {
-	a := testApp(t)
-	press(a, "esc")
-	a.settle(38, 12)
-	if head := textOf(a.frameRows().Rows[0], 38); !strings.HasPrefix(head, "Plans ") || !strings.Contains(head, "no plans yet") {
-		t.Fatalf("row 0 %q", head)
-	}
-	if ctx := textOf(a.frameRows().Rows[1], 38); ctx != "No plans here yet." {
-		t.Fatalf("row 1 %q", ctx)
-	}
-	got := body(a)
-	want := `  No plans in rex/plans/ yet. Type a
-  name below, or ask your agent to
-  write one.
-
-❯ + New plan
-  + New folder`
-	if !strings.HasPrefix(got, want) {
-		t.Fatalf("got\n%s\nwant\n%s", got, want)
-	}
-	if !strings.Contains(a.frame(), "esc wait") {
-		t.Fatalf("with no plan open the footer says esc wait\n%s", a.frame())
-	}
-	press(a, "esc")
-	if a.at != atWait {
-		t.Fatal("Esc goes back to Wait")
-	}
-}
-
-// docs/ux.md §4, §11: the Name prompt, Plans › New plan on row 0 with
-// the folder it creates in, says what to type, where it will go as it is
-// typed, and that it never overwrites; a taken name is the notice row's
-// error.
-func TestNamePrompt(t *testing.T) {
-	a := listRepo(t)
-	press(a, "esc")
-	a.settle(38, 12)
-	pickRow(a, PlanRowNew, "")
-	press(a, "\r")
-	typeText(a, "auth-flow2")
-	// At 38 cells the breadcrumb clips to its current crumb before the
-	// meta goes (docs/ux.md §4).
-	if head := textOf(a.frameRows().Rows[0], 38); !strings.HasPrefix(head, "New plan ") || !strings.Contains(head, " rex/plans/ ") {
-		t.Fatalf("row 0 %q", head)
-	}
-	want := `  Name the plan, then enter.
-  a/b makes plan b in folder a.
-
-  → rex/plans/auth-flow2.rex.json
-  never overwrites a file`
-	if got := body(a); !strings.HasPrefix(got, want) {
-		t.Fatalf("got\n%s\nwant\n%s", got, want)
-	}
-	press(a, "\x15")
-	if got := body(a); !strings.Contains(got, "→ rex/plans/<name>.rex.json") {
-		t.Fatalf("an empty name shows where it would go\n%s", got)
-	}
-	typeText(a, "../out")
-	if got := body(a); !strings.Contains(got, "plan names stay inside rex/plans") {
-		t.Fatalf("a name that climbs out says so before enter\n%s", got)
-	}
-	// On its way into a folder, the name says where it goes, not an error.
-	for typed, want := range map[string]string{"team/": "→ rex/plans/team/<name>.rex.json", "team\\": "→ rex/plans/team/<name>.rex.json", "a/./": "→ rex/plans/a/<name>.rex.json", "  /": "→ rex/plans/<name>.rex.json", "../": "plan names stay inside rex/plans"} {
-		press(a, "\x15")
-		typeText(a, typed)
-		if got := body(a); !strings.Contains(got, want) {
-			t.Fatalf("%q: want %q\n%s", typed, want, got)
-		}
-	}
-	press(a, "\x15")
-	typeText(a, "auth-flow")
-	press(a, "\r")
-	if a.at != atLibrary || !strings.Contains(a.frame(), "✗ auth-flow.rex.json already exists") {
-		t.Fatalf("a taken name is refused\n%s", a.frame())
+	if want := []string{"billing-old.rex.json", "q3.rex.json", "billing"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("matches %v, want %v", got, want)
 	}
 }
 
@@ -1063,8 +397,8 @@ func TestFindAcrossAllPlans(t *testing.T) {
 		t.Fatal("find ends with + Create")
 	}
 	press(a, "\r")
-	if a.plans.Current != filepath.Join(root, "onboarding", "auth.rex.json") {
-		t.Fatalf("opened %q", a.plans.Current)
+	if a.plans.Current != filepath.Join(root, "onboarding", "auth.rex.json") || a.follow {
+		t.Fatalf("opened %q, latched: follow=%v", a.plans.Current, a.follow)
 	}
 }
 
@@ -1074,12 +408,12 @@ func TestFindWithNoMatchCreatesInOneKey(t *testing.T) {
 	if len(a.plans.Rows) != 1 || a.plans.Rows[0].Kind != PlanRowCreateNamed {
 		t.Fatalf("%#v", a.plans.Rows)
 	}
-	if !strings.Contains(a.frame(), "❯ + Create 'fresh-idea'") {
-		t.Fatal("create row shown")
+	if !strings.Contains(a.frame(), "❯ + Create fresh-idea") || strings.Contains(a.frame(), "[ + ") {
+		t.Fatal("create row shown, no brackets")
 	}
 	press(a, "\r")
-	if _, err := os.Stat(filepath.Join(root, "fresh-idea.rex.json")); err != nil {
-		t.Fatal("enter on + Create makes the plan")
+	if _, err := os.Stat(filepath.Join(root, "fresh-idea.rex.json")); err != nil || a.follow {
+		t.Fatal("enter on + Create makes the plan and latches it")
 	}
 }
 
@@ -1093,163 +427,8 @@ func TestFindExactNameOffersNoCreate(t *testing.T) {
 	}
 }
 
-func TestBrowseCursorFilterAndActionsBelow(t *testing.T) {
-	a, root := libraryApp(t, "team/zeta.rex.json", "team/sub/alpha.rex.json")
-	os.WriteFile(filepath.Join(root, "team", "notes.txt"), []byte("x"), 0o644)
-	browseTo(t, a, "team")
-	b := a.plans
-	if b.Rows[b.Cursor].Kind != PlanRowDir {
-		t.Fatalf("cursor should start on the first folder, got %#v", b.Rows[b.Cursor])
-	}
-	if n := len(b.Rows); b.Rows[n-2].Kind != PlanRowNew || b.Rows[n-1].Kind != PlanRowMkdir {
-		t.Fatal("+ New plan and + New folder sit below the listing")
-	}
-	typeText(a, "zet")
-	if b.Rows[b.Cursor].Name != "zeta.rex.json" {
-		t.Fatalf("filter selects its first match: %#v", b.Rows[b.Cursor])
-	}
-	press(a, "\r")
-	if !strings.HasSuffix(a.plans.Current, "zeta.rex.json") {
-		t.Fatal("enter after a filter opens the match, not New folder")
-	}
-}
-
-func TestBrowseFolderChangeClearsFilterAndFileExplains(t *testing.T) {
-	a, root := libraryApp(t, "team/alpha.rex.json", "team/inner/beta.rex.json")
-	os.WriteFile(filepath.Join(root, "team", "notes.txt"), []byte("x"), 0o644)
-	browseTo(t, a, "team")
-	typeText(a, "inn")
-	press(a, "\r")
-	if !strings.HasSuffix(a.plans.Dir, "inner") || a.draft != "" || a.plans.Filter != "" {
-		t.Fatalf("dir=%q draft=%q filter=%q", a.plans.Dir, a.draft, a.plans.Filter)
-	}
-	press(a, "esc")
-	typeText(a, "notes")
-	press(a, "\r")
-	if !strings.Contains(a.plans.Err, "not a .rex.json") {
-		t.Fatalf("err %q", a.plans.Err)
-	}
-	press(a, "x")
-	if a.plans.Err != "" {
-		t.Fatal("errors clear on the next key")
-	}
-	press(a, "\x15")
-	typeText(a, "zzz")
-	if !strings.Contains(viewText(BuildPlanView(a.plans, 60)), "no match for 'zzz' in rex/plans/team") {
-		t.Fatal("no-match line")
-	}
-}
-
-func TestCreateInASubfolder(t *testing.T) {
-	a, root := libraryApp(t, "seed.rex.json")
-	pickRow(a, PlanRowNew, "")
-	press(a, "\r")
-	typeText(a, "onboarding/auth")
-	if !strings.Contains(a.frame(), "→ rex/plans/onboarding/auth.rex.json") {
-		t.Fatalf("target path shown\n%s", a.frame())
-	}
-	press(a, "\r")
-	if _, err := os.Stat(filepath.Join(root, "onboarding", "auth.rex.json")); err != nil {
-		t.Fatal("a/b creates b in folder a")
-	}
-	b := NewPlanBrowser(a.plans.Repo)
-	b.From = ScreenHome
-	if b.CommitCreate("../escape") != PlanStay || !strings.Contains(b.Err, "inside rex/plans") {
-		t.Fatalf("err %q", b.Err)
-	}
-}
-
-// The Name prompt's preview and its commit go by one folder: rex/plans
-// from the list, whatever folder was browsed last.
-func TestPromptPreviewIsWhereItGoes(t *testing.T) {
-	a, root := libraryApp(t, "team/alpha.rex.json")
-	b := a.plans
-	b.Screen, b.From, b.Dir, b.Name = ScreenFolder, ScreenHome, filepath.Join(root, "team"), "q3"
-	if v := viewText(BuildPlanView(b, 60)); !strings.Contains(v, "→ rex/plans/q3/") {
-		t.Fatalf("%s", v)
-	}
-	if b.CommitFolder("q3"); b.Err != "" {
-		t.Fatal(b.Err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "q3")); err != nil {
-		t.Fatal("made where the preview said")
-	}
-}
-
-// + New folder under FOLDERS makes a folder in rex/plans and browses it.
-func TestNewFolderFromTheList(t *testing.T) {
-	a, root := libraryApp(t, "seed.rex.json")
-	pickRow(a, PlanRowMkdir, "")
-	press(a, "\r")
-	typeText(a, "team")
-	if !strings.Contains(a.frame(), "→ rex/plans/team/") {
-		t.Fatalf("target shown\n%s", a.frame())
-	}
-	press(a, "\r")
-	if info, err := os.Stat(filepath.Join(root, "team")); err != nil || !info.IsDir() || !a.plans.Browsing() || a.plans.Dir != filepath.Join(root, "team") {
-		t.Fatalf("made and browsed: %v dir=%q", err, a.plans.Dir)
-	}
-	press(a, "esc")
-	if a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Name != "team" {
-		t.Fatalf("Esc is the plan list, on the new folder: %+v", a.plans.Rows[a.plans.Cursor])
-	}
-}
-
-func TestSelectionFollowsThePlanNotTheRow(t *testing.T) {
-	a, root := libraryApp(t, "older.rex.json", "newer.rex.json")
-	b := a.plans
-	pickRow(a, PlanRowPlan, "older.rex.json")
-	os.WriteFile(filepath.Join(root, "older.rex.json"), []byte("{} "), 0o644) // now the newest
-	b.walk = planWalk{}
-	b.Rebuild()
-	if !strings.HasSuffix(b.Rows[b.Cursor].Path, "older.rex.json") || b.Cursor != 0 {
-		t.Fatalf("selection jumped to %#v", b.Rows[b.Cursor])
-	}
-
-	// Across groups too: the oldest plan in RECENT, pushed out by a newer
-	// one, is selected under FOLDERS (docs/ux.md §11).
-	a, _ = libraryApp(t)
-	b = a.plans
-	for i := 1; i <= 6; i++ {
-		writePlan(t, b.Repo, fmt.Sprintf("p%d.rex.json", i), demoPlan)
-	}
-	b.walk = planWalk{}
-	b.Rebuild()
-	pickRow(a, PlanRowPlan, "p2.rex.json")
-	if b.Rows[b.Cursor].Group != groupRecent {
-		t.Fatalf("setup: p2 is the oldest in RECENT: %+v", b.Rows[b.Cursor])
-	}
-	want := b.Rows[b.Cursor].Path
-	writePlan(t, b.Repo, "p7.rex.json", demoPlan)
-	b.walk = planWalk{}
-	b.Rebuild()
-	if row := b.Rows[b.Cursor]; row.Path != want || row.Group != groupFolders {
-		t.Fatalf("selection jumped to %+v", row)
-	}
-}
-
-func TestLongListScrollsWithTheSelection(t *testing.T) {
-	var names []string
-	for i := 0; i < 40; i++ {
-		names = append(names, "group/p"+string(rune('a'+i%26))+string(rune('a'+i/26))+".rex.json")
-	}
-	a, _ := libraryApp(t, names...)
-	a.settle(120, 20)
-	browseTo(t, a, "group")
-	for i := 0; i < 30; i++ {
-		press(a, "down")
-		frame := a.frame()
-		if !strings.Contains(frame, "❯") {
-			t.Fatalf("selection scrolled out of view after %d moves\n%s", i+1, frame)
-		}
-	}
-	if !strings.Contains(a.frame(), "↑ more") {
-		t.Fatal("a scrolled list says there is more above")
-	}
-}
-
 func TestFindComparesTheWholeName(t *testing.T) {
-	// A root plan b doesn't count as a/b: + Create 'a/b' is offered, and
+	// A root plan b doesn't count as a/b: + Create a/b is offered, and
 	// enter makes it in folder a.
 	a, root := libraryApp(t, "b.rex.json")
 	typeText(a, "a/b")
@@ -1259,7 +438,7 @@ func TestFindComparesTheWholeName(t *testing.T) {
 	}
 	press(a, "end", "\r")
 	if _, err := os.Stat(filepath.Join(root, "a", "b.rex.json")); err != nil {
-		t.Fatal("+ Create 'a/b' creates b in folder a")
+		t.Fatal("+ Create a/b creates b in folder a")
 	}
 
 	// An existing a/b is an exact match: no + Create, and it is selected.
@@ -1304,176 +483,28 @@ func TestFindIgnoresTheSuffixAndBlankQueries(t *testing.T) {
 	}
 	press(a, "\x15")
 	typeText(a, "   ")
-	if a.plans.Find != "" || a.plans.Rows[a.plans.Cursor].Group != groupRecent {
-		t.Fatalf("spaces alone keep the list: find=%q row=%#v", a.plans.Find, a.plans.Rows[a.plans.Cursor])
+	if a.plans.Find != "" || a.plans.Rows[a.plans.Cursor].Kind != PlanRowLatest {
+		t.Fatalf("spaces alone keep the cards: find=%q row=%#v", a.plans.Find, a.plans.Rows[a.plans.Cursor])
 	}
 }
 
+// docs/ux.md §11: a find shows 30 matches and counts the rest, whether
+// + Create ends it or not (the exact plan exists, or the text names no
+// plan, as "team/" doesn't).
 func TestFindSaysWhenMatchesAreLeftOut(t *testing.T) {
 	var names []string
 	for i := 0; i < maxMatches+5; i++ {
-		names = append(names, "p"+string(rune('a'+i%26))+string(rune('a'+i/26))+".rex.json")
+		names = append(names, "team/p"+string(rune('a'+i%26))+string(rune('a'+i/26))+".rex.json")
 	}
-	a, _ := libraryApp(t, names...)
-	typeText(a, "p")
-	if !strings.Contains(viewText(BuildPlanView(a.plans, 60)), "+5 more · keep typing") {
-		t.Fatal("left-out matches are counted")
-	}
-}
-
-// The title row is chrome (docs/ux.md §4): it stays while a long folder
-// scrolls, and an error far down the list is on the notice row.
-func TestPageTitleNeverScrollsAway(t *testing.T) {
-	var names []string
-	for i := 0; i < 30; i++ {
-		names = append(names, "many/p"+string(rune('a'+i%26))+string(rune('a'+i/26))+".rex.json")
-	}
-	a, root := libraryApp(t, names...)
-	os.WriteFile(filepath.Join(root, "many", "zz-notes.txt"), []byte("x"), 0o644)
-	a.settle(110, 20)
-	browseTo(t, a, "many")
-	for i := 0; i < 40; i++ {
-		press(a, "down")
-		if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans › many/ ") {
-			t.Fatalf("the title scrolled: %q", title)
+	a, _ := libraryApp(t, append(names, "team.rex.json")...)
+	for q, more := range map[string]string{"team/p": "+5 more", "team": "+6 more", "team/": "+5 more"} {
+		press(a, "\x15")
+		typeText(a, q)
+		view := viewText(BuildPlanView(a.plans, 60))
+		create := strings.Contains(view, "+ Create ")
+		if !strings.Contains(view, "\n  "+more+" · keep typing") || create != (q == "team/p") {
+			t.Errorf("%q: the left-out matches are counted, + Create %v\n%s", q, create, view)
 		}
-	}
-	for a.plans.Rows[a.plans.Cursor].Kind != PlanRowFile {
-		press(a, "up")
-		a.frame()
-	}
-	press(a, "\r")
-	if rows := a.frameRows().Rows; !strings.HasPrefix(textOf(rows[len(rows)-2], a.columns), "✗ zz-notes.txt is not a .rex.json") {
-		t.Fatalf("the error is on the notice row under the scrolled list\n%s", a.frame())
-	}
-}
-
-func TestOutsideGitNoticeShowsOnASmallScreen(t *testing.T) {
-	repo := t.TempDir()
-	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 60, 20)
-	a.settle(60, 20)
-	if frame := a.frame(); a.at != atWait || !strings.Contains(frame, "not in") {
-		t.Fatalf("the outside-git notice is on the first frame, the wait screen\n%s", frame)
-	}
-	press(a, "esc")
-	if frame := a.frame(); a.at != atLibrary || !strings.Contains(frame, "not in") {
-		t.Fatalf("and on the plan list\n%s", frame)
-	}
-
-	// Start opens a plan rather than the list: the notice is a toast on the
-	// notice row on the first frames (docs/ux.md §4), fitted, and so is an
-	// old rex-plans/ folder's.
-	seeded := t.TempDir()
-	seedPlans(t, seeded, "one.rex.json")
-	b := newApp("yellow", false, "idle", NewPlanBrowser(seeded), 60, 20)
-	b.settle(60, 20)
-	if row := textOf(b.frameRows().Rows[18], 60); b.at != atOutline || !strings.HasPrefix(row, "not in a git repo · plans go to …") || !strings.HasSuffix(row, "/rex/plans") {
-		t.Fatalf("at=%d notice row %q\n%s", b.at, row, b.frame())
-	}
-	legacy := t.TempDir()
-	os.Mkdir(filepath.Join(legacy, ".git"), 0o755)
-	seedPlans(t, legacy, "one.rex.json")
-	os.MkdirAll(filepath.Join(legacy, "rex-plans"), 0o755)
-	os.WriteFile(filepath.Join(legacy, "rex-plans", "old.rex.json"), []byte("{}"), 0o644)
-	c := newApp("yellow", false, "idle", NewPlanBrowser(legacy), 60, 20)
-	if row := c.frameRows().Rows[18]; c.at != atOutline || !strings.Contains(row, "rex-plans/") {
-		t.Fatalf("at=%d notice row %q", c.at, row)
-	}
-}
-
-func TestErrorsClearOnAnyKey(t *testing.T) {
-	a, _ := libraryApp(t, "x.rex.json")
-	for _, key := range []string{"\t", CtrlC, "\x0c"} {
-		a.pane = PanePlans
-		a.quitPending = false
-		a.plans.Err = "boom"
-		press(a, key)
-		if a.plans.Err != "" {
-			t.Fatalf("%q left the error", key)
-		}
-	}
-}
-
-func TestBrowseNewPlanKeepsTheFilter(t *testing.T) {
-	a, root := libraryApp(t, "team/alpha.rex.json")
-	browseTo(t, a, "team")
-	typeText(a, "roadmap")
-	press(a, "\r")
-	if a.plans.Screen != ScreenCreate || a.draft != "roadmap" {
-		t.Fatalf("screen=%v draft=%q", a.plans.Screen, a.draft)
-	}
-	if !strings.Contains(a.frame(), "→ rex/plans/team/roadmap.rex.json") {
-		t.Fatal("the target is shown")
-	}
-	press(a, "\r")
-	if _, err := os.Stat(filepath.Join(root, "team", "roadmap.rex.json")); err != nil {
-		t.Fatal("enter creates the filtered name")
-	}
-}
-
-func TestNewFolderTakesAPath(t *testing.T) {
-	a, root := libraryApp(t, "alpha.rex.json")
-	b := a.plans
-	b.Screen, b.Dir = ScreenBrowse, root
-	if b.CommitFolder("team/q3") != PlanStay || b.Err != "" {
-		t.Fatalf("err %q", b.Err)
-	}
-	if info, err := os.Stat(filepath.Join(root, "team", "q3")); err != nil || !info.IsDir() {
-		t.Fatal("a/b makes b inside a")
-	}
-	b.Dir = root
-	if b.CommitFolder("../out"); !strings.Contains(b.Err, "inside rex/plans") {
-		t.Fatalf("err %q", b.Err)
-	}
-	b.Dir = root
-	if b.CommitFolder("team/q3"); b.Err != "team/q3 already exists" {
-		t.Fatalf("err %q", b.Err)
-	}
-}
-
-func TestDuplicateCreateNamesTheFolder(t *testing.T) {
-	a, _ := libraryApp(t, "team/alpha.rex.json")
-	b := a.plans
-	b.From = ScreenHome
-	if b.CommitCreate("team/alpha"); b.Err != "team/alpha.rex.json already exists" {
-		t.Fatalf("err %q", b.Err)
-	}
-}
-
-func TestHelpPagesOverlapUnderTheMarkers(t *testing.T) {
-	a := testApp(t)
-	a.settle(80, 12)
-	typeText(a, "?")
-	press(a, "\r")
-	page := PaneBodyHeight(a.lines)
-	press(a, "pagedown")
-	if got := a.overlayScroll[a.pane]; got != page-2 {
-		t.Fatalf("pagedown moved %d, want %d", got, page-2)
-	}
-}
-
-func TestHomeTakesWordsLiterally(t *testing.T) {
-	// In the plan list text is a name (docs/ux.md §2): done enter finds or creates
-	// "done"; a /word is only ever /help or /breakdance.
-	a, root := libraryApp(t, "alpha.rex.json")
-	typeText(a, "done")
-	if !strings.Contains(a.frame(), "enter create") {
-		t.Fatalf("the footer says enter creates\n%s", a.frame())
-	}
-	press(a, "\r")
-	if _, err := os.Stat(filepath.Join(root, "done.rex.json")); err != nil {
-		t.Fatal("done enter on Home creates done.rex.json")
-	}
-}
-
-func TestHomeFolderIsThePlansRoot(t *testing.T) {
-	a, _ := libraryApp(t, "team/alpha.rex.json")
-	b := a.plans
-	b.Screen, b.From, b.Dir = ScreenCreate, ScreenBrowse, filepath.Join(b.Root, "team")
-	b.CommitCreate("beta")
-	b.Screen = ScreenHome
-	if got := b.RelDir(); got != "rex/plans" {
-		t.Fatalf("Home says %q", got)
 	}
 }
 
@@ -1493,22 +524,448 @@ func TestFindCleansPathsLikeCreate(t *testing.T) {
 		press(a, "\x15")
 	}
 	typeText(a, ".rex.json")
-	if a.plans.Find != "" || a.plans.Rows[a.plans.Cursor].Group != groupRecent {
-		t.Fatalf("a bare suffix finds nothing and keeps the list: find=%q", a.plans.Find)
+	if a.plans.Find != "" || a.plans.Rows[a.plans.Cursor].Kind != PlanRowLatest {
+		t.Fatalf("a bare suffix finds nothing and keeps the cards: find=%q", a.plans.Find)
 	}
 }
 
-func TestNewFolderShowsWhereItGoes(t *testing.T) {
+// In Plans text is a name (docs/ux.md §2): done enter finds or creates
+// "done"; a /word is only ever /help or /breakdance.
+func TestPlansTakeWordsLiterally(t *testing.T) {
 	a, root := libraryApp(t, "alpha.rex.json")
-	b := a.plans
-	b.Screen, b.Dir, b.Name = ScreenFolder, root, "team/q3"
-	if v := viewText(BuildPlanView(b, 60)); !strings.Contains(v, "→ rex/plans/team/q3/") || !strings.Contains(v, "a/b makes folder b in folder a.") {
-		t.Fatalf("%s", v)
+	typeText(a, "done")
+	if !strings.Contains(a.frame(), "enter create") {
+		t.Fatalf("the footer says enter creates\n%s", a.frame())
+	}
+	press(a, "\r")
+	if _, err := os.Stat(filepath.Join(root, "done.rex.json")); err != nil {
+		t.Fatal("done enter on Plans creates done.rex.json")
 	}
 }
 
-// Find and Browse rows carry the plan's progress; the open plan's says it
-// is open (docs/ux.md §11), and never leaves a dangling " · ".
+// docs/ux.md §11 (#70): Open a plan starts on its first folder or plan,
+// and a filter selects its first match, which enter opens.
+func TestOpenAPlanCursorAndFilter(t *testing.T) {
+	a, root := libraryApp(t, "zeta.rex.json", "team/alpha.rex.json")
+	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o644)
+	pickRow(a, PlanRowOpen, "")
+	press(a, "\r")
+	b := a.plans
+	if b.Rows[b.Cursor].Kind != PlanRowDir || len(b.Rows) != 2 {
+		t.Fatalf("the first folder, then the plan, and no other file: %#v", b.Rows)
+	}
+	typeText(a, "zet")
+	if b.Rows[b.Cursor].Name != "zeta.rex.json" || !strings.Contains(a.frame(), "╭ filter ─") {
+		t.Fatalf("filter selects its first match: %#v\n%s", b.Rows[b.Cursor], a.frame())
+	}
+	press(a, "\r")
+	if !strings.HasSuffix(a.plans.Current, "zeta.rex.json") || a.follow {
+		t.Fatal("enter after a filter opens the match, latched")
+	}
+}
+
+// docs/ux.md §11 (#70): entering or leaving a folder clears the filter; a
+// filter that matches nothing says so.
+func TestOpenAPlanFolderChangeClearsTheFilter(t *testing.T) {
+	a, _ := libraryApp(t, "team/alpha.rex.json", "team/inner/beta.rex.json")
+	browseTo(t, a, "team")
+	typeText(a, "inn")
+	press(a, "\r")
+	if !strings.HasSuffix(a.plans.Dir, "inner") || a.draft != "" || a.plans.Filter != "" {
+		t.Fatalf("dir=%q draft=%q filter=%q", a.plans.Dir, a.draft, a.plans.Filter)
+	}
+	press(a, "esc")
+	if !strings.HasSuffix(a.plans.Dir, "team") || a.plans.Rows[a.plans.Cursor].Name != "inner" {
+		t.Fatalf("esc goes up, on the folder: dir=%q", a.plans.Dir)
+	}
+	typeText(a, "zzz")
+	if !strings.Contains(body(a), "no match for 'zzz' in rex/plans/team/") {
+		t.Fatalf("no-match line\n%s", body(a))
+	}
+	press(a, "esc")
+	if a.draft != "" || !strings.HasSuffix(a.plans.Dir, "team") {
+		t.Fatal("esc clears the filter first")
+	}
+}
+
+// docs/ux.md §3, §11: Open a plan's Esc ladder: a folder, up to its
+// parent, on it; rex/plans itself, to Plans, on the Open a plan card. ←
+// climbs the same way, and → goes into a folder as enter does.
+func TestOpenAPlanEscLadder(t *testing.T) {
+	for _, key := range []string{"esc", "left"} {
+		a := listRepo(t)
+		os.MkdirAll(filepath.Join(a.plans.Root, "cuj", "sub"), 0o755)
+		press(a, "esc")
+		pickRow(a, PlanRowOpen, "")
+		press(a, "right")
+		if !a.plans.Browsing() || !a.plans.topFolder() {
+			t.Fatal("→ on Open a plan browses rex/plans")
+		}
+		if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans › Open a plan ") || !strings.Contains(title, " rex/plans/ ") {
+			t.Fatalf("row 0 %q", title)
+		}
+		pickRow(a, PlanRowDir, "cuj")
+		press(a, "right")
+		pickRow(a, PlanRowDir, "sub")
+		press(a, "\r")
+		if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans › Open a plan › cuj/ › sub/ ") || !strings.Contains(a.frame(), "esc up") {
+			t.Fatalf("row 0 %q", title)
+		}
+		press(a, key)
+		if a.plans.Rows[a.plans.Cursor].Name != "sub" {
+			t.Fatalf("%s: up, on sub/: %+v", key, a.plans.Rows[a.plans.Cursor])
+		}
+		press(a, key)
+		if !a.plans.topFolder() || a.plans.Rows[a.plans.Cursor].Name != "cuj" || !strings.Contains(a.frame(), "esc plans") {
+			t.Fatalf("%s: up to rex/plans, on cuj/", key)
+		}
+		press(a, key)
+		if a.at != atLibrary || a.plans.Screen != ScreenHome || a.plans.Rows[a.plans.Cursor].Kind != PlanRowOpen {
+			t.Fatalf("%s: Plans, on the Open a plan card: screen=%d on %+v", key, a.plans.Screen, a.plans.Rows[a.plans.Cursor])
+		}
+	}
+}
+
+func TestLongListScrollsWithTheSelection(t *testing.T) {
+	var names []string
+	for i := 0; i < 40; i++ {
+		names = append(names, "group/p"+string(rune('a'+i%26))+string(rune('a'+i/26))+".rex.json")
+	}
+	a, _ := libraryApp(t, names...)
+	a.settle(120, 20)
+	browseTo(t, a, "group")
+	for i := 0; i < 30; i++ {
+		press(a, "down")
+		if title := textOf(a.frameRows().Rows[0], a.columns); !strings.HasPrefix(title, "Plans › Open a plan › group/ ") {
+			t.Fatalf("the title scrolled: %q", title)
+		}
+		if frame := a.frame(); !strings.Contains(frame, "❯") {
+			t.Fatalf("selection scrolled out of view after %d moves\n%s", i+1, frame)
+		}
+	}
+	if !strings.Contains(a.frame(), "↑ 19 more") {
+		t.Fatalf("a scrolled list says how much is above\n%s", a.frame())
+	}
+}
+
+// docs/ux.md §4, §11: New plan, Plans › New plan on row 0 with where it
+// creates, has its name field, where the plan goes as it is typed, and
+// that Rex never overwrites a file.
+func TestNewPlan(t *testing.T) {
+	a := listRepo(t)
+	press(a, "esc")
+	a.settle(80, 24)
+	pickRow(a, PlanRowNew, "")
+	press(a, "\r")
+	typeText(a, "team/auth")
+	if head := textOf(a.frameRows().Rows[0], 80); !strings.HasPrefix(head, "Plans › New plan ") || !strings.Contains(head, " rex/plans/ ") || textOf(a.frameRows().Rows[1], 80) != "Name it. a/b puts plan b in folder a." {
+		t.Fatalf("row 0 %q", head)
+	}
+	want := `  ╭ name ─────────────────────────────────────────────────────────────────────╮
+  │ team/auth                                                                 │
+  ╰───────────────────────────────────────────────────────────────────────────╯
+  → rex/plans/team/auth.rex.json
+
+  Rex writes an empty plan there and opens it. It never overwrites a file.`
+	if got := body(a); !strings.HasPrefix(got, want+"\n") {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	if f := a.frameRows(); f.CursorRow != 5 || f.CursorCol != 14 {
+		t.Fatalf("the cursor after the name: %d,%d", f.CursorRow, f.CursorCol)
+	}
+	press(a, "\x15")
+	if got := body(a); !strings.Contains(got, "→ rex/plans/<name>.rex.json") {
+		t.Fatalf("an empty name shows where it would go\n%s", got)
+	}
+	typeText(a, "../out")
+	if got := body(a); !strings.Contains(got, "plan names stay inside rex/plans") {
+		t.Fatalf("a name that climbs out says so before enter\n%s", got)
+	}
+	// On its way into a folder, the name says where it goes, not an error.
+	for typed, want := range map[string]string{"team/": "→ rex/plans/team/<name>.rex.json", "team\\": "→ rex/plans/team/<name>.rex.json", "a/./": "→ rex/plans/a/<name>.rex.json", "  /": "→ rex/plans/<name>.rex.json", "../": "plan names stay inside rex/plans"} {
+		press(a, "\x15")
+		typeText(a, typed)
+		if got := body(a); !strings.Contains(got, want) {
+			t.Fatalf("%q: want %q\n%s", typed, want, got)
+		}
+	}
+	a.settle(80, 10)
+	press(a, "\x15")
+	typeText(a, "team/auth")
+	if got := body(a); !strings.HasPrefix(got, "  name  team/auth\n  → rex/plans/team/auth.rex.json\n  Rex writes an empty plan there and opens it. It never overwrites a file.") {
+		t.Fatalf("80×10:\n%s", got)
+	}
+	press(a, "esc")
+	if a.plans.Prompting() || a.plans.Rows[a.plans.Cursor].Kind != PlanRowNew || a.draft != "" {
+		t.Fatal("esc cancels, back on the Create a plan card")
+	}
+	if _, err := os.Stat(filepath.Join(a.plans.Root, "team")); !os.IsNotExist(err) {
+		t.Fatal("nothing was written")
+	}
+}
+
+// docs/ux.md §11: a name that is taken is refused on the notice row;
+// nothing is written, and the name stays to be fixed. The fixed name is
+// created, opened and latched.
+func TestNewPlanRefusesATakenName(t *testing.T) {
+	a := listRepo(t)
+	press(a, "esc")
+	a.settle(80, 24)
+	pickRow(a, PlanRowNew, "")
+	press(a, "\r")
+	typeText(a, "cuj/sendoff-demo")
+	before, _ := os.ReadFile(a.plans.Current)
+	press(a, "\r")
+	rows := a.frameRows().Rows
+	if !a.plans.Prompting() || a.draft != "cuj/sendoff-demo" || textOf(rows[22], 80) != "✗ cuj/sendoff-demo already exists · pick another name" {
+		t.Fatalf("refused, the text kept\n%s", a.frame())
+	}
+	if after, _ := os.ReadFile(a.plans.Current); string(after) != string(before) {
+		t.Fatal("a refused name wrote the file")
+	}
+	typeText(a, "-2")
+	if a.plans.Err != "" {
+		t.Fatal("the error clears on the next key")
+	}
+	press(a, "\r")
+	if made := filepath.Join(a.plans.Root, "cuj", "sendoff-demo-2.rex.json"); a.plans.Current != made || a.at != atOutline || a.follow {
+		t.Fatalf("created and latched: %q follow=%v", a.plans.Current, a.follow)
+	}
+}
+
+// docs/ux.md §4, §11: a name the filesystem refuses says why on the notice
+// row, not the absolute path the error leads with.
+func TestNewPlanSaysWhyCreateFails(t *testing.T) {
+	long := strings.Repeat("x", draftCap) // over any filesystem's 255
+	err := writeNew(filepath.Join(t.TempDir(), long+".rex.json"), nil)
+	pe, ok := err.(*os.PathError)
+	if !ok {
+		t.Fatalf("setup: %v", err)
+	}
+	a, _ := libraryApp(t)
+	pickRow(a, PlanRowNew, "")
+	press(a, "\r")
+	typeText(a, long)
+	press(a, "\r")
+	if !a.plans.Prompting() || a.plans.Err != pe.Err.Error() || a.notice().Text != "✗ "+pe.Err.Error() || !strings.Contains(a.frame(), "✗ "+pe.Err.Error()) {
+		t.Errorf("%q, want %q\n%s", a.plans.Err, pe.Err, a.frame())
+	}
+}
+
+func TestCreateInASubfolder(t *testing.T) {
+	a, root := libraryApp(t, "seed.rex.json")
+	pickRow(a, PlanRowNew, "")
+	press(a, "\r")
+	typeText(a, "onboarding/auth")
+	if !strings.Contains(a.frame(), "→ rex/plans/onboarding/auth.rex.json") {
+		t.Fatalf("target path shown\n%s", a.frame())
+	}
+	press(a, "\r")
+	if _, err := os.Stat(filepath.Join(root, "onboarding", "auth.rex.json")); err != nil {
+		t.Fatal("a/b creates b in folder a")
+	}
+	b := NewPlanBrowser(a.plans.Repo)
+	if b.CommitCreate("../escape") != PlanStay || !strings.Contains(b.Err, "inside rex/plans") {
+		t.Fatalf("err %q", b.Err)
+	}
+}
+
+func TestSelectionFollowsThePlanNotTheRow(t *testing.T) {
+	a, root := libraryApp(t, "oldest.rex.json", "older.rex.json", "newer.rex.json")
+	b := a.plans
+	pickRow(a, PlanRowPlan, "older.rex.json")
+	os.WriteFile(filepath.Join(root, "older.rex.json"), []byte("{} "), 0o644)
+	stampAfter(t, filepath.Join(root, "older.rex.json"), filepath.Join(root, "newer.rex.json")) // now the newest
+	b.walk = planWalk{}
+	b.Rebuild()
+	// older is the newest now: Open latest, and the selection with it.
+	if row := b.Rows[b.Cursor]; row.Kind != PlanRowLatest || !strings.HasSuffix(row.Path, "older.rex.json") {
+		t.Fatalf("selection jumped to %#v", row)
+	}
+}
+
+// docs/ux.md §11: Continue is the plan the task list shows. A save caught
+// half-written keeps the last good copy there, as the task list does, and
+// only an error the notice row shows (§4) reaches Plans.
+func TestContinueFollowsTheTaskList(t *testing.T) {
+	a, c, path := cujApp(t)
+	press(a, "esc")
+	write := func(data []byte, after time.Duration) {
+		os.WriteFile(path, data, 0o644)
+		at := c.t.Add(after)
+		os.Chtimes(path, at, at)
+	}
+	polls := func(n int) {
+		for i := 0; i < n; i++ {
+			c.t = c.t.Add(docPollEvery)
+			a.tick()
+		}
+	}
+	card := func() string { return rowWith(a.frameRows(), "Continue") }
+	torn := []byte(`{"tasks": [`)
+	write(torn, time.Hour)
+	polls(1) // the scan rebuilds Plans while the save is torn
+	if got := card(); strings.Contains(got, "can't read") || !strings.Contains(got, "Send-off demo · 1/3 done") {
+		t.Fatalf("a torn save shows the last good copy: %q", got)
+	}
+	write(cujFixture(t), 2*time.Hour)
+	polls(4)
+	write(torn, 3*time.Hour)
+	polls(3)
+	if got := card(); !strings.Contains(a.frame(), "plan JSON error") || !strings.Contains(got, " · can't read") {
+		t.Fatalf("an error the task list shows, Plans shows: %q\n%s", got, a.frame())
+	}
+}
+
+// docs/ux.md §4, §11: a plan Rex can't open says why on the notice row
+// and can't read on its card or row, the open plan's and another's alike.
+func TestUnreadablePlansSayWhy(t *testing.T) {
+	a, c, path := cujApp(t)
+	other := writePlan(t, a.plans.Repo, "other.rex.json", demoPlan)
+	for _, p := range []string{path, other} {
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(p, 0o644) })
+	}
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("this user reads a file with no permissions (root, or Windows)")
+	}
+	c.t = c.t.Add(docPollEvery)
+	a.tick()
+	if got, want := a.notice().Text, "✗ plan error: permission denied · showing last good"; got != want {
+		t.Fatalf("the notice row: %q, want %q", got, want)
+	}
+	a.plans.walk = planWalk{}
+	press(a, "esc")
+	f := a.frameRows()
+	if row := rowWith(f, "other"); !strings.HasSuffix(row, " can't read") {
+		t.Errorf("other: %q\n%s", row, a.frame())
+	}
+	if strings.Contains(a.frame(), "open /") {
+		t.Fatalf("the cause, not the path\n%s", a.frame())
+	}
+}
+
+// docs/ux.md §11, §12: Plans' window never scrolls only to hide blank
+// rows, ↑ N more never stands on Recent, and ↓ N more comes right under
+// the last row, never under a blank row or Recent left alone.
+func TestListWindowEdges(t *testing.T) {
+	for _, cols := range []int{80, 120, 24} {
+		for rows := 7; rows <= 16; rows++ {
+			a := listRepo(t)
+			press(a, "esc")
+			a.settle(cols, rows)
+			for step := 0; step < 2*len(a.plans.Rows); step++ {
+				key := "down"
+				if step >= len(a.plans.Rows) {
+					key = "up"
+				}
+				where := fmt.Sprintf("%d×%d %s %d", cols, rows, key, step)
+				l := a.layout()
+				frame := a.frameRows().Rows
+				all := planList(a.plans, l.textW, listFit{body: l.bodyH, tall: l.boxed, short: rows < blankFrom})
+				list, start := all[headOf(all):], a.plans.View
+				var text []string
+				for _, r := range frame[2+l.blank : 2+l.blank+l.bodyH] {
+					text = append(text, strings.TrimRight(textOf(r, cols), " "))
+				}
+				if start > 0 && !strings.HasPrefix(text[0], "  ↑ ") && !list[start].Selected {
+					t.Errorf("%s: rows hidden above, and no ↑ more\n%s", where, body(a))
+				}
+				for i, line := range text {
+					if strings.HasPrefix(line, "  ↓ ") && i > 0 && (text[i-1] == "" || text[i-1] == "  Recent") {
+						t.Errorf("%s: ↓ more under %q\n%s", where, text[i-1], body(a))
+					}
+					if strings.HasPrefix(line, "  ↑ ") && strings.Contains(line, " 0 more") {
+						t.Errorf("%s: %q", where, line)
+					}
+				}
+				if !strings.Contains(strings.Join(text, "\n"), "❯") {
+					t.Errorf("%s: the selection is off screen\n%s", where, body(a))
+				}
+				press(a, key)
+			}
+		}
+	}
+}
+
+// docs/ux.md §11, F1: starting Rex, and moving around Plans, Open a plan
+// and Find, creates no file and no rex/plans/, and records nothing in
+// ~/.rex/state.json; only opening or creating a plan does.
+func TestStartCreatesNothingOnPlans(t *testing.T) {
+	repo := attachRepo(t)
+	a := startIn(repo)
+	c := &clock{t: time.Unix(1_800_000_000, 0)}
+	a.now = c.now
+	for i := 0; i < 5; i++ {
+		later(a, c)
+	}
+	press(a, "down", "up", "right", "esc")
+	typeText(a, "anything")
+	press(a, "esc", "?", "esc", "\t", "\t")
+	if _, err := os.Stat(filepath.Join(repo, "rex")); !os.IsNotExist(err) {
+		t.Fatalf("rex/ was created: %v", err)
+	}
+	if _, err := os.Stat(plan.StatePath()); !os.IsNotExist(err) {
+		t.Fatalf("state.json was written: %v", err)
+	}
+	seedPlans(t, repo, "one.rex.json")
+	b := startIn(repo)
+	press(b, "home", "down", "\r", "esc") // Open a plan, and back
+	if _, err := os.Stat(plan.StatePath()); !os.IsNotExist(err) {
+		t.Fatalf("browsing wrote state.json: %v", err)
+	}
+	if entries, _ := os.ReadDir(PlansDir(repo)); len(entries) != 1 {
+		t.Fatalf("rex/plans holds %d entries", len(entries))
+	}
+}
+
+// docs/ux.md §11: the filter in Open a plan holds an attach as Find does,
+// and the notice says it waits for the field.
+func TestAFilterHoldsTheAttach(t *testing.T) {
+	repo := attachRepo(t)
+	writePlan(t, repo, "team/a.rex.json", demoPlan)
+	a := startIn(repo)
+	browseTo(t, a, "team")
+	typeText(a, "a")
+	two := writePlan(t, repo, "two.rex.json", demoPlan)
+	a.ingest([]watch.Event{wrote(repo, two)})
+	if a.plans.Current != "" || a.pending != two || !strings.HasSuffix(a.notice().Text, " · opens when the field is clear") {
+		t.Fatalf("the filter holds it: current=%q pending=%q notice %q", a.plans.Current, a.pending, a.notice().Text)
+	}
+	press(a, "esc")
+	if a.plans.Current != two || a.at != atOutline || !a.follow {
+		t.Fatalf("cleared, it opens, following: current=%q at=%d", a.plans.Current, a.at)
+	}
+}
+
+func TestErrorsClearOnAnyKey(t *testing.T) {
+	a, _ := libraryApp(t, "x.rex.json")
+	for _, key := range []string{"\t", CtrlC, "\x0c"} {
+		a.pane = PanePlans
+		a.quitPending = false
+		a.plans.Err = "boom"
+		press(a, key)
+		if a.plans.Err != "" {
+			t.Fatalf("%q left the error", key)
+		}
+	}
+}
+
+func TestHelpPagesOverlapUnderTheMarkers(t *testing.T) {
+	a := testApp(t)
+	a.settle(80, 12)
+	press(a, "?")
+	page := PaneBodyHeight(a.lines)
+	press(a, "pagedown")
+	if got := a.overlayScroll[a.pane]; got != page-2 {
+		t.Fatalf("pagedown moved %d, want %d", got, page-2)
+	}
+}
+
+// Find and Open a plan rows carry the plan's progress, and never a
+// dangling " · " (docs/ux.md §11).
 func TestFindAndBrowseRowsCarryProgress(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, "rex", "plans", "team")
@@ -1518,11 +975,10 @@ func TestFindAndBrowseRowsCarryProgress(t *testing.T) {
 	os.WriteFile(filepath.Join(root, "auth-v2.rex.json"), []byte(work), 0o644)
 	os.WriteFile(filepath.Join(root, "auth-bad.rex.json"), []byte("not json"), 0o644)
 	b := NewPlanBrowser(repo)
-	b.Current = filepath.Join(root, "auth.rex.json")
 	check := func(where, prefix string) {
 		t.Helper()
 		v := viewText(BuildPlanView(b, 38))
-		for name, want := range map[string]string{"auth": "open · 1/2", "auth-v2": "1/2", "auth-bad": "can't read"} {
+		for name, want := range map[string]string{"auth": "1/2 done", "auth-v2": "1/2 done", "auth-bad": "can't read"} {
 			found := false
 			for _, line := range strings.Split(v, "\n") {
 				if f := strings.Fields(line); len(f) > 1 && (f[1] == prefix+name || f[0] == prefix+name) {
@@ -1537,48 +993,116 @@ func TestFindAndBrowseRowsCarryProgress(t *testing.T) {
 			}
 		}
 	}
-	b.Screen, b.Dir, b.fresh = ScreenBrowse, root, true
-	b.Rebuild()
-	check("browse", "")
+	b.browse(root)
+	check("open a plan", "")
 	b.Screen, b.Find, b.fresh = ScreenHome, "auth", true
 	b.Rebuild()
 	check("find", "team/")
 }
 
-// At 7 rows the plan list has three body rows, under rows 0 and 1 (docs/ux.md
-// §4): no group heads and no accordion, and the selected row is never the
-// part cut (§12). With no OPEN H2 the open plan's meta says it is open.
+// At 7 rows Plans has four body rows under rows 0 and 1 (docs/ux.md §4):
+// the cards, no blank row, and the selected row is never the part cut
+// (§12).
 func TestSevenRowsListOnlyRows(t *testing.T) {
 	for _, cols := range []int{24, 80} {
 		a, _, _ := cujApp(t)
 		press(a, "esc")
 		a.settle(cols, 7)
-		if body := strings.Join(a.frameRows().Rows[2:5], "\n"); !strings.Contains(body, "❯ cuj/sendo") || !strings.Contains(body, "open · 1/3") || strings.Contains(body, "─") {
-			t.Fatalf("%d×7: the open plan's row, marked open, and no heads\n%s", cols, a.frame())
+		if body := strings.Join(a.frameRows().Rows[2:6], "\n"); !strings.Contains(body, "❯ Continue ") || !strings.Contains(body, "  Open a plan ") {
+			t.Fatalf("%d×7: the cards\n%s", cols, a.frame())
 		}
 		empty := testApp(t)
-		press(empty, "esc")
 		empty.settle(cols, 7)
-		if body := strings.Join(empty.frameRows().Rows[2:5], "\n"); !strings.Contains(body, "❯ + New plan") || strings.Contains(body, "No plans") {
-			t.Fatalf("%d×7, no plans: + New plan, without the sentence\n%s", cols, empty.frame())
+		if body := strings.Join(empty.frameRows().Rows[2:6], "\n"); !strings.Contains(body, "❯ Create a plan") {
+			t.Fatalf("%d×7, no plans: the card on top\n%s", cols, empty.frame())
 		}
 	}
 }
 
-// On a short screen the plan list's error takes row 1, as any notice does
-// under 12 rows (docs/ux.md §4): enter on a row says what went wrong, and
-// the selection stays in view (§11).
-func TestShortListKeepsTheError(t *testing.T) {
-	repo := t.TempDir() // outside git: the list has a notice
-	seedPlans(t, repo, "team/a.rex.json", "team/b.rex.json", "team/c.rex.json")
-	os.WriteFile(filepath.Join(PlansDir(repo), "team", "notes.txt"), []byte("x"), 0o644)
-	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 80, 9)
-	press(a, "esc")
-	browseTo(t, a, "team")
-	pickRow(a, PlanRowFile, "")
+// Under 12 rows Plans' error takes row 1, as any notice does (docs/ux.md
+// §4), and the field and the text stay.
+func TestShortPlansKeepTheError(t *testing.T) {
+	a, _ := libraryApp(t, "x.rex.json")
+	a.settle(80, 9)
+	pickRow(a, PlanRowNew, "")
 	press(a, "\r")
-	got := body(a)
-	if row := textOf(a.frameRows().Rows[1], 80); row != "✗ notes.txt is not a .rex.json plan" || strings.Contains(got, "not in a git repo") || !strings.Contains(got, "❯ notes.txt") {
-		t.Fatalf("the error on row 1 (%q), and the selection stays\n%s", row, got)
+	typeText(a, "x")
+	press(a, "\r")
+	if row := textOf(a.frameRows().Rows[1], 80); row != "✗ x already exists · pick another name" || !strings.Contains(body(a), "  name  x") {
+		t.Fatalf("the error on row 1 (%q), and the field stays\n%s", row, a.frame())
+	}
+}
+
+// Outside git Plans says so on row 1 on a small screen too, and start
+// creates nothing (docs/ux.md §4, §11).
+func TestOutsideGitNoticeShowsOnASmallScreen(t *testing.T) {
+	repo := t.TempDir()
+	a := newApp("yellow", false, "idle", NewPlanBrowser(repo), 60, 20)
+	a.settle(60, 20)
+	if row := textOf(a.frameRows().Rows[1], 60); a.at != atLibrary || !strings.HasPrefix(row, "Not in a git repo · plans go in …") || !strings.HasSuffix(row, "/rex/plans/") {
+		t.Fatalf("row 1 %q\n%s", row, a.frame())
+	}
+	seeded := t.TempDir()
+	seedPlans(t, seeded, "one.rex.json")
+	b := newApp("yellow", false, "idle", NewPlanBrowser(seeded), 60, 20)
+	if row := textOf(b.frameRows().Rows[1], 60); b.at != atLibrary || !strings.Contains(row, "/rex/plans/") || b.notice().Text != "" {
+		t.Fatalf("with plans, row 1 says it, and the notice row is free: %q %q", row, b.notice().Text)
+	}
+}
+
+// docs/ux.md §11: moving the cursor on Plans reads no files: every
+// summary was read when the rows were built, and a rebuild reads only a
+// plan whose file changed, never the open plan, which the task list shows.
+func TestMovingReadsNoFiles(t *testing.T) {
+	a := listRepo(t)
+	press(a, "esc")
+	loads := 0
+	defer func(was func(string) (*plan.Plan, error)) { loadPlan = was }(loadPlan)
+	loadPlan = func(path string) (*plan.Plan, error) { loads++; return plan.Load(path) }
+	for _, key := range []string{"down", "down", "down", "up", "end", "home", "pagedown"} {
+		press(a, key)
+		a.frameRows()
+	}
+	if loads != 0 {
+		t.Fatalf("moving the cursor read %d plans", loads)
+	}
+	other := filepath.Join(a.plans.Root, "ux", "redesign.rex.json")
+	data, _ := os.ReadFile(other)
+	os.WriteFile(other, data, 0o644) // same bytes, a new mtime
+	os.Chtimes(other, a.now().Add(time.Hour), a.now().Add(time.Hour))
+	os.WriteFile(a.plans.Current, cujFixture(t), 0o644)
+	os.Chtimes(a.plans.Current, a.now().Add(time.Hour), a.now().Add(time.Hour))
+	a.plans.walk = planWalk{}
+	a.plans.Rebuild()
+	if loads != 1 {
+		t.Fatalf("a rebuild reads the one plan that changed, the open one being the task list's: %d reads", loads)
+	}
+}
+
+// docs/ux.md §11: the Open a plan card shows only with a plan to browse.
+// Continue's plan in a hidden folder is Continue, never something Open a
+// plan reaches, and the card counts only the plans it reaches.
+func TestOpenAPlanCardNeedsAPlanToBrowse(t *testing.T) {
+	repo := attachRepo(t)
+	hidden := writePlan(t, repo, ".archive/old.rex.json", demoPlan)
+	now := time.Now()
+	if err := plan.UpdateState(plan.StatePath(), now, func(s *plan.State) {
+		s.Repos[repo] = plan.RepoState{Plan: hidden, Opened: float64(now.Unix())}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a := startIn(repo)
+	var kinds []PlanRowKind
+	for _, row := range a.plans.Rows {
+		kinds = append(kinds, row.Kind)
+	}
+	if want := []PlanRowKind{PlanRowContinue, PlanRowNew}; fmt.Sprint(kinds) != fmt.Sprint(want) {
+		t.Fatalf("only Continue and Create a plan: %v\n%s", kinds, a.frame())
+	}
+	writePlan(t, repo, "team/visible.rex.json", demoPlan)
+	a.plans.walk = planWalk{}
+	a.plans.Rebuild()
+	if row := rowWith(a.frameRows(), "Open a plan"); a.plans.rowOf(PlanRowOpen) < 0 || !strings.HasPrefix(row, "  Open a plan     browse rex/plans/ · 1 folder · 1 plan") {
+		t.Fatalf("a plan to browse brings the card, counting it alone: %q\n%s", row, a.frame())
 	}
 }

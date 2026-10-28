@@ -29,7 +29,7 @@ type app struct {
 
 	pane  PaneKind
 	plans *PlanBrowser
-	draft string // the plan list's draft: the only composer (docs/ux.md §2)
+	draft string // the text in Plans' field: the only text Rex takes (docs/ux.md §2)
 
 	overlay       [2]overlayKind // per place
 	overlayScroll [2]int
@@ -46,7 +46,7 @@ type app struct {
 	logRev      int
 	view        logViewCache
 	scroll      int
-	emptyScroll int // rows of the empty AGENT tab above the screen: a page, read from its top like Wait
+	emptyScroll int // rows of the empty AGENT tab above the screen: a page, read from its top
 	turn        Turn
 	lastKind    string
 
@@ -60,7 +60,7 @@ type app struct {
 	health feedHealth
 
 	doc        *planDoc // the open plan, nil until one is opened
-	at         planAt   // which PLAN screen: library, the task list or a page
+	at         planAt   // which PLAN screen: Plans, the task list or a page
 	outline    outlineView
 	pages      pageCache // the task details or About laid out, for the frames that only scroll it
 	pageOver   bool      // the open plan's page with no list runs past the screen: ↑↓ scroll it
@@ -72,19 +72,20 @@ type app struct {
 	drift      driftState    // drift from the current pin, shown only
 	driftGen   int           // numbers each pin stint's drift block
 	driftQueue []watch.Event // live events to judge once their batch is on AGENT
-	skill      skillSeen     // whether an agent can learn plans, for the wait screen
+	skill      skillSeen     // whether an agent can learn plans, for Plans' first run
 
 	// Attach (docs/ux.md §11): follow opens the plan the agent writes;
-	// picking one in the list latches (follow false), and another plan's
-	// write is then only offered on the notice row.
+	// any pick on Plans but Continue and Open latest latches (follow
+	// false), and another plan's write is then only offered on the notice
+	// row.
 	follow      bool
-	pending     string    // a write to open once the plan list's draft or Name prompt clears
+	pending     string    // a write to open once Plans' field clears, or you are back on the task list
 	offer       string    // latched: the plan the agent wrote, o opens it
 	pendingName wroteAs   // how the notice row names pending, read once when it is set
 	offerName   wroteAs   // and offer
 	wrote       string    // the last other plan file written in the batch being ingested
 	wroteOpen   bool      // the batch wrote the open plan too
-	scanned     time.Time // the last cold-start look for a plan file
+	scanned     time.Time // the last refresh of Plans' cards from the folder
 }
 
 // logViewCache keeps the laid-out AGENT stream for one log revision, width
@@ -99,10 +100,8 @@ type logViewCache struct {
 func newApp(color string, enabled bool, animation string, plans *PlanBrowser, columns, lines int) *app {
 	a := &app{color: color, enabled: enabled, pane: PanePlans, plans: plans, columns: columns, lines: lines, scope: watch.NewScope(plans.Repo),
 		now: time.Now, statePath: plan.StatePath(), follow: true}
-	plans.now = func() time.Time { return a.now() } // the accordion's "changed 2m ago"
-	if plans.Current == "" {
-		a.land()
-	}
+	plans.now = func() time.Time { return a.now() } // Open latest's "changed 2m ago"
+	a.land()
 	a.sequence = mascot.MustAnimation(animation)
 	a.frameIndex = 0
 	a.hold = a.sequence.Frames[0].Hold
@@ -170,13 +169,12 @@ func (a *app) composeOptions() ComposeOptions {
 		Status:      statusForTurn(a.turn, a.lastKind),
 		Scroll:      a.scroll,
 		Pane:        a.pane,
-		Follow:      a.followWord(),
 		Context:     a.context(),
 		Notice:      a.notice(),
 	}
 	if a.composing() {
-		opt.Composer = true
-		opt.Draft, opt.Placeholder, opt.Preview = a.draft, a.placeholder(), a.preview()
+		opt.Composer = a.fieldOpen()
+		opt.Draft, opt.Preview = a.draft, a.preview()
 	}
 	l := a.layout()
 	textW := l.textW
@@ -189,17 +187,12 @@ func (a *app) composeOptions() ComposeOptions {
 	switch {
 	case a.pane == PaneChat && len(a.log) == 0:
 		// The empty tab is a page (docs/ux.md §10): it scrolls from its
-		// top, as Wait does.
+		// top.
 		a.emptyScroll = max(0, min(a.emptyScroll, len(opt.LogView)-l.bodyH))
 		opt.Scroll = a.emptyScroll
 		opt.Footer = pageFooter(len(opt.LogView) > l.bodyH, "", "tab plan", true)
 	case a.pane == PaneChat:
 		opt.Footer = agentFooter()
-	case a.at == atWait:
-		body := a.waitBody(l.textW, l.bodyH)
-		a.outline.scroll = max(0, min(a.outline.scroll, len(body)-l.bodyH))
-		opt.PlanView, opt.PlanScroll = body, a.outline.scroll
-		opt.Footer = pageFooter(len(body) > l.bodyH, "esc plans", "tab agent", true)
 	case a.at != atLibrary && a.doc != nil:
 		opt.PlanRows = a.planRows()
 		var above int
@@ -209,7 +202,14 @@ func (a *app) composeOptions() ComposeOptions {
 		}
 		opt.Footer = a.planFooter()
 	default:
-		opt.Plans = a.plans // the screen decides what PLAN draws, never an empty view
+		// The screen decides what PLAN draws, never an empty view. Open
+		// latest says which plan your agent just wrote, and a first run
+		// whether your agent can learn the plan format.
+		opt.Plans = a.plans
+		a.plans.offer = a.offer
+		if a.plans.total == 0 {
+			a.plans.skill = a.skill.look(a.plans.Repo, a.now())
+		}
 	}
 	opt.Page = a.page()
 	if a.overlay[a.pane] == overlayHelp {
@@ -225,9 +225,9 @@ func (a *app) composeOptions() ComposeOptions {
 
 // helpPages names the page Help was opened over, on Help's row 1.
 var helpPages = map[string]string{
-	"agent": "Agent", "waiting": "the wait screen", "about": "About", "task": "this task", "tasks": "the task list",
+	"agent": "Agent", "about": "About", "task": "this task", "tasks": "the task list",
 	"no tasks": "a plan with no tasks", "can't read": "a plan Rex can't read",
-	"folder": "this folder", "new plan": "a new plan", "new folder": "a new folder", "plans": "the plan list",
+	"open a plan": "Open a plan", "new plan": "a new plan", "plans": "Plans",
 }
 
 // page is row 0's title for the screen under any overlay (docs/ux.md §4).
@@ -243,9 +243,6 @@ func (a *app) page() *Page {
 		case a.scroll > 0:
 			p.Meta = metaSpans(fmt.Sprintf("↓ %d newer", a.scroll))
 		}
-	case a.at == atWait:
-		p = Page{Crumbs: []string{"Plans", "Waiting for a plan"}}
-		p.Meta, p.Short = a.plans.where()
 	case a.at != atLibrary && a.doc != nil:
 		p = a.docPage()
 	default:
@@ -300,21 +297,17 @@ func (a *app) docPage() Page {
 	return Page{Crumbs: []string{title}, Meta: meta, Short: metaSpans(short)}
 }
 
-// libraryPage is the plan list's title: Plans, then Find, the folder being
-// browsed (each folder from rex/plans down), or the Name prompt, with what
-// the list holds as meta, or where a new plan goes.
+// libraryPage is Plans' title (docs/ux.md §4): Plans, then Find, Open a
+// plan and the folder being browsed (each folder from rex/plans down), or
+// New plan, with what the page holds as meta: the repo and its plans, the
+// matches, the folder, or where a new plan goes.
 func libraryPage(b *PlanBrowser) Page {
 	crumbs := []string{"Plans"}
-	if b.Browsing() || (b.Prompting() && b.From == ScreenBrowse) {
-		crumbs = append(crumbs, folderCrumbs(b)...)
-	}
 	switch {
-	case b.Screen == ScreenCreate:
-		return Page{Crumbs: append(crumbs, "New plan"), Meta: metaSpans(b.promptRel())}
-	case b.Screen == ScreenFolder:
-		return Page{Crumbs: append(crumbs, "New folder"), Meta: metaSpans(b.promptRel())}
+	case b.Prompting():
+		return Page{Crumbs: append(crumbs, "New plan"), Meta: metaSpans(b.RelDir() + "/")}
 	case b.Browsing():
-		return Page{Crumbs: crumbs, Meta: metaSpans(plural(b.total, "%d plan", "%d plans"))}
+		return Page{Crumbs: append(append(crumbs, "Open a plan"), folderCrumbs(b)...), Meta: metaSpans(b.RelDir() + "/")}
 	case b.Find != "":
 		return Page{Crumbs: append(crumbs, "Find"), Meta: metaSpans(plural(b.total, "%d match", "%d matches"))}
 	}
@@ -324,7 +317,7 @@ func libraryPage(b *PlanBrowser) Page {
 }
 
 // folderCrumbs is the folder being browsed as crumbs, one per folder
-// under rex/plans: Plans is its root (docs/ux.md §4).
+// under rex/plans: Open a plan is its root (docs/ux.md §4).
 func folderCrumbs(b *PlanBrowser) []string {
 	var crumbs []string
 	if rel, err := filepath.Rel(b.Root, b.Dir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
@@ -335,26 +328,27 @@ func folderCrumbs(b *PlanBrowser) []string {
 	return crumbs
 }
 
-// composing reports that the plan list's composer is on screen and takes
-// typing: the only place with one (docs/ux.md §2). Everywhere else keys
-// act at once and printable keys do nothing.
+// composing reports that Plans is on screen and takes typing into its
+// text field: the only place that does (docs/ux.md §2). Everywhere else
+// keys act at once and printable keys do nothing.
 func (a *app) composing() bool {
 	return a.pane == PanePlans && a.at == atLibrary && a.overlay[PanePlans] == overlayNone
 }
 
-// layout is the current screen's layout: without the composer's rows
-// where there is none.
+// fieldOpen reports that Plans' text field shows: Find or the filter with
+// text in it, or New plan (docs/ux.md §2).
+func (a *app) fieldOpen() bool {
+	return a.composing() && (a.draft != "" || a.plans.Prompting())
+}
+
+// layout is the current screen's layout.
 func (a *app) layout() layout {
-	l := layoutFor(a.columns, a.lines)
-	if !a.composing() {
-		l = l.bare()
-	}
-	return l
+	return layoutFor(a.columns, a.lines)
 }
 
 // spacedPlan is the open plan's body at blankFrom rows, where row 2 and the
 // notice row take two of the rows an 11-row terminal gives it.
-var spacedPlan = layoutFor(TextOnlyBelow, blankFrom).bare().bodyH
+var spacedPlan = layoutFor(TextOnlyBelow, blankFrom).bodyH
 
 // planRows is the body rows the open plan's screens are laid out in
 // (docs/ux.md §12): 11 rows lay them out as 12 do, so a taller terminal
@@ -432,22 +426,8 @@ func (a *app) planFooter() []FooterSeg {
 	return []FooterSeg{{Text: "↑↓ select"}, {Text: "enter details"}, {Text: "i about"}, {Text: "esc plans"}, tab, helpSeg}
 }
 
-// placeholder is the dim hint in the plan list's empty composer: what you
-// can type there.
-func (a *app) placeholder() string {
-	switch a.plans.Screen {
-	case ScreenBrowse:
-		return "type to filter"
-	case ScreenCreate:
-		return "plan name (a/b for a folder)"
-	case ScreenFolder:
-		return "folder name"
-	}
-	return "find or create a plan"
-}
-
-// preview says what enter will do with a /word in the plan list, for the
-// footer; other text there is a find, filter or name.
+// preview says what enter will do with a /word on Plans, for the footer;
+// other text there is a find, filter or name.
 func (a *app) preview() string {
 	text := strings.TrimSpace(a.draft)
 	if !forcedVerb(text) {
@@ -467,10 +447,6 @@ func (a *app) context() StatusLine {
 	switch {
 	case a.pane == PaneChat:
 		return a.turnLine()
-	case a.at == atWait && b.Notice != "":
-		return noticeLine(b.Notice)
-	case a.at == atWait:
-		return muted("Rex opens the plan your agent writes.")
 	case a.at != atLibrary && a.doc != nil:
 		d := a.doc
 		switch {
@@ -482,26 +458,23 @@ func (a *app) context() StatusLine {
 			return muted(taskPlace(d.plan, a.outline.sel))
 		}
 		return pinStatus(d.plan)
-	case b.Notice != "":
-		// Where plans go, or that they are off, outranks what the page is for
-		// on every plan list screen.
-		return noticeLine(b.Notice)
 	case b.Screen == ScreenCreate:
 		return muted("Name it. a/b puts plan b in folder a.")
-	case b.Screen == ScreenFolder:
-		return muted("Name it. a/b puts folder b in folder a.")
 	case b.Browsing():
 		return muted("Folders, then plans. Type to filter.")
 	case b.Find != "":
 		return muted(`Plans whose name or title has "` + flat(b.Find) + `".`)
+	case b.Notice != "":
+		// Where plans go, or that they are off, outranks what Plans is for.
+		return noticeLine(b.Notice)
 	case b.total == 0:
 		return muted("No plans here yet.")
 	}
 	return muted("Pick up where you left off, or start a new plan.")
 }
 
-// noticeLine is the plan list's notice (outside git, an old rex-plans/,
-// plans off) as row 1 draws it, fitted to the row.
+// noticeLine is Plans' notice (outside git, an old rex-plans/, plans off)
+// as row 1 draws it, fitted to the row.
 func noticeLine(n string) StatusLine {
 	if n == "" {
 		return StatusLine{}
@@ -551,7 +524,7 @@ func (a *app) notice() StatusLine {
 }
 
 // noticeOf picks the one message the notice row shows, the first of these
-// that applies: an error (the plan file can't be read, the plan list's
+// that applies: an error (the plan file can't be read, Plans'
 // error, a failed open); your agent asking or its turn's error, on PLAN
 // until you look at AGENT; a toast, on PLAN (one raised while AGENT is on
 // screen waits for PLAN); a new plan, offered or held; hard drift, on
@@ -586,7 +559,7 @@ func (a *app) noticeOf() (StatusLine, noticeKind) {
 	if s, ok := a.driftStatus(); ok {
 		return s, noticeDrift
 	}
-	if d := a.doc; d != nil && d.plan != nil && d.plan.ReadOnly != "" && a.at != atLibrary && a.at != atWait {
+	if d := a.doc; d != nil && d.plan != nil && d.plan.ReadOnly != "" && a.at != atLibrary {
 		return StatusLine{Text: "read-only: " + d.plan.ReadOnly, Kind: "muted"}, noticeReadOnly
 	}
 	return StatusLine{}, noticeNone
@@ -638,10 +611,6 @@ func (a *app) sawAgent() {
 	a.needs = ""
 	a.drift.hard = nil
 }
-
-// noPlanText heads the wait screen: the agent writes the plan and Rex
-// opens it (docs/ux.md §11).
-const noPlanText = "no plan yet · tell your agent to make one"
 
 const toastFor = 4 * time.Second
 
@@ -890,17 +859,16 @@ const (
 
 // handleKey applies one key. It sets a.quit on the second Ctrl+C.
 func (a *app) handleKey(key string) bool {
-	// A plan list error stays only until the next key, whatever that key
-	// does (docs/ux.md §11); the key may set a new one.
+	// Plans' error stays only until the next key, whatever that key does
+	// (docs/ux.md §11); the key may set a new one.
 	cleared := a.plans.Err != ""
 	a.plans.Err = ""
 	return a.applyKey(key) || cleared
 }
 
 // helpKey reports that key is ? opening Help at once (docs/ux.md §2): on
-// every screen without a composer, and in the plan list while its
-// composer is empty. Inside Help it does nothing; after other text it is
-// text.
+// every screen without a text field, and on Plans while its field is
+// empty. Inside Help it does nothing; after other text it is text.
 func (a *app) helpKey(key string) bool {
 	return key == "?" && a.overlay[a.pane] == overlayNone && (!a.composing() || a.draft == "")
 }
@@ -913,7 +881,7 @@ func (a *app) applyKey(key string) bool {
 		edits := paste || (isPrintableKey(key) && !a.helpKey(key) && !a.offerKey(key) && !a.aboutKey(key)) || key == "\x7f" || key == "\x08" || key == "\x15" || key == "\x17"
 		submits := (key == "\r" || key == "\n") && a.draft != "" && a.composing()
 		if l.locked || edits || submits {
-			// The UI isn't visible (locked), or the composer isn't: nothing
+			// The UI isn't visible (locked), or the text field isn't: nothing
 			// may type or act on it blind. A swallowed key still disarms quit.
 			armed := a.quitPending
 			a.quitPending = false
@@ -930,8 +898,8 @@ func (a *app) applyKey(key string) bool {
 			a.quit = true
 			return false
 		}
-		// The first Ctrl+C closes Help, clears the plan list's draft when
-		// you are in PLAN, and arms quit.
+		// The first Ctrl+C closes Help, clears Plans' field when you are in
+		// PLAN, and arms quit.
 		a.overlay[a.pane] = overlayNone
 		if a.pane == PanePlans {
 			a.draft = ""
@@ -961,9 +929,9 @@ func (a *app) applyKey(key string) bool {
 	return a.handleKeyArmed(key)
 }
 
-// handleKeyArmed applies a key once quit is not armed. Only the plan list
-// has a composer; elsewhere a printable key or a paste does nothing, and
-// no hidden draft is built.
+// handleKeyArmed applies a key once quit is not armed. Only Plans takes
+// typing, into its text field; elsewhere a printable key or a paste does
+// nothing, and no hidden draft is built.
 func (a *app) handleKeyArmed(key string) bool {
 	if a.helpKey(key) {
 		a.openHelp()
@@ -1023,8 +991,8 @@ func (a *app) openHelp() {
 	a.helpOver[a.pane] = a.pageKind()
 }
 
-// submit runs the plan list's draft if it is a /word: /help or
-// /breakdance (docs/ux.md §2).
+// submit runs Plans' field if it is a /word: /help or /breakdance
+// (docs/ux.md §2).
 func (a *app) submit(text string) bool {
 	verb, ok := parseVerb(text)
 	if !ok {
@@ -1043,7 +1011,7 @@ func (a *app) submit(text string) bool {
 
 func (a *app) tapeKey(key string) bool {
 	if len(a.log) == 0 && pageKey(&a.emptyScroll, key, a.layout().bodyH) {
-		return true // the empty tab scrolls like Wait (docs/ux.md §10)
+		return true // the empty tab is a page (docs/ux.md §10)
 	}
 	bodyH := PaneBodyHeight(a.lines)
 	total := a.logLines()
@@ -1072,9 +1040,6 @@ func (a *app) tapeKey(key string) bool {
 }
 
 func (a *app) planKey(key string) bool {
-	if a.at == atWait {
-		return a.waitKey(key)
-	}
 	if a.at != atLibrary && a.doc != nil {
 		return a.docKey(key)
 	}
@@ -1100,16 +1065,15 @@ func (a *app) planKey(key string) bool {
 		b.Move(max(1, bodyH))
 		return true
 	case "home":
-		// Through Move, so a Name prompt leaves the list's cursor where its
-		// Esc comes back to, as ↑↓ do (docs/ux.md §3).
 		b.Move(-len(b.Rows))
 		return true
 	case "end":
 		b.Move(len(b.Rows))
 		return true
 	case "esc":
-		// Esc clears first, then climbs one level, and never leaves PLAN.
-		if a.draft != "" {
+		// Esc cancels New plan, clears Find's or the filter's text, then
+		// climbs one level; it never leaves PLAN (docs/ux.md §3).
+		if a.draft != "" && !b.Prompting() {
 			a.draft = ""
 			return true
 		}
@@ -1120,13 +1084,12 @@ func (a *app) planKey(key string) bool {
 		}
 		return a.planBack()
 	case "right":
-		// Into a folder, under FOLDERS or in Browse (docs/ux.md §3).
-		if !b.Prompting() && b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowDir {
-			b.Activate()
-			a.draft = ""
-			return true
+		// enter on Plans' cards and rows, and in Open a plan; not in a find,
+		// nor in New plan (docs/ux.md §3).
+		if b.Prompting() || b.Screen == ScreenHome && a.draft != "" {
+			return false
 		}
-		return false
+		return a.planEnter()
 	case "\r", "\n":
 		if forcedVerb(a.draft) {
 			// A /word is only ever a verb: it never names or opens anything.
@@ -1140,10 +1103,9 @@ func (a *app) planKey(key string) bool {
 	return false
 }
 
-// planBack goes up one level inside PLAN: cancel a name prompt, leave a
-// folder (a top one for the plan list), and from the list with no plan
-// open go back to the Wait screen (docs/ux.md §3). Otherwise the list is
-// the top.
+// planBack goes up one level inside PLAN (docs/ux.md §3): New plan back to
+// Plans, nothing written; a folder up to its parent, and rex/plans itself
+// to Plans. Plans is the top.
 func (a *app) planBack() bool {
 	b := a.plans
 	switch {
@@ -1155,17 +1117,16 @@ func (a *app) planBack() bool {
 		b.Up()
 		a.draft = ""
 		return true
-	case b.Current == "":
-		a.at = atWait
-		return true
 	}
 	return false
 }
 
+// planEnter is enter on Plans (docs/ux.md §11): New plan creates; Continue
+// and Open latest open their plan following, and any other plan, match or
+// creation latches it.
 func (a *app) planEnter() bool {
 	b := a.plans
-	switch b.Screen {
-	case ScreenCreate:
+	if b.Prompting() {
 		held := a.pending
 		if b.CommitCreate(a.draft) == PlanOpenChat {
 			a.draft = ""
@@ -1174,33 +1135,26 @@ func (a *app) planEnter() bool {
 			a.latch() // you made it: latched (docs/ux.md §11)
 			a.offerHeld(held)
 		}
-		return true
-	case ScreenFolder:
-		_ = b.CommitFolder(a.draft)
-		a.draft = ""
-		return true
+		return true // a refused name keeps its text, to fix
 	}
-	filter, was, held := b.Filter, b.Current, a.pending
-	create := b.Cursor < len(b.Rows) && b.Rows[b.Cursor].Kind == PlanRowCreateNamed
+	held := a.pending
+	var kind PlanRowKind = -1
+	if b.Cursor < len(b.Rows) {
+		kind = b.Rows[b.Cursor].Kind
+	}
 	switch b.Activate() {
 	case PlanStartCreate:
-		// From a Browse filter, what was typed becomes the name to edit.
-		b.Screen = ScreenCreate
-		a.draft = ""
-		if b.From == ScreenBrowse {
-			a.draft = filter
-		}
-		b.Name = a.draft
-	case PlanStartFolder:
-		b.Screen = ScreenFolder
 		a.draft = ""
 	case PlanOpenChat:
 		a.openedPlan()
-		if create {
+		switch kind {
+		case PlanRowContinue, PlanRowLatest:
+			a.follow = true // the plan you had, or the newest: following (docs/ux.md §11)
+		case PlanRowCreateNamed:
 			a.created()
-		}
-		if !samePlan(b.Current, was) {
-			a.latch() // you picked it: latched (docs/ux.md §11); the open plan picks nothing new
+			a.latch()
+		default:
+			a.latch()
 		}
 		a.offerHeld(held)
 	}
@@ -1219,10 +1173,9 @@ func (a *app) openedPlan() {
 		a.toast = StatusLine{} // the last plan's news isn't this one's
 	}
 	a.plans.showDoc(a.doc)
-	// Reopening the plan already open (its row under OPEN) keeps its last
-	// good copy, its debounce and its selection. The plan list's find text
-	// is done with (an attach never comes while it holds any, docs/ux.md
-	// §11).
+	// Reopening the plan already open (Continue) keeps its last good copy,
+	// its debounce and its selection. Plans' field is done with (an attach
+	// never comes while it holds any text, docs/ux.md §11).
 	a.draft = ""
 	a.at = atOutline
 	a.offer, a.pending = "", "" // any open settles which plan is shown
@@ -1270,7 +1223,7 @@ func openNotice(full, lead, rel string) StatusLine {
 }
 
 // docKey handles keys on the open plan's task list and its pages. They
-// have no composer: every key acts at once (docs/ux.md §3).
+// have no text field: every key acts at once (docs/ux.md §3).
 func (a *app) docKey(key string) bool {
 	v := &a.outline
 	p := a.doc.plan
@@ -1353,8 +1306,9 @@ func (a *app) openAbout() bool {
 	return true
 }
 
-// toLibrary leaves the open plan for the plan list, the cursor on it under
-// OPEN (docs/ux.md §11). The plan stays open: AGENT keeps it.
+// toLibrary leaves the open plan for Plans, the cursor on Continue, the
+// plan you left (docs/ux.md §11), so esc enter is a round trip. The plan
+// stays open: AGENT keeps it.
 func (a *app) toLibrary() bool {
 	b := a.plans
 	a.at = atLibrary
@@ -1383,7 +1337,7 @@ func (a *app) pollDoc() bool {
 	}
 	a.plans.showDoc(a.doc)
 	if a.at == atLibrary {
-		a.plans.Rebuild() // the open plan's row and accordion follow what the task list shows
+		a.plans.Rebuild() // Continue's card follows what the task list shows
 	}
 	if a.at != atTaskDetail {
 		// An agent that fills an empty plan lands the cursor on its pin, as
@@ -1497,8 +1451,6 @@ func (a *app) pageKind() string {
 	switch {
 	case a.pane == PaneChat:
 		return "agent"
-	case a.at == atWait:
-		return "waiting"
 	case a.at == atLibrary || a.doc == nil:
 	case a.at == atPlanDetail:
 		return "about"
@@ -1513,11 +1465,9 @@ func (a *app) pageKind() string {
 	}
 	switch a.plans.Screen {
 	case ScreenBrowse:
-		return "folder"
+		return "open a plan"
 	case ScreenCreate:
 		return "new plan"
-	case ScreenFolder:
-		return "new folder"
 	}
 	return "plans"
 }
@@ -1540,8 +1490,8 @@ func (a *app) below(before int) {
 	}
 }
 
-// syncPlanInput hands the plan draft to the screen that reads it: Browse
-// filters, Home finds, the name prompt previews where it will create. A
+// syncPlanInput hands Plans' field to the screen that reads it: Open a
+// plan filters, Plans finds, New plan previews where it will create. A
 // new query puts the cursor on its first match.
 func (a *app) syncPlanInput() bool {
 	b := a.plans
@@ -1552,7 +1502,7 @@ func (a *app) syncPlanInput() bool {
 	if forcedVerb(text) {
 		text = ""
 	}
-	// Spaces alone don't filter or find anything, and on Home neither does
+	// Spaces alone don't filter or find anything, and on Plans neither does
 	// text that names no plan (".rex.json", "./").
 	text = strings.TrimSpace(text)
 	if b.Screen == ScreenHome && findKey(text) == "" {
@@ -1569,7 +1519,7 @@ func (a *app) syncPlanInput() bool {
 			return false
 		}
 		b.Find = text
-	case ScreenCreate, ScreenFolder:
+	case ScreenCreate:
 		if b.Name == a.draft {
 			return false
 		}
@@ -1625,7 +1575,7 @@ func (a *app) tick() bool {
 	return changed
 }
 
-// settle runs after every key or tick: it applies the browse filter, opens
+// settle runs after every key or tick: it applies the field's text, opens
 // a held attach, picks up a resize, and keeps AGENT's scroll in range.
 func (a *app) settle(columns, lines int) bool {
 	changed := false
@@ -1650,7 +1600,7 @@ func (a *app) settle(columns, lines int) bool {
 
 const draftCap = 256
 
-// capDraft keeps the composer to draftCap whole runes.
+// capDraft keeps the field to draftCap whole runes.
 func capDraft(s string) string {
 	if r := []rune(s); len(r) > draftCap {
 		return string(r[:draftCap])

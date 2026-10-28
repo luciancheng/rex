@@ -172,7 +172,6 @@ const (
 	atOutline
 	atPlanDetail
 	atTaskDetail
-	atWait // no plan yet: Rex waits for the agent to write one (docs/ux.md §11)
 )
 
 // outlineView is where you are in the open plan: the selected task by
@@ -266,41 +265,6 @@ func planTitle(p *plan.Plan, path string) string {
 	return planStem(filepath.Base(path))
 }
 
-// glyph is a task's mark and tag as the plan list's accordion draws them
-// (docs/ux.md §11): the pin's ▸, ○ ready, · waiting, ✔ done, – skipped,
-// ! blocked. The task list has its own quieter marks (taskList.draw).
-func glyph(t *plan.Task, g *plan.Graph, pin *plan.Task) (mark, tag, tagKind string) {
-	if !g.Leaf(t) {
-		done, total := g.Rollup(t)
-		return " ", fmt.Sprintf("%d/%d", done, total), "muted"
-	}
-	if g.Cyclic(t) {
-		return "·", "cycle", "error"
-	}
-	switch {
-	case pin != nil && t == pin && t.Status == plan.Active:
-		return "▸", "pinned", "accent"
-	case pin != nil && t == pin:
-		return "▸", "next up", "muted"
-	case t.Status == plan.Done:
-		return doneMark, "", ""
-	case t.Status == plan.Skipped:
-		return "–", "skipped", "muted"
-	case t.Status == plan.Blocked:
-		return "!", "blocked", "muted"
-	case t.Status == plan.Active:
-		return "▸", "", ""
-	}
-	if unmet := g.Unmet(t); len(unmet) > 0 {
-		kind := "muted"
-		if strings.HasPrefix(unmet[0], "?") {
-			kind = "error"
-		}
-		return "·", "after " + unmet[0], kind
-	}
-	return "○", "", ""
-}
-
 // listLine is one line of the task list before it is drawn: a task's
 // row, a group's label, or (t nil) the blank row above a group.
 type listLine struct {
@@ -382,18 +346,48 @@ func newIndex(p *plan.Plan) *planIndex {
 				n += 2
 			}
 			x.idCol = max(x.idCol, n)
-			if t.Status == plan.Done {
-				x.done++
-			}
-			if plan.Finished(t.Status) {
-				x.finished++
-			}
 		case top:
 			x.lines[1] = append(x.lines[1], listLine{t: t, group: true})
 		}
 	}
 	x.idCol = max(idMin, min(idMax, x.idCol))
+	x.done, x.finished, _ = tally(p, g, loop)
 	return x
+}
+
+// tally is the task list's count of p (docs/ux.md §6): the rows it shows
+// (each leaf, and each task in a parent loop, an id once), how many of
+// them are done, and how many finished (done or skipped). loop is depths'.
+// Row 0, About and Plans all count with it, so they never disagree.
+func tally(p *plan.Plan, g *plan.Graph, loop []bool) (done, finished, listed int) {
+	seen := make(map[string]bool, len(p.Tasks))
+	for i := range p.Tasks {
+		t := &p.Tasks[i]
+		key := taskKey(t)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if !g.Leaf(t) && !loop[i] {
+			continue
+		}
+		listed++
+		if t.Status == plan.Done {
+			done++
+		}
+		if plan.Finished(t.Status) {
+			finished++
+		}
+	}
+	return done, finished, listed
+}
+
+// tallyOf is tally for a plan the task list doesn't show: Plans' summary
+// of a plan reads it without the open plan's index cache (planIndexOf),
+// which holds one plan and would drop the open one's.
+func tallyOf(p *plan.Plan, g *plan.Graph) (done, finished, listed int) {
+	_, loop := depths(p, g)
+	return tally(p, g, loop)
 }
 
 // depths is how many parents sit above each task, by its position in
@@ -1154,8 +1148,8 @@ func pinStatus(p *plan.Plan) StatusLine {
 // it is just the pin's id.
 const pinTitleMin = 8
 
-// progressWide is the text width from which the plan list's rows carry
-// their titles and its accordion its labels (docs/ux.md §11).
+// progressWide is the text width from which Plans' rows carry their
+// plans' titles (docs/ux.md §11).
 const progressWide = 60
 
 // progress is the open plan's progress for row 0's meta: the done tasks

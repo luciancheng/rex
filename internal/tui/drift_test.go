@@ -77,8 +77,9 @@ func TestDriftIsShownNeverSent(t *testing.T) {
 		t.Fatalf("a tag per edit: %s", got)
 	}
 	view := BuildLogView(a.log, 78, viewOpt{tall: true})
-	if v := viewText(view); !strings.Contains(v, "  edit README.md"+strings.Repeat(" ", 78-1-len("  edit README.md")-len("off pin"))+"off pin\n") || !strings.Contains(v, "edit internal/tui/live_view.go") || strings.Contains(v, "rex ›") {
-		t.Fatalf("each edit is a step row with its tag at the end:\n%s", v)
+	tagged := "outside card-highlight files · off pin"
+	if v := viewText(view); !strings.Contains(v, "  edit README.md"+strings.Repeat(" ", 78-1-len("  edit README.md")-cellLen(tagged))+tagged+"\n") || !strings.Contains(v, "edit internal/tui/live_view.go") || !strings.Contains(v, "next to plans.go · off pin?\n") || strings.Contains(v, "rex ›") {
+		t.Fatalf("each edit is a step row with why and its tag at the end:\n%s", v)
 	}
 	if hard, soft := view[0].Spans[len(view[0].Spans)-1], view[1].Spans[len(view[1].Spans)-1]; hard != (Span{Text: "off pin", Role: "accent"}) || soft != (Span{Text: "off pin?", Role: "muted"}) {
 		t.Fatalf("hard is the pin's yellow, soft muted, never an error's red: %+v %+v", hard, soft)
@@ -263,7 +264,9 @@ func TestDriftKeepsAScrolledUpViewStill(t *testing.T) {
 		// The tagged row gains its tag in place; every row stays where it was.
 		untagged := func(rows []string) string {
 			for i, r := range rows {
-				rows[i] = strings.TrimRight(strings.TrimSuffix(r, " off pin"), " ")
+				if strings.HasSuffix(r, " off pin") {
+					rows[i] = r[:2+strings.Index(r[2:], "  ")] // the step, without its reason and tag
+				}
 			}
 			return strings.Join(rows, "\n")
 		}
@@ -310,7 +313,8 @@ func TestDriftTagsTheEditsStep(t *testing.T) {
 		t.Fatalf("the step of call e1, not e2's: %v", got)
 	}
 	rows := viewRows(a.log, 60, viewOpt{tall: true})
-	if want := "  edit README.md" + strings.Repeat(" ", 60-1-len("  edit README.md")-len("off pin")) + "off pin"; rows[0] != want || rows[1] != "  edit README.md" || rows[2] != "  $ go test ./..." {
+	tagged := "outside card-highlight files · off pin"
+	if want := "  edit README.md" + strings.Repeat(" ", 60-1-len("  edit README.md")-cellLen(tagged)) + tagged; rows[0] != want || rows[1] != "  edit README.md" || rows[2] != "  $ go test ./..." {
 		t.Fatalf("the tag at the step's end:\n%s", strings.Join(rows, "\n"))
 	}
 	// No call named: the newest edit step of the file, never a shell
@@ -426,16 +430,18 @@ func TestARepeatedCompletionIsOneEdit(t *testing.T) {
 	}
 }
 
-// docs/ux.md §9a, §10: AGENT draws a tag only from the meta Rex itself
-// puts on a row, never from text: a feed line that says "off pin", or one
-// whose meta claims a tag or a row of Rex's, draws none, and a feed line
-// that claims to be Rex's own drawn step is dropped.
+// docs/ux.md §9a, §10: AGENT draws a tag, and its reason, only from the
+// meta Rex itself puts on a row, never from text: a feed line that says
+// "off pin" or reads like a reason, or one whose meta claims a tag, a
+// reason or a row of Rex's, draws none, and a feed line that claims to be
+// Rex's own drawn step is dropped.
 func TestDriftTagsNeverComeFromText(t *testing.T) {
 	a, c, _ := openDemo(t, driftDemo, 120, 32)
 	press(a, "\t")
 	var feed []watch.Event
 	for _, raw := range []string{
 		`{"source":"claude","kind":"command","text":"echo off pin","meta":{"tool":"Bash","rex.drift":2}}`,
+		`{"source":"claude","kind":"command","text":"Edit docs/a.md outside card-highlight files · off pin","meta":{"tool":"Edit","path":"docs/a.md","rex.drift":{"level":2,"why":"evil"}}}`,
 		`{"source":"claude","kind":"command","text":"Edit README.md off pin","meta":{"tool":"Edit","rex.drift":"hard","rex.row":1}}`,
 		`{"source":"claude","kind":"user","text":"hard README.md · off pin?","meta":{"rex.drift":2,"rex.row":1}}`,
 		`{"source":"rex","kind":"drift","text":"hard README.md","meta":{"rex.drift":2,"rel":"README.md"}}`,
@@ -449,7 +455,7 @@ func TestDriftTagsNeverComeFromText(t *testing.T) {
 		feed = append(feed, ev)
 	}
 	a.ingest(feed)
-	if len(a.log) != 3 {
+	if len(a.log) != 4 {
 		t.Fatalf("Rex's own kinds never come from the feed: %d events", len(a.log))
 	}
 	if got := drifted(a.log); len(got) != 0 {
@@ -458,9 +464,55 @@ func TestDriftTagsNeverComeFromText(t *testing.T) {
 	a.enabled = true
 	for _, line := range a.logView(78) {
 		for _, sp := range line.Spans {
-			if sp.Role == "accent" {
-				t.Fatalf("yellow from the feed: %+v", line)
+			if sp.Role == "accent" || strings.Contains(sp.Text, "evil") || sp.Role == "muted" && strings.HasSuffix(sp.Text, whySep) {
+				t.Fatalf("a tag or a reason from the feed: %+v", line)
 			}
+		}
+	}
+	// A step Rex tagged reads its reason from the tag: whatever its own
+	// text says stays its text.
+	ev := watch.Event{Kind: "command", Text: "Edit README.md names evil, not the pin", Meta: map[string]any{"tool": "Edit", "path": "/r/README.md", driftKey: driftTag{plan.Soft, "next to plans.go"}}}
+	row := BuildLogView([]watch.Event{ev}, 80, viewOpt{})[0]
+	if n := len(row.Spans); n < 3 || row.Spans[n-2] != (Span{Text: "next to plans.go" + whySep, Role: "muted"}) || strings.Count(row.Text, "evil") != 1 {
+		t.Fatalf("the judge's reason: %+v", row.Spans)
+	}
+}
+
+// docs/ux.md §9a: a patch's step names its first file. It takes its
+// worst file's tag and reason, and a reason that isn't the shown file's
+// says whose it is: never a reason that is false for the file on the row.
+func TestAPatchsStepSaysWhoseReason(t *testing.T) {
+	for _, tc := range []struct {
+		files []string
+		want  string
+	}{
+		// The shown file is on the pin; README.md is off it.
+		{[]string{"internal/tui/plans.go", "README.md"}, "README.md: outside card-highlight files · off pin"},
+		// Both off it, the shown one first: its own reason, no name.
+		{[]string{"internal/palettes/x.go", "README.md"}, ""},
+	} {
+		a, c, _ := openDemo(t, driftDemo, 120, 32)
+		var paths []any
+		for _, f := range tc.files {
+			paths = append(paths, filepath.Join(a.plans.Repo, f))
+		}
+		first := paths[0].(string)
+		a.ingest([]watch.Event{at(c, time.Second, watch.Event{Source: "codex", Kind: "command", Text: "Edit " + first + " (+1 more)", Meta: map[string]any{"tool": "apply_patch", "path": first, "paths": paths}})})
+		a.ingest([]watch.Event{at(c, 2*time.Second, watch.Event{Source: "codex", Kind: "result", Text: "wrote " + first, Meta: map[string]any{"tool": "apply_patch", "path": first, "paths": paths, "ok": true}})})
+		want := tc.want
+		if want == "" {
+			own := plan.CheckEdit(a.doc.plan, a.doc.plan.Graph().Pin(), tc.files[0], foldPaths)
+			if own.Level != plan.Hard || strings.Contains(own.Reason, "README") {
+				t.Fatalf("setup: %+v", own)
+			}
+			want = own.Reason + " · off pin"
+		}
+		if len(a.log) != 1 || tagOf(a.log[0]).level != plan.Hard {
+			t.Fatalf("%v: one step, hard: %v", tc.files, drifted(a.log))
+		}
+		row := viewRows(a.log, 100, viewOpt{})[0]
+		if !strings.HasPrefix(row, "  edit "+tc.files[0]+" (+1 more)  ") || !strings.HasSuffix(row, " "+want) {
+			t.Errorf("%v: %q, want it to end %q", tc.files, row, want)
 		}
 	}
 }

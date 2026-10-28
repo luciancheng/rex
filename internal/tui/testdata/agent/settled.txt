@@ -6,8 +6,8 @@ idle                                                      pinned card-highlight
   thinking ×3 · One painter for the bar and the fill, then.
   $ go test ./internal/tui -run PlanCard
   edit internal/tui/plans.go
-  edit internal/watch/format.go                                         off pin
-  edit internal/tui/live_view.go                                       off pin?
+  edit internal/watch/format.go          outside card-highlight files · off pin
+  edit internal/tui/live_view.go                    next to plans.go · off pin?
   $ go vet ./...
 ✗ go vet ./... · plans.go:88: unreachable code
   $ go test ./internal/tui
@@ -36,8 +36,8 @@ idle                                                    pinned card-highlight
   thinking ×3 · One painter for the bar and the fill, then.
   $ go test ./internal/tui -run PlanCard
   edit internal/tui/plans.go
-  edit internal/watch/format.go                                       off pin
-  edit internal/tui/live_view.go                                     off pin?
+  edit internal/watch/format.go        outside card-highlight files · off pin
+  edit internal/tui/live_view.go                  next to plans.go · off pin?
   $ go vet ./...
 ✗ go vet ./... · plans.go:88: unreachable code
   $ go test ./internal/tui

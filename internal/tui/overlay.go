@@ -162,18 +162,18 @@ var (
 		{name: "… +N", what: "steps folded: over 5 in a row, all but the last 4"},
 		{name: failMark, what: "a failed step, or the turn's own error"},
 		{name: askMark, what: "your agent asks you something"},
-		{what: "the edit or prompt on this row was off the pin; seen from PLAN, its notice row says why", key: []Span{{Text: hardTag, Role: "accent"}}},
-		{what: "near the pin but not on it, such as a file next to one it lists; only the tag says so", key: []Span{{Text: softTag, Role: "muted"}}},
+		{what: "the edit or prompt on this row was off the pin; why shows before the tag when it fits, and seen from PLAN, its notice row says it too", key: []Span{{Text: hardTag, Role: "accent"}}},
+		{what: "near the pin but not on it, such as a file next to one it lists; why shows before the tag when it fits", key: []Span{{Text: softTag, Role: "muted"}}},
 		{name: "rex ·", what: "Rex's own line, never sent"},
 	}
 )
 
 // helpLines is Help (docs/ux.md §13): This page, for the page it opened
 // over, then what holds everywhere, the place's marks and the pin's send
-// state; the feed's health follows (app.helpBody). Each section is a bold
-// label; tall puts a blank row above each but the first. From
-// helpStackBelow cells a key sits in a 12-cell column left of what it
-// does; narrower it sits above it.
+// state; the feed's health and what Rex never does follow (app.helpBody).
+// Each section is a bold label; tall puts a blank row above each but the
+// first. From helpStackBelow cells a key sits in a 12-cell column left of
+// what it does; narrower it sits above it.
 func helpLines(width int, page string, tall bool) []LogLine {
 	var lines []LogLine
 	section := func(label string, keys []helpKey) {
@@ -239,6 +239,20 @@ func helpRows(k helpKey, width int) []LogLine {
 			continue
 		}
 		lines = append(lines, LogLine{Kind: "muted", Text: padRight("", len(indent)+helpKeyCol) + w})
+	}
+	return lines
+}
+
+// rexNever is Help's last section (docs/ux.md §13): what Rex never does,
+// on every page's Help. tall puts a blank row above it.
+func rexNever(width int, tall bool) []LogLine {
+	var lines []LogLine
+	if tall {
+		lines = append(lines, LogLine{Kind: "gap"})
+	}
+	lines = append(lines, labelLine("Rex never"))
+	for _, w := range wrap("runs or approves tools, writes a plan beyond the status values you set with p and d and an empty one you name on Plans, sends your agent anything but the pinned task before each prompt (or a new plan that has no tasks yet), or reads transcripts. You and your agent both pin and finish tasks in the plan file, and Rex shows who did.", max(8, width-4)) {
+		lines = append(lines, LogLine{Kind: "text", Text: "    " + w})
 	}
 	return lines
 }

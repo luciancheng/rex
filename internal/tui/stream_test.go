@@ -180,7 +180,7 @@ func TestFoldIsDisplayOnly(t *testing.T) {
 // stays. A fold that hides a tagged step takes its worst tag.
 func TestDriftTagsSitAtTheRowsEnd(t *testing.T) {
 	tag := func(ev watch.Event, level plan.DriftLevel) watch.Event {
-		ev.Meta = withMeta(ev.Meta, driftKey, driftTag(level))
+		ev.Meta = withMeta(ev.Meta, driftKey, driftTag{level: level})
 		return ev
 	}
 	deep := edits("server/a/very/deep/path/to/some/session_handler_impl.go")[0]
@@ -207,6 +207,78 @@ func TestDriftTagsSitAtTheRowsEnd(t *testing.T) {
 	run[1] = tag(edits("b.go")[0], plan.OnPin)
 	if fold := viewRows(run, 38, viewOpt{})[0]; !strings.HasSuffix(fold, " off pin?") {
 		t.Fatalf("%q", fold)
+	}
+}
+
+// docs/ux.md §9a, §10: a tag's reason sits before it, muted, joined by
+// " · ", in what is free between the step and the tag: the step never
+// gives up a cell for it; short of room it clips, and under 8 cells it
+// goes and the tag stands alone. It never adds a row, and a fold keeps
+// only its worst tag. On a prompt's first row it shows only in the room
+// the row leaves.
+func TestDriftReasonFits(t *testing.T) {
+	step := func(why string) watch.Event {
+		ev := edits("internal/watch/format.go")[0]
+		ev.Meta = withMeta(ev.Meta, driftKey, driftTag{plan.Hard, why})
+		return ev
+	}
+	const why = "outside card-highlight files"
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{
+		{80, "  edit internal/watch/format.go" + strings.Repeat(" ", 80-1-31-cellLen(why+" · off pin")) + why + " · off pin "},
+		{60, "  edit internal/watch/format.go  outside card-hi… · off pin "},
+		{44, "  edit internal/watch/format.go     off pin "},
+	} {
+		bare := paintLine(BuildLogView([]watch.Event{step("")}, tc.width, viewOpt{})[0], tc.width, false)
+		view := BuildLogView([]watch.Event{step(why)}, tc.width, viewOpt{tall: true})
+		row := paintLine(view[0], tc.width, false)
+		if row != tc.want || len(view) != 1 {
+			t.Errorf("%d cells:\n got %q\nwant %q", tc.width, row, tc.want)
+		}
+		// The step's text is what it is with no reason at all.
+		if text := strings.TrimRight(strings.TrimSuffix(bare, "off pin "), " "); !strings.HasPrefix(row, text+"  ") {
+			t.Errorf("%d cells: the step gave up cells: %q vs %q", tc.width, row, bare)
+		}
+		if n := len(view[0].Spans); tc.width >= 60 && view[0].Spans[n-2].Role != "muted" {
+			t.Errorf("%d cells: the reason is muted: %+v", tc.width, view[0].Spans)
+		}
+	}
+	// A cut reason shows at least 12 cells, a wide glyph it can't split
+	// and the blanks it trims counted: fewer, and the tag stands alone.
+	for room, want := range map[int]string{8: "", 9: "", 12: "", 13: "names 日本語…", 40: "names 日本語-task, not the pin"} {
+		if got := fitWhy("names 日本語-task, not the pin", room); got != want || cellLen(got) > room {
+			t.Errorf("room %d: %q, want %q", room, got, want)
+		}
+	}
+	if got := fitWhy(why, 9); got != "" {
+		t.Errorf("outside… says nothing: %q", got)
+	}
+	// A step that takes its whole room keeps it; the reason goes.
+	deep := edits("internal/tui/a/very/deep/path/to/the/session_handler_impl.go")[0]
+	deep.Meta = withMeta(deep.Meta, driftKey, driftTag{plan.Soft, "next to live.go"})
+	if row := viewRows([]watch.Event{deep}, 60, viewOpt{})[0]; strings.Contains(row, "·") || !strings.HasSuffix(row, " off pin?") {
+		t.Errorf("no room for why: %q", row)
+	}
+	// A fold keeps its worst tag and no reason.
+	run := append([]watch.Event{step(why), step(why)}, commands("c", "d", "e", "f")...)
+	if fold := viewRows(run, 80, viewOpt{})[0]; !strings.HasPrefix(fold, "  … +2 earlier") || !strings.HasSuffix(fold, " off pin") || strings.Contains(fold, "outside") {
+		t.Errorf("the fold: %q", fold)
+	}
+	// A prompt's first row: why in the room it leaves, and only there.
+	prompt := func(text string) watch.Event {
+		return watch.Event{Kind: "user", Text: text, Meta: map[string]any{driftKey: driftTag{plan.Soft, "names recovery, not the pin"}}}
+	}
+	short := viewRows([]watch.Event{prompt("start recovery")}, 80, viewOpt{})
+	if want := "› start recovery" + strings.Repeat(" ", 80-1-16-cellLen("names recovery, not the pin · off pin?")) + "names recovery, not the pin · off pin?"; short[0] != want {
+		t.Errorf("a short prompt:\n got %q\nwant %q", short[0], want)
+	}
+	long := "start recovery now and keep the codes in one place so the screen shows them all"
+	plain := viewRows([]watch.Event{{Kind: "user", Text: long}}, 80, viewOpt{})
+	tagged := viewRows([]watch.Event{prompt(long)}, 80, viewOpt{})
+	if len(tagged) != len(plain) || strings.Contains(tagged[0], "names") || !strings.HasPrefix(tagged[0], plain[0]) || tagged[1] != plain[1] {
+		t.Errorf("a long prompt keeps its rows, and no room for why:\n%q\n%q", tagged, plain)
 	}
 }
 
@@ -407,7 +479,7 @@ func TestNoRules(t *testing.T) {
 		watch.Event{Source: "claude", Kind: "text", Text: "Done."},
 		watch.Event{Source: "claude", Kind: "error", Text: "turn failed"},
 		watch.NewEvent("rex", "plan", "card-highlight → done", nil),
-		watch.NewEvent("rex", "drift", "", map[string]any{driftKey: driftTag(plan.Soft), "rel": "a.go", "verb": "edit"}),
+		watch.NewEvent("rex", "drift", "", map[string]any{driftKey: driftTag{level: plan.Soft}, "rel": "a.go", "verb": "edit"}),
 	)
 	for _, w := range []int{24, 38, 78} {
 		v := BuildLogView(log, w, viewOpt{tall: true})
@@ -618,7 +690,7 @@ func TestTrimmedRows(t *testing.T) {
 		{Source: "claude", Kind: "error", Text: "turn failed: the model hit its context limit"},
 		watch.NewEvent("rex", "before", "before Rex started", nil),
 		watch.NewEvent("rex", "plan", "following sendoff-demo", nil),
-		watch.NewEvent("rex", "drift", "", map[string]any{driftKey: driftTag(plan.Hard), "rel": "README.md"}),
+		watch.NewEvent("rex", "drift", "", map[string]any{driftKey: driftTag{level: plan.Hard}, "rel": "README.md"}),
 		{Source: "claude", Kind: "text", Text: "\x1b]0;title\x07"},
 		{Source: "claude", Kind: "text", Text: "```\n```"},
 		{Source: "claude", Kind: "idle", Text: "turn completed"},
@@ -1029,11 +1101,11 @@ func TestAgentScenesRoles(t *testing.T) {
 		return ""
 	}
 	yellow, muted, red := fg("accent"), fg("muted"), fg("error")
-	if row := find("format.go"); !strings.Contains(row, yellow+"off pin") {
-		t.Errorf("hard drift's tag is yellow: %q", row)
+	if row := find("format.go"); !strings.Contains(row, muted+"outside card-highlight files · ") || !strings.Contains(row, yellow+"off pin") || strings.Count(row, yellow) != 1 {
+		t.Errorf("hard drift's reason is muted, only its tag yellow: %q", row)
 	}
-	if row := find("live_view.go"); !strings.Contains(row, muted+"off pin?") || strings.Contains(row, yellow) {
-		t.Errorf("soft drift's tag is muted: %q", row)
+	if row := find("live_view.go"); !strings.Contains(row, muted+"next to plans.go · ") || !strings.Contains(row, muted+"off pin?") || strings.Contains(row, yellow) {
+		t.Errorf("soft drift's reason and tag are muted: %q", row)
 	}
 	if row := find("with pin"); !strings.Contains(row, yellow+"card-highlight") {
 		t.Errorf("the pin's id under the prompt: %q", row)

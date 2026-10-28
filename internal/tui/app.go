@@ -1445,7 +1445,8 @@ func (a *app) overlayKey(key string) bool {
 }
 
 // helpBody is the Help overlay's lines at width: the page it was opened
-// over first, then the feed's health (docs/ux.md §13).
+// over first, then the feed's health and what Rex never does (docs/ux.md
+// §13).
 func (a *app) helpBody(width int) []LogLine {
 	tall := a.lines >= 16
 	help := helpLines(width, a.helpOver[a.pane], tall)
@@ -1453,7 +1454,8 @@ func (a *app) helpBody(width int) []LogLine {
 		help = append(help, LogLine{Kind: "gap"})
 	}
 	a.health.refresh(a.now())
-	return append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), false, tall)...)
+	help = append(help, a.health.lines(width, a.hidden, a.skill.look(a.plans.Repo, a.now()), time.Now(), false, tall)...)
+	return append(help, rexNever(width, tall)...)
 }
 
 // pageKind names the page Help opens over, for its This page section.

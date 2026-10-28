@@ -293,7 +293,7 @@ func cujWholeLoop(t *testing.T, cols, lines int, withMascot bool) {
 		"\n  Done: one block now.",
 		"  rex · card-highlight → active",
 		"  rex · card-highlight → done",
-		"  edit README.md" + strings.Repeat(" ", 78-1-len("  edit README.md")-len("off pin")) + "off pin",
+		"  edit README.md" + strings.Repeat(" ", 78-1-len("  edit README.md")-cellLen("outside card-highlight files · off pin")) + "outside card-highlight files · off pin",
 	} {
 		lead, _, _ := strings.Cut(strings.Trim(want, "\n"), "   ") // the row as the frame starts it
 		if !strings.Contains(tape, want) || !strings.Contains(frame(), lead) {

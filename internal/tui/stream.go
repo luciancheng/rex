@@ -171,15 +171,44 @@ func tagSpan(level plan.DriftLevel) Span {
 	return Span{}
 }
 
-// withTag is left with level's tag at the row's right end, a cell short
-// of the edge, the tag in its own color. left is already fitted to the
-// room the tag leaves (tagRoom); with no tag it is the row.
-func withTag(kind string, left []Span, level plan.DriftLevel, width int) LogLine {
-	tag := tagSpan(level)
+// withTag is left with its drift's tag at the row's right end, a cell
+// short of the edge, the tag in its own color, and before it, muted, why
+// (docs/ux.md §10): "next to chrome.go · off pin?". left is already
+// fitted to the room the tag leaves (tagRoom), and never gives up a cell
+// for why: why takes what is free between them, at least two blanks after
+// left, and clips; with fewer than whyMin cells it goes, and the tag
+// stands alone. With no tag, left is the row.
+func withTag(kind string, left []Span, t driftTag, width int) LogLine {
+	tag := tagSpan(t.level)
 	if tag.Text == "" || width-tagRoom < 1 {
 		return spanLine(kind, cutSpans(left, width)...)
 	}
-	return spanLine(kind, append(padSpans(cutSpans(left, width-tagRoom), width-1-cellLen(tag.Text)), tag)...)
+	left = cutSpans(left, width-tagRoom)
+	end := width - 1 - cellLen(tag.Text) // the tag's first cell
+	if why := fitWhy(squash(t.why), end-spansLen(left)-2-cellLen(whySep)); why != "" {
+		left = append(padSpans(left, end-cellLen(whySep)-cellLen(why)), Span{Text: why + whySep, Role: "muted"})
+	}
+	return spanLine(kind, append(padSpans(left, end), tag)...)
+}
+
+// whySep joins a drift's reason to its tag.
+const whySep = " · "
+
+// whyMin is the fewest cells of a reason worth showing cut: fewer, and the
+// tag stands alone ("outside… · off pin" says nothing).
+const whyMin = 12
+
+// fitWhy is why in room cells: whole, else cut with "…" while whyMin cells
+// of it show (a cut can come out short of room: a wide glyph it can't
+// split, the blanks it trims), else nothing.
+func fitWhy(why string, room int) string {
+	if why == "" || cellLen(why) <= room {
+		return why
+	}
+	if s := ellipsis(why, room); cellLen(s) >= whyMin {
+		return s
+	}
+	return ""
 }
 
 // squash is agent text as one clean line, its whitespace collapsed.
@@ -273,12 +302,13 @@ func stepRun(evs []watch.Event, width int) []LogLine {
 		for _, ev := range evs[:n] {
 			worst = max(worst, driftOf(ev))
 		}
-		lines = append(lines, stepRow(fmt.Sprintf("… +%d earlier", n), "", worst, width))
+		// The fold keeps the worst tag it hides, not a reason: whose would it be?
+		lines = append(lines, stepRow(fmt.Sprintf("… +%d earlier", n), "", driftTag{level: worst}, width))
 		evs = evs[n:]
 	}
 	for _, ev := range evs {
 		verb, what := stepText(ev)
-		lines = append(lines, stepRow(verb, what, driftOf(ev), width))
+		lines = append(lines, stepRow(verb, what, tagOf(ev), width))
 	}
 	return lines
 }
@@ -302,10 +332,10 @@ func stepText(ev watch.Event) (verb, path string) {
 }
 
 // stepRow is one step's row: muted, after the gutter, text then path
-// (which keeps its file name as it clips), and its drift tag.
-func stepRow(text, path string, level plan.DriftLevel, width int) LogLine {
+// (which keeps its file name as it clips), and its drift tag with why.
+func stepRow(text, path string, tag driftTag, width int) LogLine {
 	room := width - cellLen(gutterPad)
-	if tagSpan(level).Text != "" && width-tagRoom >= 1 {
+	if tagSpan(tag.level).Text != "" && width-tagRoom >= 1 {
 		room = width - tagRoom - cellLen(gutterPad)
 	}
 	row := ellipsis(text, max(1, room))
@@ -314,7 +344,7 @@ func stepRow(text, path string, level plan.DriftLevel, width int) LogLine {
 			row = lead + pathEllipsis(path, room-cellLen(lead))
 		}
 	}
-	return withTag("command", []Span{{Text: gutterPad + row}}, level, width)
+	return withTag("command", []Span{{Text: gutterPad + row}}, tag, width)
 }
 
 // driftStep is an edit off the pin whose step AGENT doesn't show (a
@@ -322,7 +352,7 @@ func stepRow(text, path string, level plan.DriftLevel, width int) LogLine {
 // drift's own meta, never from text (docs/ux.md §9a).
 func driftStep(ev watch.Event, width int) LogLine {
 	rel, _ := ev.Meta["rel"].(string)
-	return stepRow("edit", squash(rel), driftOf(ev), width)
+	return stepRow("edit", squash(rel), tagOf(ev), width)
 }
 
 // errorLines is an error (docs/ux.md §10), ✗ in the gutter. A failed tool
@@ -455,7 +485,7 @@ func promptLines(ev watch.Event, width int, tall bool) []LogLine {
 		switch {
 		case i == 0:
 			left := []Span{{Text: promptMark + " ", Role: "muted"}, {Text: row}}
-			lines = append(lines, withTag("user", left, driftOf(ev), width))
+			lines = append(lines, withTag("user", left, tagOf(ev), width))
 		case row == "":
 			lines = append(lines, LogLine{Kind: "user"})
 		default:

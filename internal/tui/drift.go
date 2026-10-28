@@ -36,18 +36,25 @@ type driftNote struct {
 
 // driftKey marks an event of AGENT's stream with the drift it was judged
 // (docs/ux.md §9a, §10): a driftTag, a type of Rex's own, so no feed line
-// can carry one and the tag is never read back from text.
+// can carry one, and neither the tag nor its reason is ever read back
+// from text.
 const driftKey = "rex.drift"
 
-type driftTag plan.DriftLevel
+// driftTag is a row's drift: its level, and why, as the judge said it.
+type driftTag struct {
+	level plan.DriftLevel
+	why   string
+}
 
-// driftOf is the drift ev's row on AGENT is tagged with: none, soft or
-// hard.
+// tagOf is the drift ev's row on AGENT is tagged with; none on the pin.
+func tagOf(ev watch.Event) driftTag {
+	t, _ := ev.Meta[driftKey].(driftTag)
+	return t
+}
+
+// driftOf is the level of ev's tag: none, soft or hard.
 func driftOf(ev watch.Event) plan.DriftLevel {
-	if t, ok := ev.Meta[driftKey].(driftTag); ok {
-		return plan.DriftLevel(t)
-	}
-	return plan.OnPin
+	return tagOf(ev).level
 }
 
 // rowKey marks each live event with a rowID of Rex's own, in the order the
@@ -327,9 +334,9 @@ func (a *app) noteDrift(n driftNote) bool {
 
 // tagDrift puts a judgement's tag on its row on AGENT (docs/ux.md §10): a
 // prompt's own row, or an edit's step (claimStep). A tag only ever rises
-// (soft, then hard), and it never adds or takes away a row. An edit with
-// no step on AGENT gets a step row of Rex's own, drawn from the drift's
-// meta; a scrolled-up view keeps its lines.
+// (soft, then hard), taking the rising note's reason, and it never adds or
+// takes away a row. An edit with no step on AGENT gets a step row of Rex's
+// own, drawn from the drift's meta; a scrolled-up view keeps its lines.
 func (a *app) tagDrift(n driftNote) {
 	want := n.row
 	if n.rel != "" {
@@ -338,7 +345,13 @@ func (a *app) tagDrift(n driftNote) {
 	for i := len(a.log) - 1; want != 0 && i >= 0; i-- {
 		if e := &a.log[i]; rowOf(*e) == want {
 			if n.d.Level > driftOf(*e) {
-				e.Meta = withMeta(e.Meta, driftKey, driftTag(n.d.Level))
+				why := n.d.Reason
+				if n.rel != "" && a.shownRel(*e) != n.rel {
+					// A patch's step names its first file: another's reason
+					// says whose it is.
+					why = path.Base(n.rel) + ": " + why
+				}
+				e.Meta = withMeta(e.Meta, driftKey, driftTag{n.d.Level, why})
 				a.logRev++
 			}
 			return
@@ -350,7 +363,7 @@ func (a *app) tagDrift(n driftNote) {
 	// The row carries its completion's place, so a later completion of the
 	// same file in this turn tags it rather than drawing another.
 	before := a.logLines()
-	a.log = append(a.log, watch.NewEvent("rex", "drift", "", map[string]any{driftKey: driftTag(n.d.Level), "rel": n.rel, rowKey: n.row}))
+	a.log = append(a.log, watch.NewEvent("rex", "drift", "", map[string]any{driftKey: driftTag{n.d.Level, n.d.Reason}, "rel": n.rel, rowKey: n.row}))
 	a.logRev++
 	a.below(before) // a new row below a scrolled-up view keeps it put
 }
@@ -384,6 +397,19 @@ func (a *app) claimStep(ev watch.Event, notes []driftNote) rowID {
 		return r
 	}
 	return again
+}
+
+// shownRel is the file a step's row names: the step's first path (a
+// patch's row says "+N more" for the rest), or the file of a step Rex drew.
+func (a *app) shownRel(e watch.Event) string {
+	if rel, ok := e.Meta["rel"].(string); ok && e.Source == "rex" {
+		return rel
+	}
+	if paths := watch.EventPaths(e); len(paths) > 0 {
+		rel, _ := a.scope.Rel(paths[0])
+		return rel
+	}
+	return ""
 }
 
 // toolCall is the tool call an event names, if any.

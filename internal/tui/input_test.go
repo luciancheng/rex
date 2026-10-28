@@ -165,12 +165,15 @@ func TestHelpOverlay(t *testing.T) {
 				t.Fatalf("help at %d offers %q\n%s", width, never, body)
 			}
 		}
-		if m := regexp.MustCompile(`(?m)^    [a-hj-np-z]( |$)`).FindString(body); m != "" {
-			t.Fatalf("help at %d has a one-letter key %q\n%s", width, m, body)
+		for _, line := range a.helpBody(width) {
+			// A key row: the key in text at column 4, then what it does.
+			if len(line.Spans) > 1 && line.Spans[0].Text == "    " && regexp.MustCompile(`^[a-hj-np-z]$`).MatchString(line.Spans[1].Text) {
+				t.Fatalf("help at %d has a one-letter key %q\n%s", width, line.Spans[1].Text, body)
+			}
 		}
-		// Five sections; over AGENT, Marks are AGENT's: what the gutter's
+		// Six sections; over AGENT, Marks are AGENT's: what the gutter's
 		// marks, a step, a tag and Rex's own line mean.
-		for _, want := range []string{"  This page\n", "  Everywhere\n", "  Marks\n", "  Your agent and the pin\n", "  Feed\n", "thinking", "(×N)", "    off pin", "    off pin?", "with pin", "rex ·", "    ›", "    ✗", "    ?", "    $", "    edit"} {
+		for _, want := range []string{"  This page\n", "  Everywhere\n", "  Marks\n", "  Your agent and the pin\n", "  Feed\n", "  Rex never\n", "thinking", "(×N)", "    off pin", "    off pin?", "with pin", "rex ·", "    ›", "    ✗", "    ?", "    $", "    edit"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("help at %d lacks %q\n%s", width, want, body)
 			}
@@ -183,7 +186,7 @@ func TestHelpOverlay(t *testing.T) {
 		// The fold is display only, and Help over AGENT says so (docs/ux.md
 		// §10, §13): as a note under the keys, with nothing in the key column
 		// that reads as a key to press.
-		if flat := strings.Join(strings.Fields(body), " "); !strings.Contains(flat, "folding is display only: the feed keeps every thought") {
+		if flat := strings.Join(strings.Fields(body), " "); !strings.Contains(flat, "folding is display only: the feed keeps every thought") || !strings.Contains(flat, "or reads transcripts. You and your agent both pin and finish tasks in the plan file, and Rex shows who did.") {
 			t.Fatalf("help at %d doesn't say the feed keeps every thought\n%s", width, body)
 		}
 		for _, line := range a.helpBody(width) {

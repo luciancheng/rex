@@ -831,10 +831,10 @@ func TestHelpKeepsThePageItOpenedOver(t *testing.T) {
 	}
 }
 
-// docs/ux.md §5 (rule 3), §12, §13: Help is five sections, each a bold
-// label: This page, Everywhere, Marks, Your agent and the pin, Feed. From
-// 16 rows each but the first has a blank row above it (the first's is row
-// 2); on 15 none does.
+// docs/ux.md §5 (rule 3), §12, §13: Help is six sections, each a bold
+// label: This page, Everywhere, Marks, Your agent and the pin, Feed, Rex
+// never. From 16 rows each but the first has a blank row above it (the
+// first's is row 2); on 15 none does.
 func TestHelpGapsFrom16Rows(t *testing.T) {
 	a := testApp(t)
 	for _, lines := range []int{15, 16} {
@@ -855,7 +855,7 @@ func TestHelpGapsFrom16Rows(t *testing.T) {
 		if lines >= 16 {
 			want = len(labels) - 1
 		}
-		if strings.Join(labels, ", ") != "This page, Everywhere, Marks, Your agent and the pin, Feed" || gaps != want || body[0].Kind == "gap" {
+		if strings.Join(labels, ", ") != "This page, Everywhere, Marks, Your agent and the pin, Feed, Rex never" || gaps != want || body[0].Kind == "gap" {
 			t.Fatalf("%d rows: %d of %v have a gap above\n%s", lines, gaps, labels, viewText(body))
 		}
 		press(a, "esc")
